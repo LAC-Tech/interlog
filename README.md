@@ -6,8 +6,7 @@
 
 - Append events to log
 - Sync log w/ other logs
-- Bi-temporal: records (local) transaction time & valid time
-- Event ID is a ULID where the time part is the valid time
+- Event ID is composite of origin replica ID and log position
 - Can run user-defined function to validate data before appending
 - Can run user-defined function to validate data before syncing
 - No interpreter or query language - recompile to change validation functions
@@ -16,7 +15,7 @@
 ## Implementation
 
 - Direct I/O append only file, with 'working index' that maps ID's to log offsets
-- Linux only (for now)
-- Call functions that have man pages rather than relying on
-  wrappers or std libraries
+- Work at libc level (rustix), so you can follow man pages.
+- Assume linux, 64 bit, little endian - for now
+- Provide hooks to sync but actual HTTP (or whatever) server is out of scope
 - Do the dumbest simplest thig you can and test the hell out of it
