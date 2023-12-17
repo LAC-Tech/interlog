@@ -9,10 +9,11 @@ compile_error!("code assumes little-endian");
 
 use std::io::Read;
 
+use bytemuck;
 use rand::prelude::*;
 use rustix;
 
-#[repr(packed)]
+#[repr(align(2))]
 pub struct ReplicaID([u16; 5]);
 
 impl ReplicaID {
@@ -31,7 +32,7 @@ impl core::fmt::Display for ReplicaID {
 	}
 }
 
-#[repr(packed)]
+#[repr(align(2))]
 pub struct LogOffset([u16; 3]);
 
 struct EventID {
@@ -39,9 +40,11 @@ struct EventID {
 	offset: LogOffset,
 }
 
+#[repr(align(8))]
 struct EventHeader {
+	length: u32, // in bytes, approx 34Gb
+	_unused: u16,
 	origin: ReplicaID,
-	length: [u16; 3], // in bytes, approx 34Gb
 }
 
 // limit rustix to this module?
@@ -91,8 +94,8 @@ impl LocalReplica {
 		Ok(Self { id, path, log, id_index })
 	}
 
-	pub fn write(&self, str: &str) -> Result<usize, rustix::io::Errno> {
-		self.log.write(str.as_bytes())
+	pub fn write(&self, data: &[u8]) -> Result<usize, rustix::io::Errno> {
+		self.log.write(data)
 	}
 
 	pub fn read(&self, buf: &mut [u8]) -> Result<usize, rustix::io::Errno> {
@@ -100,7 +103,11 @@ impl LocalReplica {
 	}
 }
 
-fn main() {}
+fn main() {
+	let mut rng = rand::thread_rng();
+	let rid = ReplicaID::new(&mut rng);
+	let eh = EventHeader { origin: rid, length: 0, _unused: 0 };
+}
 
 #[cfg(test)]
 mod test {
