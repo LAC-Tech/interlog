@@ -55,9 +55,13 @@ impl VSect {
 		&self.bytes[0..self.pos]
 	}
 
-	fn fetch(&mut self, fd: fd::BorrowedFd) -> rustix::io::Result<usize> {
+	fn fetch(
+		&mut self,
+		fd: fd::BorrowedFd,
+		len: usize,
+	) -> rustix::io::Result<usize> {
 		// pread ignores the file offset
-		let bytes_read = io::pread(fd, &mut self.bytes, 0)?;
+		let bytes_read = io::pread(fd, &mut self.bytes[0..len], 0)?;
 		self.pos = bytes_read;
 		Ok(bytes_read)
 	}
