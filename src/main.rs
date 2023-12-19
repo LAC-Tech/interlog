@@ -1,5 +1,3 @@
-#![feature(vec_push_within_capacity)]
-
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes 64 bit");
 
@@ -11,7 +9,7 @@ compile_error!("code assumes little-endian");
 
 use fs::OFlags;
 use rand::prelude::*;
-use rustix::{fd, fs, io};
+use rustix::{fd, fd::AsFd, fs, io};
 
 #[derive(Clone, Copy)]
 #[repr(align(2))]
@@ -33,51 +31,81 @@ impl core::fmt::Display for ReplicaID {
 	}
 }
 
-// Virtual Sector Length
-const VSLEN: usize = 4096;
+// Virtual Sector Size
+const VS_SIZE: usize = 256;
+
+// Virtual Sector
+pub struct VSect {
+	bytes: [u8; VS_SIZE],
+	pos: usize,
+}
+
+impl VSect {
+	pub fn new() -> Self {
+		Self { bytes: [0u8; VS_SIZE], pos: 0 }
+	}
+
+	pub fn write(&mut self, data: &[u8]) {
+		let new_pos = self.pos + data.len();
+		self.bytes[self.pos..new_pos].copy_from_slice(data);
+		self.pos = new_pos;
+	}
+
+	pub fn as_bytes(&self) -> &[u8] {
+		&self.bytes[0..self.pos]
+	}
+
+	fn fetch(&mut self, fd: fd::BorrowedFd) -> rustix::io::Result<usize> {
+		// pread ignores the file offset
+		let bytes_read = io::pread(fd, &mut self.bytes, 0)?;
+		self.pos = bytes_read;
+		Ok(bytes_read)
+	}
+
+	fn flush(&mut self, fd: fd::BorrowedFd) -> rustix::io::Result<usize> {
+		// always sets file offset to EOF.
+		let bytes_written = io::write(fd, &self.bytes)?;
+		// Resetting
+		self.bytes[0..self.pos].fill(0);
+		self.pos = 0;
+		Ok(bytes_written)
+	}
+}
 
 pub struct LocalReplica {
 	pub id: ReplicaID,
 	pub path: std::path::PathBuf,
 	log_fd: fd::OwnedFd,
-	read_cache: Vec<u8>,
-	write_cache: Vec<u8>,
+	write_cache: VSect,
 }
 
 impl LocalReplica {
-	pub fn new<R: Rng>(rng: &mut R) -> Result<Self, rustix::io::Errno> {
+	pub fn new<R: Rng>(rng: &mut R) -> rustix::io::Result<Self> {
 		let id = ReplicaID::new(rng);
 		let path_str = format!("/tmp/interlog/{}", id);
 		let path = std::path::PathBuf::from(path_str);
 		let log_fd = fs::open(
 			&path,
-			OFlags::DIRECT | OFlags::CREATE | OFlags::APPEND | OFlags::RDWR,
+			OFlags::DIRECT
+				| OFlags::CREATE | OFlags::APPEND
+				| OFlags::RDWR | OFlags::DSYNC,
 			fs::Mode::RUSR | fs::Mode::WUSR,
 		)?;
-		let read_cache = Vec::with_capacity(VSLEN);
-		let write_cache = Vec::with_capacity(VSLEN);
-		Ok(Self { id, path, log_fd, read_cache, write_cache })
+		let write_cache = VSect::new();
+		Ok(Self { id, path, log_fd, write_cache })
 	}
 
-	pub fn write(&self, data: &[u8]) -> Result<usize, rustix::io::Errno> {
-		// always sets file offset to EOF.
-		io::write(&self.log_fd, data)
+	pub fn write(&mut self, data: &[u8]) -> Result<usize, rustix::io::Errno> {
+		self.write_cache.write(data);
+		self.write_cache.flush(self.log_fd.as_fd())
 	}
 
-	pub fn read(&mut self) -> Result<&[u8], rustix::io::Errno> {
-		self.read_cache.clear();
-		// pread ignores the file offset
-		io::pread(&self.log_fd, &mut self.read_cache, 0)?;
-		Ok(&self.read_cache)
+	pub fn read(&self, read_cache: &mut VSect) -> rustix::io::Result<usize> {
+		read_cache.fetch(self.log_fd.as_fd())
 	}
 }
 
-fn main() {
-	let mut rng = rand::thread_rng();
-	let rid = ReplicaID::new(&mut rng);
-	let mut ns: Vec<u8> = vec![];
-	ns.push_within_capacity(9);
-}
+fn main() {}
 
 #[cfg(test)]
 mod test {
@@ -86,12 +114,13 @@ mod test {
 	#[test]
 	fn read_and_write_to_log() {
 		let mut rng = rand::thread_rng();
-		let replica = LocalReplica::new(&mut rng).expect("failed to open file");
-		replica.write(b"Hello,\n").expect("failed to write to replica");
-		replica.write(b"world!\n").expect("failed to write to replica");
+		let mut replica =
+			LocalReplica::new(&mut rng).expect("failed to open file");
+		replica.write(b"Hello, world!\n").expect("failed to write to replica");
 
-		let buf = [0; 13] = replica.read().expect("failed to read to file");
-		assert_eq!(&buf, b"Hello,\nworld!");
+		let mut read_buf = VSect::new();
+		replica.read(&mut read_buf).expect("failed to read to file");
+		assert_eq!(&read_buf.as_bytes(), b"Hello, world!\n");
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
 	}
