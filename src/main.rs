@@ -10,6 +10,7 @@ compile_error!("code assumes little-endian");
 use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
+use std::io::Read;
 
 type O = OFlags;
 
@@ -31,6 +32,30 @@ impl core::fmt::Display for ReplicaID {
 
 		Ok(())
 	}
+}
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct EventLen(u8);
+
+impl From<usize> for EventLen {
+	fn from(val: usize) -> Self {
+		let n: u8 = val.try_into().expect("Event len was bigger than 2^8");
+		EventLen(n)
+	}
+}
+
+impl From<EventLen> for usize {
+	fn from(val: EventLen) -> Self {
+		val.0.into()
+	}
+}
+
+#[repr(align(8))]
+struct EventID {
+	origin: ReplicaID,
+	log_offset: u32,
+	len: EventLen,
 }
 
 // Virtual Sector Size
@@ -63,7 +88,7 @@ impl VSect {
 		len: EventLen,
 	) -> rustix::io::Result<usize> {
 		// pread ignores the file offset
-		let bytes_read = io::pread(fd, &mut self.bytes[0..len], 0)?;
+		let bytes_read = io::pread(fd, &mut self.bytes[0..len.into()], 0)?;
 		self.pos = bytes_read;
 		Ok(bytes_read)
 	}
@@ -78,29 +103,10 @@ impl VSect {
 	}
 }
 
-#[repr(transparent)]
-struct EventLen(u8);
-
-impl TryInto<EventLen> for usize {
-	type Error = core::num::TryFromIntError;
-
-	fn try_into(self) -> Result<EventLen, Self::Error> {
-		self.try_into().map(EventLen)
+impl Default for VSect {
+	fn default() -> Self {
+		Self::new()
 	}
-}
-
-impl TryInto<usize> for EventLen {
-	type Error = core::convert::Infallible;
-
-	fn try_into(self) -> Result<usize, Self::Error> {
-		self.0.try_into()
-	}
-}
-
-#[repr(align(8))]
-struct EventID {
-	log_offset: u32,
-	len: EventLen,
 }
 
 pub struct LocalReplica {
@@ -128,27 +134,37 @@ impl LocalReplica {
 		Ok(Self { id, path, log_fd, log_len, write_cache, id_index })
 	}
 
-	pub fn write(&mut self, data: &[u8]) -> Result<(), rustix::io::Errno> {
+	pub fn write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
 		self.write_cache.write(data);
 		let bytes_written = self.write_cache.flush(self.log_fd.as_fd())?;
 		self.log_len += bytes_written;
 
-		self.id_index.push(EventID {
+		let event_len: EventLen = data.len().into();
+		let id = EventID {
+			origin: self.id,
 			log_offset: self.log_len,
-			len: data
-				.len()
-				.try_into()
-				.expect("Length of event is more than 2^8"),
-		});
+			len: event_len,
+		};
+		self.id_index.push(id);
 		Ok(())
 	}
 
 	pub fn read(&self, read_cache: &mut VSect) -> rustix::io::Result<usize> {
-		read_cache.fetch(self.log_fd.as_fd(), self.id_index0)
+		read_cache.fetch(self.log_fd.as_fd(), self.id_index[0].len)
 	}
 }
 
-fn main() {}
+fn main() {
+	let mut rng = rand::thread_rng();
+	let mut replica = LocalReplica::new(&mut rng).expect("failed to open file");
+	replica.write(b"Hello, world!\n").expect("failed to write to replica");
+
+	println!("press any key to continue");
+	let _ = std::io::stdin().read_exact(&mut []);
+
+	let path = replica.path.clone();
+	std::fs::remove_file(path).expect("failed to remove file");
+}
 
 #[cfg(test)]
 mod test {
