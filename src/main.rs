@@ -14,7 +14,7 @@ use std::io::Read;
 
 type O = OFlags;
 
-#[derive(Clone, Copy)]
+#[derive(bytemuck::Zeroable, Clone, Copy)]
 #[repr(align(2))]
 pub struct ReplicaID([u16; 5]);
 
@@ -34,7 +34,7 @@ impl core::fmt::Display for ReplicaID {
 	}
 }
 
-#[derive(Clone, Copy)]
+#[derive(bytemuck::Zeroable, Clone, Copy)]
 #[repr(transparent)]
 struct EventLen(u8);
 
@@ -51,6 +51,7 @@ impl From<EventLen> for usize {
 	}
 }
 
+#[derive(bytemuck::Zeroable, Clone, Copy)]
 #[repr(align(8))]
 struct EventID {
 	origin: ReplicaID,
@@ -96,6 +97,13 @@ impl VSect {
 	fn flush(&mut self, fd: fd::BorrowedFd) -> rustix::io::Result<u32> {
 		// always sets file offset to EOF.
 		let bytes_written = io::write(fd, &self.bytes)?;
+		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
+		assert!(
+			bytes_written != VS_SIZE,
+			"expected to write {} bytes, wrote {}",
+			VS_SIZE,
+			bytes_written
+		);
 		// Resetting
 		self.bytes[0..self.pos].fill(0);
 		self.pos = 0;
