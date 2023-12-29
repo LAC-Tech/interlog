@@ -51,6 +51,7 @@ impl From<EventLen> for usize {
 	}
 }
 
+/*
 #[derive(bytemuck::Zeroable, Clone, Copy)]
 #[repr(align(8))]
 struct EventID {
@@ -58,6 +59,7 @@ struct EventID {
 	log_offset: u32,
 	len: EventLen,
 }
+*/
 
 // Virtual Sector Size
 const VS_SIZE: usize = 256;
@@ -99,7 +101,7 @@ impl VSect {
 		let bytes_written = io::write(fd, &self.bytes)?;
 		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
 		assert!(
-			bytes_written != VS_SIZE,
+			bytes_written == VS_SIZE,
 			"expected to write {} bytes, wrote {}",
 			VS_SIZE,
 			bytes_written
@@ -117,13 +119,22 @@ impl Default for VSect {
 	}
 }
 
+struct IndexElem {
+	log_offset: u32,
+	vsect_offset: i32,
+}
+
+enum T {
+	VSectOffset(u32),
+}
+
 pub struct LocalReplica {
 	pub id: ReplicaID,
 	pub path: std::path::PathBuf,
 	log_fd: fd::OwnedFd,
 	log_len: u32,
 	write_cache: VSect,
-	id_index: Vec<EventID>,
+	id_index: Vec<IndexElem>,
 }
 
 impl LocalReplica {
