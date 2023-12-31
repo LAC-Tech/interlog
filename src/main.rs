@@ -28,14 +28,31 @@ impl core::fmt::Display for ReplicaID {
 	}
 }
 
+struct EventID {
+	origin: ReplicaID,
+	log_pos: usize,
+}
+
+struct Event<'a> {
+	id: EventID,
+	val: &'a [u8],
+}
+
+// A contiguous slice of events
+struct EventSlice<'a>(&'a [u8]);
+
+enum WriteErr {}
+
+type WriteRes<L> = Result<L, WriteErr>;
+
 trait Replica {
 	// Events local to the replica, that don't yet have an ID
-	fn write_local<const N: usize>(
+	fn local_write<const N: usize>(
 		&mut self,
 		events: [&[u8]; N],
-	) -> [ReplicaID; N];
+	) -> WriteRes<[ReplicaID; N]>;
 
-	// Events that have already been recorded on other replicas
-	// Designed to be used by the sync protocol
-	fn write_remote(&mut self);
+	// events that have already been recorded on other replicas
+	// designed to be used by the sync protocol
+	fn remote_write(&mut self, event_slice: EventSlice) -> WriteRes<()>;
 }
