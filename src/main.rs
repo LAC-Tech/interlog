@@ -14,6 +14,47 @@ use std::io::Read;
 
 type O = OFlags;
 
+#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+#[repr(C)]
+struct EventID { origin: u128, pos: usize }
+
+#[derive(Debug)]
+struct Event<'a> { id: EventID, val: &'a [u8]}
+
+struct EventIndex { pos: usize, len: usize }
+
+struct EventSlice {
+   indices: Vec<EventIndex>,
+   bytes: Vec<u8>
+}
+
+impl EventSlice {
+    const EVENT_ID_LEN: usize = std::mem::size_of::<EventID>();
+    fn write(&mut self, e: Event) {
+        let index = EventIndex {
+            pos: self.bytes.len(),
+            len: Self::EVENT_ID_LEN + e.val.len()
+        };
+        
+        self.bytes.extend_from_slice(bytemuck::bytes_of(&e.id));
+        self.bytes.extend_from_slice(e.val);
+
+        self.indices.push(index);
+
+    }
+
+    fn read(&self, i: usize) -> Event {
+        let index = &self.indices[i];
+        let id_range = index.pos .. index.pos + Self::EVENT_ID_LEN;
+        let val_range = index.pos + Self::EVENT_ID_LEN .. index.len;
+
+        Event {
+            id: *bytemuck::from_bytes(&self.bytes[id_range]),
+            val: &self.bytes[val_range]
+        }
+    }
+}
+
 struct ReplicaID(u128);
 
 impl ReplicaID {
@@ -28,18 +69,6 @@ impl core::fmt::Display for ReplicaID {
 	}
 }
 
-struct EventID {
-	origin: ReplicaID,
-	log_pos: usize,
-}
-
-struct Event<'a> {
-	id: EventID,
-	val: &'a [u8],
-}
-
-// A contiguous slice of events
-struct EventSlice<'a>(&'a [u8]);
 
 enum WriteErr {}
 
@@ -55,4 +84,24 @@ trait Replica {
 	// events that have already been recorded on other replicas
 	// designed to be used by the sync protocol
 	fn remote_write(&mut self, event_slice: EventSlice) -> WriteRes<()>;
+}
+
+fn main() {
+    let val: u64 = 42;
+    let bytes = bytemuck::bytes_of(&val);
+    dbg!(bytes);
+    let e = Event { 
+        id: EventID { origin: 0, pos: 0 },
+        val: bytes
+    };
+
+    let mut es = EventSlice { indices: vec![], bytes: vec![] };
+
+    es.write(e);
+    let actual = es.read(0);
+
+    println!("HELLO");
+
+    assert_eq!(val, *bytemuck::from_bytes(actual.val))    
+
 }
