@@ -23,6 +23,8 @@ struct Event<'a> { id: EventID, val: &'a [u8]}
 
 struct EventIndex { pos: usize, len: usize }
 
+// TODO: there's some confusion with this struct
+// Is it a buffer? or an immutable collection of events?
 struct EventSlice {
    indices: Vec<EventIndex>,
    bytes: Vec<u8>
@@ -69,10 +71,35 @@ impl core::fmt::Display for ReplicaID {
 	}
 }
 
-
 enum WriteErr {}
 
 type WriteRes<L> = Result<L, WriteErr>;
+
+pub struct LocalReplica {
+    pub id: ReplicaID,
+    pub path: std::path::PathBuf,
+    log_fd: fd::OwnedFd,
+    log_len: usize,
+    write_cache: Vec<u8>
+}
+
+impl LocalReplica {
+    fn new<R: Rng>(rng: &mut R) -> rustix::io::Result<Self> {
+        let id = ReplicaID::new(rng);
+		let path_str = format!("/tmp/interlog/{}", id);
+		let path = std::path::PathBuf::from(path_str);
+		let log_fd = fs::open(
+			&path,
+			O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC,
+			fs::Mode::RUSR | fs::Mode::WUSR,
+		)?;
+		let log_len = 0;
+		Ok(Self { id, path, log_fd, log_len, write_cache: vec![]})
+    }
+    
+    // Event local to the replica, that don't yet have an ID
+}
+
 
 trait Replica {
 	// Events local to the replica, that don't yet have an ID
