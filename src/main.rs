@@ -15,8 +15,24 @@ use std::io::Read;
 type O = OFlags;
 
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+#[repr(transparent)]
+pub struct ReplicaID(u128);
+
+impl ReplicaID {
+    fn new<R: Rng>(rng: &mut R) -> Self {
+        Self(rng.gen())
+    }
+}
+
+impl core::fmt::Display for ReplicaID {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
+#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
 #[repr(C)]
-struct EventID { origin: u128, pos: usize }
+struct EventID { origin: ReplicaID, pos: usize }
 const EVENT_ID_LEN: usize = std::mem::size_of::<EventID>();
 
 #[derive(Debug)]
@@ -57,20 +73,6 @@ impl EventBuffer {
     }
 }
 
-struct ReplicaID(u128);
-
-impl ReplicaID {
-    fn new<R: Rng>(rng: &mut R) -> Self {
-        Self(rng.gen())
-    }
-}
-
-impl core::fmt::Display for ReplicaID {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        write!(f, "{:x}", self.0)
-    }
-}
-
 enum WriteErr {}
 
 type WriteRes<L> = Result<L, WriteErr>;
@@ -82,7 +84,6 @@ pub struct LocalReplica {
     log_len: usize,
     indices: Vec<EventIndex>,
     write_cache: Vec<u8>,
-    read_cache: Vec<u8>
 }
 
 impl LocalReplica {
@@ -98,24 +99,30 @@ impl LocalReplica {
 		let log_len = 0;
         let indices = vec![];
         let write_cache = vec![];
-        let read_cache = vec![];
-		Ok(Self { id, path, log_fd, log_len, indices, write_cache, read_cache})
+		Ok(Self { id, path, log_fd, log_len, indices, write_cache })
     }
     
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
+        // Write to cache 
+        let id = EventID { origin: self.id, pos: self.indices.len() };
+        self.write_cache.extend_from_slice(bytemuck::bytes_of(&id));
 		self.write_cache.extend_from_slice(data);
 
         // always sets file offset to EOF.
-		let bytes_written = io::write(self.log_fd.as_fd(), data)?;
+		let bytes_written = io::write(self.log_fd.as_fd(), &self.write_cache)?;
 		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
-		assert_eq!(bytes_written, data.len());
-		// Resetting
-		self.write_cache.clear();
+		assert_eq!(bytes_written, self.write_cache.len());
 
         // Updating metadata
-        self.indices.push(EventIndex {pos: self.log_len, len: data.len()});
+        let index = EventIndex {
+            pos: self.log_len,
+            len: self.write_cache.len()
+        };
+        self.indices.push(index);
 		self.log_len += bytes_written;
+		// Resetting
+		self.write_cache.clear();
 
 		Ok(())
 	}
@@ -153,7 +160,7 @@ mod tests {
         let val: u64 = 42;
         let bytes = bytemuck::bytes_of(&val);
         let e = Event {
-            id: EventID { origin: 0, pos: 0 },
+            id: EventID { origin: ReplicaID(0), pos: 0 },
             val: bytes,
         };
 
@@ -168,9 +175,12 @@ mod tests {
     #[test]
 	fn read_and_write_to_log() {
 		let mut rng = rand::thread_rng();
-		let mut replica =
-			LocalReplica::new(&mut rng).expect("failed to open file");
-		replica.local_write(b"Hello, world!\n").expect("failed to write to replica");
+		let mut replica = LocalReplica::new(&mut rng)
+            .expect("failed to open file");
+		replica
+            .local_write(b"Hello, world!\n")
+            .expect("failed to write to replica");
+
 		let mut read_buf: Vec<u8> = Vec::with_capacity(512);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
 		assert_eq!(&read_buf, b"Hello, world!\n");
@@ -179,4 +189,16 @@ mod tests {
     }
 }
 
-fn main() {}
+fn main() {
+    let mut rng = rand::thread_rng();
+    let mut replica = LocalReplica::new(&mut rng)
+        .expect("failed to open file");
+    replica
+        .local_write(b"Who is this doin' this synthetic type of alpha beta psychedelic funkin'?")
+        .expect("failed to write to replica");
+
+    let mut read_buf: Vec<u8> = Vec::with_capacity(512);
+    replica.read(&mut read_buf, 0).expect("failed to read to file");
+
+    dbg!(read_buf);
+}
