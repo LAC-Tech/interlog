@@ -80,7 +80,9 @@ pub struct LocalReplica {
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: usize,
-    write_cache: Vec<u8>
+    indices: Vec<EventIndex>,
+    write_cache: Vec<u8>,
+    read_cache: Vec<u8>
 }
 
 impl LocalReplica {
@@ -94,10 +96,40 @@ impl LocalReplica {
 			fs::Mode::RUSR | fs::Mode::WUSR,
 		)?;
 		let log_len = 0;
-		Ok(Self { id, path, log_fd, log_len, write_cache: vec![]})
+        let indices = vec![];
+        let write_cache = vec![];
+        let read_cache = vec![];
+		Ok(Self { id, path, log_fd, log_len, indices, write_cache, read_cache})
     }
     
     // Event local to the replica, that don't yet have an ID
+    pub fn local_write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
+		self.write_cache.extend_from_slice(data);
+
+        // always sets file offset to EOF.
+		let bytes_written = io::write(self.log_fd.as_fd(), data)?;
+		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
+		assert_eq!(bytes_written, data.len());
+		// Resetting
+		self.write_cache.clear();
+
+        // Updating metadata
+        self.indices.push(EventIndex {pos: self.log_len, len: data.len()});
+		self.log_len += bytes_written;
+
+		Ok(())
+	}
+
+    pub fn read(
+        &mut self, buf: &mut Vec<u8>, pos: usize
+    ) -> rustix::io::Result<usize> {
+        let index = &self.indices[pos];
+        unsafe {
+            buf.set_len(index.len)
+        }
+        // pread ignores the fd offset, supply your own
+        io::pread(self.log_fd.as_fd(), buf, index.pos as u64)
+    }
 }
 
 
@@ -131,6 +163,19 @@ mod tests {
         let actual = es.read(0);
 
         assert_eq!(val, *bytemuck::from_bytes(actual.val))
+    }
+    
+    #[test]
+	fn read_and_write_to_log() {
+		let mut rng = rand::thread_rng();
+		let mut replica =
+			LocalReplica::new(&mut rng).expect("failed to open file");
+		replica.local_write(b"Hello, world!\n").expect("failed to write to replica");
+		let mut read_buf: Vec<u8> = Vec::with_capacity(512);
+		replica.read(&mut read_buf, 0).expect("failed to read to file");
+		assert_eq!(&read_buf, b"Hello, world!\n");
+		let path = replica.path.clone();
+		std::fs::remove_file(path).expect("failed to remove file");
     }
 }
 
