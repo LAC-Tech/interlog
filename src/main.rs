@@ -33,7 +33,10 @@ impl core::fmt::Display for ReplicaID {
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
 #[repr(C)]
 struct EventID { origin: ReplicaID, pos: usize }
-const EVENT_ID_LEN: usize = std::mem::size_of::<EventID>();
+
+impl EventID {
+    const LEN: usize = std::mem::size_of::<EventID>();
+}
 
 #[derive(Debug)]
 struct Event<'a> { id: EventID, val: &'a [u8] }
@@ -52,7 +55,7 @@ impl EventBuffer {
     fn write(&mut self, e: Event) {
         let index = EventIndex {
             pos: self.bytes.len(),
-            len: EVENT_ID_LEN + e.val.len(),
+            len: EventID::LEN + e.val.len(),
         };
 
         self.bytes.extend_from_slice(bytemuck::bytes_of(&e.id));
@@ -63,8 +66,8 @@ impl EventBuffer {
 
     fn read(&self, i: usize) -> Event {
         let index = &self.indices[i];
-        let id_range = index.pos..index.pos + EVENT_ID_LEN;
-        let val_range = index.pos + EVENT_ID_LEN..index.len;
+        let id_range = index.pos..index.pos + EventID::LEN;
+        let val_range = index.pos + EventID::LEN..index.len;
 
         Event {
             id: *bytemuck::from_bytes(&self.bytes[id_range]),
@@ -105,7 +108,7 @@ impl LocalReplica {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
         // Write to cache 
-        let event_len = EVENT_ID_LEN + data.len();
+        let event_len = EventID::LEN + data.len();
         self.write_cache.extend_from_slice(&event_len.to_le_bytes());
         let id = EventID { origin: self.id, pos: self.indices.len() };
         self.write_cache.extend_from_slice(bytemuck::bytes_of(&id));
