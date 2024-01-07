@@ -129,13 +129,18 @@ impl LocalReplica {
 
     pub fn read(
         &mut self, buf: &mut Vec<u8>, pos: usize
-    ) -> rustix::io::Result<usize> {
+    ) -> rustix::io::Result<()> {
         let index = &self.indices[pos];
         unsafe {
             buf.set_len(index.len)
         }
         // pread ignores the fd offset, supply your own
-        io::pread(self.log_fd.as_fd(), buf, index.pos as u64)
+        let bytes_read = io::pread(self.log_fd.as_fd(), buf, index.pos as u64)?;
+        
+        // If this isn't the case, we should figure out why!
+        assert_eq!(bytes_read, index.len);
+
+        Ok(())
     }
 }
 
@@ -183,7 +188,16 @@ mod tests {
 
 		let mut read_buf: Vec<u8> = Vec::with_capacity(512);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
-		assert_eq!(&read_buf, b"Hello, world!\n");
+    
+        let actual_event_id: &EventID = 
+            bytemuck::from_bytes(&read_buf[0..EVENT_ID_LEN]);
+
+        let actual_event = Event {
+            id: *actual_event_id,
+            val: &read_buf[EVENT_ID_LEN..]
+        };
+
+		assert_eq!(&actual_event.val, b"Hello, world!\n");
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
