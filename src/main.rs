@@ -38,9 +38,19 @@ impl EventID {
     const LEN: usize = std::mem::size_of::<EventID>();
 }
 
+
+#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+#[repr(C)]
+struct EventHeader { len: usize, id: EventID }
+
+impl EventHeader {
+    const LEN: usize = std::mem::size_of::<EventHeader>();
+}
+
 #[derive(Debug)]
 struct Event<'a> { id: EventID, val: &'a [u8] }
 
+// Including 'len' here to avoid two sys calls when reading event
 struct EventIndex { pos: usize, len: usize }
 
 // TODO: there's some confusion with this struct
@@ -108,14 +118,13 @@ impl LocalReplica {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
         // Write to cache 
-        let event_len = EventID::LEN + data.len();
-        self.write_cache.extend_from_slice(&event_len.to_le_bytes());
-        let id = EventID { origin: self.id, pos: self.indices.len() };
-        self.write_cache.extend_from_slice(bytemuck::bytes_of(&id));
-		self.write_cache.extend_from_slice(data);
-
-        // Done appending to write cache, we know the size
-        self.write_cache[..8].copy_from_slice(&data.len().to_le_bytes()); 
+        
+        let header = EventHeader {
+            len: EventID::LEN + data.len(),
+            id: EventID { origin: self.id, pos: self.indices.len() }
+        };
+        self.write_cache.extend_from_slice(bytemuck::bytes_of(&header));
+        self.write_cache.extend_from_slice(data); 
 
         // always sets file offset to EOF.
 		let bytes_written = io::write(self.log_fd.as_fd(), &self.write_cache)?;
@@ -125,7 +134,7 @@ impl LocalReplica {
         // Updating metadata
         let index = EventIndex {
             pos: self.log_len + 8,
-            len: event_len 
+            len: header.len 
         };
         self.indices.push(index);
 		self.log_len += bytes_written;
@@ -197,12 +206,14 @@ mod tests {
 		let mut read_buf: Vec<u8> = Vec::with_capacity(512);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
+        dbg!(&read_buf);
+
         let actual_event_id: &EventID = 
-            bytemuck::from_bytes(&read_buf[0..EVENT_ID_LEN]);
+            bytemuck::from_bytes(&read_buf[0..EventID::LEN]);
 
         let actual_event = Event {
             id: *actual_event_id,
-            val: &read_buf[EVENT_ID_LEN..]
+            val: &read_buf[EventID::LEN..]
         };
 
 		assert_eq!(&actual_event.val, b"Hello, world!\n");
@@ -222,5 +233,10 @@ fn main() {
     let mut read_buf: Vec<u8> = Vec::with_capacity(512);
     replica.read(&mut read_buf, 0).expect("failed to read to file");
 
-    dbg!(read_buf);
+    for chunk in read_buf.chunks(8) {
+        for byte in chunk {
+            print!("{:02x} ", byte);
+        }
+        println!();
+    }    
 }
