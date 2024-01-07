@@ -105,9 +105,14 @@ impl LocalReplica {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
         // Write to cache 
+        let event_len = EVENT_ID_LEN + data.len();
+        self.write_cache.extend_from_slice(&event_len.to_le_bytes());
         let id = EventID { origin: self.id, pos: self.indices.len() };
         self.write_cache.extend_from_slice(bytemuck::bytes_of(&id));
 		self.write_cache.extend_from_slice(data);
+
+        // Done appending to write cache, we know the size
+        self.write_cache[..8].copy_from_slice(&data.len().to_le_bytes()); 
 
         // always sets file offset to EOF.
 		let bytes_written = io::write(self.log_fd.as_fd(), &self.write_cache)?;
@@ -116,8 +121,8 @@ impl LocalReplica {
 
         // Updating metadata
         let index = EventIndex {
-            pos: self.log_len,
-            len: self.write_cache.len()
+            pos: self.log_len + 8,
+            len: event_len 
         };
         self.indices.push(index);
 		self.log_len += bytes_written;
