@@ -41,7 +41,7 @@ impl EventID {
 
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
 #[repr(C)]
-struct EventHeader { len: usize, id: EventID }
+struct EventHeader { len: usize, origin: ReplicaID }
 
 impl EventHeader {
     const LEN: usize = std::mem::size_of::<EventHeader>();
@@ -121,7 +121,7 @@ impl LocalReplica {
         
         let header = EventHeader {
             len: EventID::LEN + data.len(),
-            id: EventID { origin: self.id, pos: self.indices.len() }
+            origin: self.id,
         };
         self.write_cache.extend_from_slice(bytemuck::bytes_of(&header));
         self.write_cache.extend_from_slice(data); 
@@ -133,7 +133,7 @@ impl LocalReplica {
 
         // Updating metadata
         let index = EventIndex {
-            pos: self.log_len + 8,
+            pos: self.log_len,
             len: header.len 
         };
         self.indices.push(index);
@@ -206,13 +206,11 @@ mod tests {
 		let mut read_buf: Vec<u8> = Vec::with_capacity(512);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
-        dbg!(&read_buf);
-
-        let actual_event_id: &EventID = 
-            bytemuck::from_bytes(&read_buf[0..EventID::LEN]);
+        let actual_event_header: &EventHeader = 
+            bytemuck::from_bytes(&read_buf[0..EventHeader::LEN]);
 
         let actual_event = Event {
-            id: *actual_event_id,
+            id: EventID { origin: actual_event_header.origin, pos: 0 },
             val: &read_buf[EventID::LEN..]
         };
 
