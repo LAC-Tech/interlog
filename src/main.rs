@@ -10,7 +10,6 @@ compile_error!("code assumes little-endian");
 use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
-use std::io::Read;
 
 type O = OFlags;
 
@@ -100,10 +99,10 @@ pub struct LocalReplica {
 }
 
 impl LocalReplica {
-    fn new<R: Rng>(rng: &mut R) -> rustix::io::Result<Self> {
+    fn new<R: Rng>(dir_path: &str, rng: &mut R) -> rustix::io::Result<Self> {
         let id = ReplicaID::new(rng);
-		let path_str = format!("/tmp/interlog/{}", id);
-		let path = std::path::PathBuf::from(path_str);
+		let path_str = format!("{}/{}", dir_path, id);
+		let path = std::path::PathBuf::from(&path_str);
 		let log_fd = fs::open(
 			&path,
 			O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC,
@@ -161,7 +160,6 @@ impl LocalReplica {
     }
 }
 
-
 trait Replica {
     // Events local to the replica, that don't yet have an ID
     fn local_write<const N: usize>(
@@ -197,7 +195,7 @@ mod tests {
     #[test]
 	fn read_and_write_to_log() {
 		let mut rng = rand::thread_rng();
-		let mut replica = LocalReplica::new(&mut rng)
+		let mut replica = LocalReplica::new("/tmp/interlog", &mut rng)
             .expect("failed to open file");
 		replica
             .local_write(b"Hello, world!\n")
@@ -222,7 +220,7 @@ mod tests {
 
 fn main() {
     let mut rng = rand::thread_rng();
-    let mut replica = LocalReplica::new(&mut rng)
+    let mut replica = LocalReplica::new("/tmp/interlog", &mut rng)
         .expect("failed to open file");
     replica
         .local_write(b"Who is this doin' this synthetic type of alpha beta psychedelic funkin'?")
