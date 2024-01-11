@@ -11,7 +11,50 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
+// Fixed Capacity Byte Buffers
+struct FCBBuf<const CAPACITY: usize> {
+    bytes: Box<[u8; CAPACITY]>,
+    len: usize
+}
+
+impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
+    fn new() -> FCBBuf<CAPACITY> {
+        let bytes = Box::new([0; CAPACITY]);
+        let len = 0;
+
+        Self {bytes, len}
+    }
+
+    fn extend_from_slice(&mut self, other: &[u8]) {
+        let new_len = self.len + other.len();
+        // TODO: proper option type
+        if new_len > CAPACITY { panic!("OVERFLOW") }
+        self.bytes[self.len..new_len].copy_from_slice(other);
+        self.len = new_len;
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
+impl<const N: usize> core::ops::Deref for FCBBuf<N> {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &*self.bytes
+    }
+}
+
+
 type O = OFlags;
+
+// TODO: all of these are pretty arbitrary
+mod size {
+    pub const READ_CACHE: usize = 256;
+    pub const WRITE_CACHE: usize = 256; 
+}
 
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -85,33 +128,43 @@ impl EventBuffer {
     }
 }
 
-enum WriteErr {}
-
-type WriteRes<L> = Result<L, WriteErr>;
-
 pub struct LocalReplica {
     pub id: ReplicaID,
-    pub path: std::path::PathBuf,
+    pub path: String,
     log_fd: fd::OwnedFd,
     log_len: usize,
     indices: Vec<EventIndex>,
-    write_cache: Vec<u8>,
+    write_cache: FCBBuf<{ size::WRITE_CACHE }>,
 }
 
 impl LocalReplica {
-    fn new<R: Rng>(dir_path: &str, rng: &mut R) -> rustix::io::Result<Self> {
+    pub fn new<R: Rng>(
+        dir_path: &str, rng: &mut R
+    ) -> rustix::io::Result<Self> {
         let id = ReplicaID::new(rng);
-		let path_str = format!("{}/{}", dir_path, id);
-		let path = std::path::PathBuf::from(&path_str);
-		let log_fd = fs::open(
-			&path,
-			O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC,
-			fs::Mode::RUSR | fs::Mode::WUSR,
-		)?;
+        let path = format!("{}/{}", dir_path, id);
+		let log_fd = Self::open_log(&path)?;
 		let log_len = 0;
         let indices = vec![];
-        let write_cache = vec![];
+        let write_cache = FCBBuf::new();
 		Ok(Self { id, path, log_fd, log_len, indices, write_cache })
+    }
+
+    // Open existing replica
+    pub fn open(path: &str) -> rustix::io::Result<Self> {
+		let log_fd = Self::open_log(&path)?;
+
+
+
+        panic!("at the disco") 
+    }
+
+    fn open_log(path: &str) -> rustix::io::Result<fd::OwnedFd> {
+		fs::open(
+			path,
+			O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC,
+			fs::Mode::RUSR | fs::Mode::WUSR,
+		)
     }
     
     // Event local to the replica, that don't yet have an ID
@@ -158,17 +211,6 @@ impl LocalReplica {
 
         Ok(())
     }
-}
-
-trait Replica {
-    // Events local to the replica, that don't yet have an ID
-    fn local_write<const N: usize>(
-        &mut self, events: [&[u8]; N]
-    ) -> WriteRes<[ReplicaID; N]>;
-
-    // events that have already been recorded on other replicas
-    // designed to be used by the sync protocol
-    fn remote_write(&mut self, event_slice: EventBuffer) -> WriteRes<()>;
 }
 
 #[cfg(test)]

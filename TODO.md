@@ -7,6 +7,8 @@
 ~~- make replica struct~~
 ~~- write "hello, world!" to that file in a test, read it back, then delete it~~
 ~~- do the same but using fnctl with O_DIRECT~~
-~~- read and write through virtual 4KiB sectors~~
+~~- write event header as well as event~~
+~~- read back using index~~
+- make constructor for making new DB call generic constructor
 - write two values and read them both (using an index that stores the position)
 - reconstruct index from log (will need event metadata on log)
