@@ -47,13 +47,19 @@ impl<const N: usize> core::ops::Deref for FCBBuf<N> {
     }
 }
 
+impl<const N: usize> core::ops::DerefMut for FCBBuf<N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.bytes
+    }
+}
+
 
 type O = OFlags;
 
 // TODO: all of these are pretty arbitrary
 mod size {
     pub const READ_CACHE: usize = 256;
-    pub const WRITE_CACHE: usize = 256; 
+    pub const WRITE_CACHE: usize = 256;
 }
 
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
@@ -79,7 +85,6 @@ struct EventID { origin: ReplicaID, pos: usize }
 impl EventID {
     const LEN: usize = std::mem::size_of::<EventID>();
 }
-
 
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
 #[repr(C)]
@@ -135,6 +140,7 @@ pub struct LocalReplica {
     log_len: usize,
     indices: Vec<EventIndex>,
     write_cache: FCBBuf<{ size::WRITE_CACHE }>,
+    read_cache: FCBBuf<{ size::READ_CACHE }>
 }
 
 impl LocalReplica {
@@ -147,14 +153,27 @@ impl LocalReplica {
 		let log_len = 0;
         let indices = vec![];
         let write_cache = FCBBuf::new();
-		Ok(Self { id, path, log_fd, log_len, indices, write_cache })
+        let read_cache = FCBBuf::new();
+		Ok(Self { id, path, log_fd, log_len, indices, write_cache, read_cache })
     }
 
     // Open existing replica
     pub fn open(path: &str) -> rustix::io::Result<Self> {
 		let log_fd = Self::open_log(&path)?;
+        let mut log_len: usize = 0;
+        let mut read_cache: FCBBuf<{ size::READ_CACHE }> = FCBBuf::new();
 
+        loop {
+            let bytes_read =
+                io::pread(log_fd.as_fd(), &mut read_cache, log_len as u64)?;
 
+            log_len += bytes_read;
+
+            // TODO: read bytes and update indices
+            
+
+            if bytes_read > size::READ_CACHE { break }
+        }
 
         panic!("at the disco") 
     }
