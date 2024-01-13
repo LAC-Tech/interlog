@@ -7,88 +7,80 @@ compile_error!("code assumes linux");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
+
 use fs::OFlags;
+
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
-// 1..N backed by a fixed capacity byte buffer
-// 
-struct EventBuf<const CAPACITY: usize> {
-    bytes: Box<[u8; CAPACITY]>,
-    len: usize
+// TODO: all of these are pretty arbitrary
+mod size {
+    pub const EVENT_MAX: usize = 256;
 }
 
-impl<const CAPACITY: usize> EventBuf<CAPACITY> {
-    fn new() -> EventBuf<CAPACITY> {
-        let bytes = Box::new([0; CAPACITY]);
-        let len = 0;
+// 1..N backed events backed by a fixed capacity byte buffer
+struct EventBuf(Vec<u8>);
 
-        Self {bytes, len}
+impl EventBuf {
+    fn new(min_num_events: usize) -> EventBuf {
+        Self(Vec::with_capacity(size::EVENT_MAX * min_num_events))
     }
 
     fn write(&mut self, header: &EventHeader, val: &[u8]) {
         let new_len = EventHeader::LEN + val.len();
-        if new_len > CAPACITY { panic!("OVERFLOW") }
+        if new_len > self.0.capacity() { panic!("OVERFLOW") }
 
         let header = bytemuck::bytes_of(header);
-        self.bytes[self.len..EventHeader::LEN].copy_from_slice(header);
-        self.bytes[self.len + EventHeader::LEN..new_len].copy_from_slice(val);
+        self.0.extend_from_slice(header);
+        self.0.extend_from_slice(val);
 
-        self.len = new_len;
+        assert_eq!(new_len, self.0.len())
     }
 
     fn clear(&mut self) {
-        self.len = 0;
+        self.0.clear()
     }
 
     // useful for rustix methods, which will fill buffers up to their lengths
     fn set_len(&mut self, new_len: usize) {
-        if new_len > CAPACITY { panic!("OVERFLOW") }
-        self.len = new_len;
+        if new_len > self.0.capacity() { panic!("OVERFLOW") }
+        unsafe {
+            self.0.set_len(new_len);
+        }
     }
 
-    /*
-    fn len(&self) -> usize {
-        self.len
-    }
-    */
     // TODO: make iterator
     // We assume that 0 is always the start of an event
     fn as_event(&self) -> Event {
         let event_header: &EventHeader = 
-            bytemuck::from_bytes(&self.bytes[0..EventHeader::LEN]);
+            bytemuck::from_bytes(&self.0[0..EventHeader::LEN]);
 
         Event {
             id: EventID { origin: event_header.origin, pos: 0 },
-            val: &self.bytes[EventID::LEN..self.len]
+            val: &self[EventID::LEN..self.len()]
         }
     }
 }
 
-impl<const N: usize> core::ops::Deref for EventBuf<N> {
+impl core::ops::Deref for EventBuf {
     type Target = [u8];
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        &self.bytes[0..self.len]
+        let len = self.0.len();
+        &self.0[0..len]
     }
 }
 
-impl<const N: usize> core::ops::DerefMut for EventBuf<N> {
+impl core::ops::DerefMut for EventBuf {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.bytes[0..self.len]
+        let len = self.0.len();
+        &mut self.0[0..len]
     }
 }
 
 
 type O = OFlags;
-
-// TODO: all of these are pretty arbitrary
-mod size {
-    pub const READ_CACHE: usize = 256;
-    pub const WRITE_CACHE: usize = 256;
-    pub const EVENT_MAX: usize = 256;
-}
 
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -134,8 +126,8 @@ pub struct LocalReplica {
     log_fd: fd::OwnedFd,
     log_len: usize,
     indices: Vec<EventIndex>,
-    write_cache: EventBuf<{ size::WRITE_CACHE }>,
-    read_cache: EventBuf<{ size::READ_CACHE }>
+    write_cache: EventBuf,
+    read_cache: EventBuf
 }
 
 impl LocalReplica {
@@ -147,17 +139,18 @@ impl LocalReplica {
 		let log_fd = Self::open_log(&path)?;
 		let log_len = 0;
         let indices = vec![];
-        let write_cache = EventBuf::new();
-        let read_cache = EventBuf::new();
+        let write_cache = EventBuf::new(2);
+        let read_cache = EventBuf::new(2);
 		Ok(Self { id, path, log_fd, log_len, indices, write_cache, read_cache })
     }
 
+    /*
     // Open existing replica
     pub fn open(path: &str) -> rustix::io::Result<Self> {
 		let log_fd = Self::open_log(&path)?;
         let mut log_len: usize = 0;
         let mut event_offset = 0;
-        let mut read_cache: EventBuf<{ size::READ_CACHE }> = EventBuf::new();
+        let mut read_cache = EventBuf::new(2);
 
         loop {
             let bytes_read = 
@@ -167,12 +160,11 @@ impl LocalReplica {
 
             let event_header: &EventHeader = 
                 bytemuck::from_bytes(&read_cache[0..EventHeader::LEN]);
-
-            if size::READ_CACHE > bytes_read { break }
         }
 
         panic!("at the disco") 
     }
+    */
 
     fn open_log(path: &str) -> rustix::io::Result<fd::OwnedFd> {
 		fs::open(
@@ -212,9 +204,7 @@ impl LocalReplica {
 	}
     
     // TODO: try to copy from read cache
-    pub fn read(
-        &mut self, buf: &mut EventBuf< {size::EVENT_MAX} >, pos: usize
-    ) -> rustix::io::Result<()> {
+    pub fn read(&mut self, buf: &mut EventBuf, pos: usize) -> rustix::io::Result<()> {
         let index = &self.indices[pos];
         buf.set_len(index.len);
 
@@ -241,7 +231,7 @@ mod tests {
             .local_write(b"Hello, world!\n")
             .expect("failed to write to replica");
 
-		let mut read_buf = EventBuf::<{size::EVENT_MAX}>::new();
+		let mut read_buf = EventBuf::new(2);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
         let event = read_buf.as_event();
@@ -260,7 +250,7 @@ fn main() {
         .local_write(b"Who is this doin' this synthetic type of alpha beta psychedelic funkin'?")
         .expect("failed to write to replica");
 
-    let mut read_buf = EventBuf::<{size::EVENT_MAX}>::new();
+    let mut read_buf = EventBuf::new(2);
     replica.read(&mut read_buf, 0).expect("failed to read to file");
 
     for chunk in read_buf.chunks(8) {
