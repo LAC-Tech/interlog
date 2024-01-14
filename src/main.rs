@@ -65,11 +65,33 @@ impl EventBuf {
 
         let event = Event {
             id: EventID { origin: event_header.origin, pos },
-            val: &self[val_range]
+            val: &self.0[val_range]
         };
 
         Some(event)
     }
+
+    fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
+        // always sets file offset to EOF.
+		let bytes_written = io::write(fd, &self.0)?;
+		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
+        // TODO: will this happen? if so how to recover?
+		assert_eq!(bytes_written, self.0.len());
+        Ok(bytes_written)
+    }
+
+    fn read_from_file(
+       &mut self, fd: fd::BorrowedFd, index: &EventIndex
+    ) -> io::Result<()> {
+        self.set_len(index.len);
+
+        // pread ignores the fd offset, supply your own
+        let bytes_read = io::pread(fd, &mut self.0, index.pos as u64)?;
+        // If this isn't the case, we should figure out why!
+        assert_eq!(bytes_read, index.len);
+
+        Ok(())
+   }
 }
 
 struct EventBufIntoIterator<'a> {
@@ -103,6 +125,7 @@ impl<'a> IntoIterator for &'a EventBuf {
     }
 }
 
+/*
 impl core::ops::Deref for EventBuf {
     type Target = [u8];
 
@@ -119,7 +142,7 @@ impl core::ops::DerefMut for EventBuf {
         &mut self.0[0..len]
     }
 }
-
+*/
 
 type O = OFlags;
 
@@ -226,10 +249,8 @@ impl LocalReplica {
         };
         self.write_cache.write(&header, data);
 
-        // always sets file offset to EOF.
-		let bytes_written = io::write(self.log_fd.as_fd(), &self.write_cache)?;
-		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
-		assert_eq!(bytes_written, self.write_cache.len());
+        let fd = self.log_fd.as_fd();
+        let bytes_written = self.write_cache.append_to_file(fd)?;
 
         // Updating metadata
         let index = EventIndex {
@@ -247,15 +268,8 @@ impl LocalReplica {
     // TODO: try to copy from read cache
     pub fn read(&mut self, buf: &mut EventBuf, pos: usize) -> rustix::io::Result<()> {
         let index = &self.indices[pos];
-        buf.set_len(index.len);
-
-        // pread ignores the fd offset, supply your own
-        let bytes_read = io::pread(self.log_fd.as_fd(), buf, index.pos as u64)?;
-        
-        // If this isn't the case, we should figure out why!
-        assert_eq!(bytes_read, index.len);
-
-        Ok(())
+        let fd = self.log_fd.as_fd();
+        buf.read_from_file(fd, index)
     }
 }
 
