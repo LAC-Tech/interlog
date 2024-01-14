@@ -19,6 +19,9 @@ mod size {
 }
 
 // 1..N backed events backed by a fixed capacity byte buffer
+// INVARIANTS
+// - starts at the start of an event
+// - ends at the end of an event
 struct EventBuf(Vec<u8>);
 
 impl EventBuf {
@@ -49,16 +52,23 @@ impl EventBuf {
         }
     }
 
-    // TODO: make iterator
-    // We assume that 0 is always the start of an event
-    fn event_at(&self, pos: usize) -> Event {
-        let event_header: &EventHeader = 
-            bytemuck::from_bytes(&self.0[pos..EventHeader::LEN]);
+    fn get(&self, pos: usize) -> Option<Event> {
+        if pos >= self.0.len() { return None; }
+        // needs to be a separate var or rust starts moving things
+        let header_range_end = pos + EventHeader::LEN;
+        let header_range = pos..pos + header_range_end;
 
-        Event {
+        let event_header: &EventHeader =
+            bytemuck::from_bytes(&self.0[header_range]);
+
+        let val_range = header_range_end .. event_header.len;
+
+        let event = Event {
             id: EventID { origin: event_header.origin, pos },
-            val: &self[EventID::LEN..event_header.len]
-        }
+            val: &self[val_range]
+        };
+
+        Some(event)
     }
 }
 
@@ -71,7 +81,13 @@ impl<'a> Iterator for EventBufIntoIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-       None
+        let result = self.event_buf.get(self.byte_index);
+
+        if let Some(ref e) = result {
+            self.byte_index += EventHeader::LEN + e.val.len();
+        }
+
+        result
     }
 }
 
@@ -259,9 +275,9 @@ mod tests {
 		let mut read_buf = EventBuf::new(2);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
-        let event = read_buf.event_at(0);
+        let events: Vec<_> = read_buf.into_iter().collect();
 
-		assert_eq!(&event.val, b"Hello, world!\n");
+		assert_eq!(events[0].val, b"Hello, world!\n");
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
@@ -272,16 +288,17 @@ fn main() {
     let mut replica = LocalReplica::new("/tmp/interlog", &mut rng)
         .expect("failed to open file");
     replica
-        .local_write(b"Who is this doin' this synthetic type of alpha beta psychedelic funkin'?")
+        .local_write(b"Hello, world!\n")
         .expect("failed to write to replica");
 
     let mut read_buf = EventBuf::new(2);
     replica.read(&mut read_buf, 0).expect("failed to read to file");
 
-    for chunk in read_buf.chunks(8) {
-        for byte in chunk {
-            print!("{:02x} ", byte);
-        }
-        println!();
-    }    
+    let events: Vec<_> = read_buf.into_iter().collect();
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].val, b"Hello, world!\n");
+    let path = replica.path.clone();
+    std::fs::remove_file(path).expect("failed to remove file");
+   
 }
