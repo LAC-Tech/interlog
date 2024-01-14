@@ -62,6 +62,37 @@ impl EventBuf {
     }
 }
 
+struct EventBufIntoIterator<'a> {
+    event_buf: &'a EventBuf,
+    byte_index: usize
+}
+
+impl<'a> Iterator for EventBufIntoIterator<'a> {
+    type Item = Event<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let event_header: &EventHeader = 
+            bytemuck::from_bytes(&self.0[self.byte_index..EventHeader::LEN]);
+
+        Some(Event {
+            id: EventID { origin: event_header.origin, pos: 0 },
+            val: &self[EventID::LEN..self.len()]
+        })
+    }
+}
+
+impl<'a> IntoIterator for &'a EventBuf {
+    type Item = Event<'a>;
+    type IntoIter = EventBufIntoIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        EventBufIntoIterator {
+            event_buf: self,
+            byte_index: 0
+        }
+    }
+}
+
 impl core::ops::Deref for EventBuf {
     type Target = [u8];
 
