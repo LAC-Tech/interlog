@@ -51,13 +51,13 @@ impl EventBuf {
 
     // TODO: make iterator
     // We assume that 0 is always the start of an event
-    fn as_event(&self) -> Event {
+    fn event_at(&self, pos: usize) -> Event {
         let event_header: &EventHeader = 
-            bytemuck::from_bytes(&self.0[0..EventHeader::LEN]);
+            bytemuck::from_bytes(&self.0[pos..EventHeader::LEN]);
 
         Event {
-            id: EventID { origin: event_header.origin, pos: 0 },
-            val: &self[EventID::LEN..self.len()]
+            id: EventID { origin: event_header.origin, pos },
+            val: &self[EventID::LEN..event_header.len]
         }
     }
 }
@@ -71,13 +71,7 @@ impl<'a> Iterator for EventBufIntoIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let event_header: &EventHeader = 
-            bytemuck::from_bytes(&self.0[self.byte_index..EventHeader::LEN]);
-
-        Some(Event {
-            id: EventID { origin: event_header.origin, pos: 0 },
-            val: &self[EventID::LEN..self.len()]
-        })
+       None
     }
 }
 
@@ -265,7 +259,7 @@ mod tests {
 		let mut read_buf = EventBuf::new(2);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
-        let event = read_buf.as_event();
+        let event = read_buf.event_at(0);
 
 		assert_eq!(&event.val, b"Hello, world!\n");
 		let path = replica.path.clone();
