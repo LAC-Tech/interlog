@@ -15,7 +15,8 @@ use rustix::{fd, fd::AsFd, fs, io};
 
 // TODO: all of these are pretty arbitrary
 mod size {
-    pub const EVENT_MAX: usize = 256;
+    // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
+    pub const EVENT_MAX: usize = 2048 * 1024;
 }
 
 // 1..N backed events backed by a fixed capacity byte buffer
@@ -263,6 +264,8 @@ impl LocalReplica {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    println("TESTS STARTING");
     
     #[test]
 	fn read_and_write_to_log() {
