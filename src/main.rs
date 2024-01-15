@@ -30,7 +30,7 @@ impl EventBuf {
     }
 
     fn write(&mut self, header: &EventHeader, val: &[u8]) {
-        let new_len = EventHeader::LEN + val.len();
+        let new_len = self.0.len() + EventHeader::LEN + val.len();
         if new_len > self.0.capacity() { panic!("OVERFLOW") }
 
         let header = bytemuck::bytes_of(header);
@@ -124,25 +124,6 @@ impl<'a> IntoIterator for &'a EventBuf {
         }
     }
 }
-
-/*
-impl core::ops::Deref for EventBuf {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        let len = self.0.len();
-        &self.0[0..len]
-    }
-}
-
-impl core::ops::DerefMut for EventBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        let len = self.0.len();
-        &mut self.0[0..len]
-    }
-}
-*/
 
 type O = OFlags;
 
@@ -239,37 +220,43 @@ impl LocalReplica {
     }
     
     // Event local to the replica, that don't yet have an ID
-    // TODO: write multiple things at a time
-    pub fn local_write(&mut self, data: &[u8]) -> rustix::io::Result<()> {
-        // Write to cache 
-        
-        let header = EventHeader {
-            len: EventID::LEN + data.len(),
-            origin: self.id,
-        };
-        self.write_cache.write(&header, data);
+    pub fn local_write(&mut self, datums: &[&[u8]]) -> rustix::io::Result<()> {
+        // TODO: this is writing to the disk every loop..
+        // TODO: does event buffer need its own indices??
+        for data in datums {
+            let header = EventHeader {
+                len: EventID::LEN + data.len(),
+                origin: self.id,
+            };
 
-        let fd = self.log_fd.as_fd();
-        let bytes_written = self.write_cache.append_to_file(fd)?;
+            self.write_cache.write(&header, data);
 
-        // Updating metadata
-        let index = EventIndex {
-            pos: self.log_len,
-            len: header.len 
-        };
-        self.indices.push(index);
-		self.log_len += bytes_written;
-		// Resetting
-		self.write_cache.clear();
+            let fd = self.log_fd.as_fd();
+            let bytes_written = self.write_cache.append_to_file(fd)?;
+
+            // Updating metadata
+            let index = EventIndex { pos: self.log_len, len: header.len };
+            self.indices.push(index);
+            self.log_len += bytes_written;
+        }
+
+        // Resetting
+        self.write_cache.clear();
 
 		Ok(())
 	}
     
-    // TODO: try to copy from read cache
+    // TODO: try to copy from read cache first before hitting disk
     pub fn read(&mut self, buf: &mut EventBuf, pos: usize) -> rustix::io::Result<()> {
-        let index = &self.indices[pos];
-        let fd = self.log_fd.as_fd();
-        buf.read_from_file(fd, index)
+        // TODO: reading from disk every loop
+        // TODO: end condition??
+        for index in &self.indices[pos..] {
+            let index = &self.indices[pos];
+            let fd = self.log_fd.as_fd();
+            buf.read_from_file(fd, index)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -279,40 +266,27 @@ mod tests {
     
     #[test]
 	fn read_and_write_to_log() {
+        let e1 = b"I've not grown weary on lenghty roads";
+        let e2 = b"On strange paths, not gone astray";
+        let e3 = b"Such is the knowledge, the knowledge cast in me";
+        let e4 = b"Such is the knowledge; such are the skills";
 		let mut rng = rand::thread_rng();
 		let mut replica = LocalReplica::new("/tmp/interlog", &mut rng)
             .expect("failed to open file");
 		replica
-            .local_write(b"Hello, world!\n")
+            .local_write(&[e1, e2, e3, e4])
             .expect("failed to write to replica");
 
 		let mut read_buf = EventBuf::new(2);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
         let events: Vec<_> = read_buf.into_iter().collect();
-
-		assert_eq!(events[0].val, b"Hello, world!\n");
+        assert_eq!(events.len(), 4);
+		assert_eq!(events[0].val, e1);
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
 }
 
 fn main() {
-    let mut rng = rand::thread_rng();
-    let mut replica = LocalReplica::new("/tmp/interlog", &mut rng)
-        .expect("failed to open file");
-    replica
-        .local_write(b"Hello, world!\n")
-        .expect("failed to write to replica");
-
-    let mut read_buf = EventBuf::new(2);
-    replica.read(&mut read_buf, 0).expect("failed to read to file");
-
-    let events: Vec<_> = read_buf.into_iter().collect();
-
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].val, b"Hello, world!\n");
-    let path = replica.path.clone();
-    std::fs::remove_file(path).expect("failed to remove file");
-   
 }
