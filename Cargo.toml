@@ -9,3 +9,6 @@ edition = "2021"
 bytemuck = { version = "1.14.0", features = ["derive"]}
 rand = "0.8.5"
 rustix = { version = "0.38.28", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3.9.0"
