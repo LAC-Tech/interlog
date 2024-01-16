@@ -13,118 +13,159 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
-// TODO: all of these are pretty arbitrary
-mod size {
+mod event {
+    use rustix::{fd, io};
+    use super::ReplicaID;
+
     // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
-    pub const EVENT_MAX: usize = 2048 * 1024;
-}
+    pub const MAX_SIZE: usize = 2048 * 1024;
 
-// 1..N backed events backed by a fixed capacity byte buffer
-// INVARIANTS
-// - starts at the start of an event
-// - ends at the end of an event
-struct EventBuf(Vec<u8>);
+    #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+    #[repr(C)]
+    struct ID { origin: ReplicaID, pos: usize }
 
-impl EventBuf {
-    fn new(min_num_events: usize) -> EventBuf {
-        Self(Vec::with_capacity(size::EVENT_MAX * min_num_events))
+    impl ID {
+        const LEN: usize = std::mem::size_of::<ID>();
     }
 
-    fn write(&mut self, header: &EventHeader, val: &[u8]) {
-        let new_len = self.0.len() + EventHeader::LEN + val.len();
-        if new_len > self.0.capacity() { panic!("OVERFLOW") }
+    #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+    #[repr(C)]
+    struct Header { len: usize, origin: ReplicaID }
 
-        let header = bytemuck::bytes_of(header);
-        self.0.extend_from_slice(header);
-        self.0.extend_from_slice(val);
-
-        assert_eq!(new_len, self.0.len())
+    impl Header {
+        const LEN: usize = std::mem::size_of::<Header>();
     }
 
-    fn clear(&mut self) {
-        self.0.clear()
+    #[derive(Debug)]
+    pub struct Event<'a> { id: ID, val: &'a [u8] }
+
+    // Including 'len' here to avoid two sys calls when reading event
+    // TODO: probably should be internal to this module
+    pub struct Index { pos: usize, len: usize }
+    
+    // 1..N events backed by a fixed capacity byte buffer
+    // INVARIANTS
+    // - starts at the start of an event
+    // - ends at the end of an event
+    // - aligns events to 8 bytes
+    pub struct Buf{
+        bytes: Vec<u8>,
+        indices: Vec<Index>,
     }
 
-    // useful for rustix methods, which will fill buffers up to their lengths
-    fn set_len(&mut self, new_len: usize) {
-        if new_len > self.0.capacity() { panic!("OVERFLOW") }
-        unsafe {
-            self.0.set_len(new_len);
+    impl Buf {
+        pub fn new() -> Buf {
+            // TODO: deque of MAX_SIZE capacity byte buffers
+            let bytes = Vec::with_capacity(MAX_SIZE);
+            let indices = vec![];
+            Self{bytes, indices}
+        }
+
+        pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
+            dbg!("writing header");
+            let header = Header { len: ID::LEN + val.len(), origin };
+            dbg!(header);
+            let new_len = self.bytes.len() + Header::LEN + val.len();
+            if new_len > self.bytes.capacity() { panic!("OVERFLOW") }
+
+            let header = bytemuck::bytes_of(&header);
+            self.bytes.extend_from_slice(header);
+            self.bytes.extend_from_slice(val);
+
+            let padded_new_len = (new_len + 7) & !7;
+            self.bytes[new_len..padded_new_len].fill(0);
+            // TODO: write padding so that the buffer len is multiples of 8
+            assert_eq!(padded_new_len, self.bytes.len())
+        }
+
+        pub fn clear(&mut self) {
+            self.bytes.clear()
+        }
+
+        fn get(&self, pos: usize) -> Option<Event> {
+            println!("GET at {}", pos);
+            if pos >= self.bytes.len() { return None; }
+            // needs to be a separate var or rust starts moving things
+            let header_range_end = pos + Header::LEN;
+            let header_range = pos..header_range_end;
+
+            dbg!(&header_range);
+
+            let event_header: &Header =
+                bytemuck::from_bytes(&self.bytes[header_range]);
+
+            dbg!(event_header);
+
+            let val_range = header_range_end .. event_header.len;
+            dbg!(&val_range);
+
+            let event = Event {
+                id: ID { origin: event_header.origin, pos },
+                val: &self.bytes[val_range]
+            };
+
+            Some(event)
+        }
+
+        pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
+            // always sets file offset to EOF.
+            let bytes_written = io::write(fd, &self.bytes)?;
+            // Linux 'man open' says appending to file opened w/ O_APPEND is atomic
+            // TODO: will this happen? if so how to recover?
+            assert_eq!(bytes_written, self.bytes.len());
+            Ok(bytes_written)
+        }
+
+        pub fn read_from_file(
+           &mut self, fd: fd::BorrowedFd, index: &Index
+        ) -> io::Result<()> {
+            // need to set len so pread knows how much to fill
+            if index.len > self.bytes.capacity() { panic!("OVERFLOW") }
+            unsafe {
+                self.bytes.set_len(index.len);
+            }
+
+            // pread ignores the fd offset, supply your own
+            let bytes_read = io::pread(fd, &mut self.bytes, index.pos as u64)?;
+            // If this isn't the case, we should figure out why!
+            assert_eq!(bytes_read, index.len);
+
+            Ok(())
+       }
+    }
+
+    pub struct BufIntoIterator<'a> {
+        event_buf: &'a Buf,
+        byte_index: usize
+    }
+
+    impl<'a> Iterator for BufIntoIterator<'a> {
+        type Item = Event<'a>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let result = self.event_buf.get(self.byte_index);
+
+            if let Some(ref e) = result {
+                self.byte_index += Header::LEN + e.val.len();
+            }
+
+            result
         }
     }
 
-    fn get(&self, pos: usize) -> Option<Event> {
-        if pos >= self.0.len() { return None; }
-        // needs to be a separate var or rust starts moving things
-        let header_range_end = pos + EventHeader::LEN;
-        let header_range = pos..pos + header_range_end;
+    impl<'a> IntoIterator for &'a Buf {
+        type Item = Event<'a>;
+        type IntoIter = BufIntoIterator<'a>;
 
-        let event_header: &EventHeader =
-            bytemuck::from_bytes(&self.0[header_range]);
-
-        let val_range = header_range_end .. event_header.len;
-
-        let event = Event {
-            id: EventID { origin: event_header.origin, pos },
-            val: &self.0[val_range]
-        };
-
-        Some(event)
-    }
-
-    fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
-        // always sets file offset to EOF.
-		let bytes_written = io::write(fd, &self.0)?;
-		// Linux 'man open' says appending to file opened w/ O_APPEND is atomic
-        // TODO: will this happen? if so how to recover?
-		assert_eq!(bytes_written, self.0.len());
-        Ok(bytes_written)
-    }
-
-    fn read_from_file(
-       &mut self, fd: fd::BorrowedFd, index: &EventIndex
-    ) -> io::Result<()> {
-        self.set_len(index.len);
-
-        // pread ignores the fd offset, supply your own
-        let bytes_read = io::pread(fd, &mut self.0, index.pos as u64)?;
-        // If this isn't the case, we should figure out why!
-        assert_eq!(bytes_read, index.len);
-
-        Ok(())
-   }
-}
-
-struct EventBufIntoIterator<'a> {
-    event_buf: &'a EventBuf,
-    byte_index: usize
-}
-
-impl<'a> Iterator for EventBufIntoIterator<'a> {
-    type Item = Event<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.event_buf.get(self.byte_index);
-
-        if let Some(ref e) = result {
-            self.byte_index += EventHeader::LEN + e.val.len();
-        }
-
-        result
-    }
-}
-
-impl<'a> IntoIterator for &'a EventBuf {
-    type Item = Event<'a>;
-    type IntoIter = EventBufIntoIterator<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        EventBufIntoIterator {
-            event_buf: self,
-            byte_index: 0
+        fn into_iter(self) -> Self::IntoIter {
+            BufIntoIterator {
+                event_buf: self,
+                byte_index: 0
+            }
         }
     }
 }
+
 
 type O = OFlags;
 
@@ -152,35 +193,21 @@ impl EventID {
     const LEN: usize = std::mem::size_of::<EventID>();
 }
 
-#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
-#[repr(C)]
-struct EventHeader { len: usize, origin: ReplicaID }
-
-impl EventHeader {
-    const LEN: usize = std::mem::size_of::<EventHeader>();
-}
-
-#[derive(Debug)]
-struct Event<'a> { id: EventID, val: &'a [u8] }
-
-// Including 'len' here to avoid two sys calls when reading event
-struct EventIndex { pos: usize, len: usize }
 
 pub struct LocalReplica {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: usize,
-    indices: Vec<EventIndex>,
-    write_cache: EventBuf,
-    read_cache: EventBuf
+    write_cache: event::Buf,
+    read_cache: event::Buf
 }
 
+/*
 impl LocalReplica {
-
     pub fn new<R: Rng>(
         dir_path: &std::path::Path, rng: &mut R
-    ) -> rustix::io::Result<Self> {
+    ) -> io::Result<Self> {
         let id = ReplicaID::new(rng);
 
         let path = dir_path.join(id.to_string());
@@ -190,23 +217,23 @@ impl LocalReplica {
 
 		let log_len = 0;
         let indices = vec![];
-        let write_cache = EventBuf::new(2);
-        let read_cache = EventBuf::new(2);
+        let write_cache = event::Buf::new();
+        let read_cache = event::Buf::new();
 
 		Ok(Self { id, path, log_fd, log_len, indices, write_cache, read_cache })
     }
     
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write(&mut self, datums: &[&[u8]]) -> rustix::io::Result<()> {
+    pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
         // TODO: this is writing to the disk every loop..
         // TODO: does event buffer need its own indices??
         for data in datums {
-            let header = EventHeader {
+            let header = event::Header {
                 len: EventID::LEN + data.len(),
                 origin: self.id,
             };
 
-            self.write_cache.write(&header, data);
+            self.write_cache.append(&header, data);
 
             let fd = self.log_fd.as_fd();
             let bytes_written = self.write_cache.append_to_file(fd)?;
@@ -214,7 +241,9 @@ impl LocalReplica {
             // Updating metadata
             let index = EventIndex { pos: self.log_len, len: header.len };
             self.indices.push(index);
-            self.log_len += bytes_written;
+
+            // round up to multiple of 8, for alignment
+            self.log_len += (bytes_written + 7) & !7;
         }
 
         // Resetting
@@ -224,11 +253,10 @@ impl LocalReplica {
 	}
     
     // TODO: try to copy from read cache first before hitting disk
-    pub fn read(&mut self, buf: &mut EventBuf, pos: usize) -> rustix::io::Result<()> {
+    pub fn read(&mut self, buf: &mut event::Buf, pos: usize) -> io::Result<()> {
         // TODO: reading from disk every loop
         // TODO: end condition??
         for index in &self.indices[pos..] {
-            let index = &self.indices[pos];
             let fd = self.log_fd.as_fd();
             buf.read_from_file(fd, index)?;
         }
@@ -236,12 +264,14 @@ impl LocalReplica {
         Ok(())
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{TempDir};
-    
+    use tempfile::TempDir;
+
+    /*
     #[test]
 	fn read_and_write_to_log() {
         let tmp_dir = 
@@ -258,7 +288,7 @@ mod tests {
             .local_write(&[e1, e2, e3, e4])
             .expect("failed to write to replica");
 
-		let mut read_buf = EventBuf::new(2);
+		let mut read_buf = event::Buf::new();
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
     
         let events: Vec<_> = read_buf.into_iter().collect();
@@ -267,6 +297,7 @@ mod tests {
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
+    */
 }
 
 fn main() {
