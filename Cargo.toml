@@ -12,4 +12,5 @@ rustix = { version = "0.38.28", features = ["fs"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+proptest = "1.4.0"
 tempfile = "3.9.0"

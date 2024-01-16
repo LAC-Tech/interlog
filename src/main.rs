@@ -33,15 +33,28 @@ mod event {
     struct Header { len: usize, origin: ReplicaID }
 
     impl Header {
-        const LEN: usize = std::mem::size_of::<Header>();
+        const SIZE: usize = std::mem::size_of::<Header>();
     }
 
     #[derive(Debug)]
     pub struct Event<'a> { id: ID, val: &'a [u8] }
 
-    // Including 'len' here to avoid two sys calls when reading event
-    // TODO: probably should be internal to this module
-    struct Index { pos: usize, len: usize }
+    #[derive(Clone, Copy)]
+    struct Index(usize);
+
+    impl Index {
+        fn new(byte_pos: usize) -> Self {
+            if byte_pos % 8 != 0 {
+                panic!("All indices must be 8 byte aligned")
+            }
+
+            Self(byte_pos)
+        }
+
+        fn as_usize(self) -> usize {
+            self.0
+        }
+    }
     
     // 1..N events backed by a fixed capacity byte buffer
     // INVARIANTS
@@ -62,10 +75,8 @@ mod event {
         }
 
         pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
-            dbg!("writing header");
             let header = Header { len: ID::LEN + val.len(), origin };
-            dbg!(header);
-            let new_len = self.bytes.len() + Header::LEN + val.len();
+            let new_len = self.bytes.len() + Header::SIZE + val.len();
             if new_len > self.bytes.capacity() { panic!("OVERFLOW") }
 
             let header = bytemuck::bytes_of(&header);
@@ -75,7 +86,9 @@ mod event {
             let aligned_new_len = (new_len + 7) & !7;
             self.bytes[new_len..aligned_new_len].fill(0);
             // TODO: write padding so that the buffer len is multiples of 8
-            assert_eq!(aligned_new_len, self.bytes.len())
+            assert_eq!(aligned_new_len, self.bytes.len());
+
+            self.indices.push(Index(aligned_new_len));
         }
 
         pub fn clear(&mut self) {
@@ -84,10 +97,11 @@ mod event {
 
         fn get(&self, pos: usize) -> Option<Event> {
             println!("GET at {}", pos);
-            if pos >= self.bytes.len() { return None; }
-            // needs to be a separate var or rust starts moving things
-            let header_range_end = pos + Header::LEN;
-            let header_range = pos..header_range_end;
+            if pos >= self.len() { return None; }
+
+            let index = self.indices[pos];
+            let byte_pos = index.as_usize();
+            let header_range = byte_pos..byte_pos + Header::SIZE;
 
             dbg!(&header_range);
 
@@ -96,7 +110,8 @@ mod event {
 
             dbg!(event_header);
 
-            let val_range = header_range_end .. event_header.len;
+            let val_range = 
+                byte_pos + Header::SIZE .. byte_pos + Header::SIZE + event_header.len;
             dbg!(&val_range);
 
             let event = Event {
@@ -120,6 +135,7 @@ mod event {
             Ok(bytes_written)
         }
 
+        /*
         pub fn read_from_file(
            &mut self, fd: fd::BorrowedFd, index: &Index
         ) -> io::Result<()> {
@@ -135,7 +151,8 @@ mod event {
             assert_eq!(bytes_read, index.len);
 
             Ok(())
-       }
+        }
+        */
     }
 
     pub struct BufIntoIterator<'a> {
@@ -150,7 +167,7 @@ mod event {
             let result = self.event_buf.get(self.byte_index);
 
             if let Some(ref e) = result {
-                self.byte_index += Header::LEN + e.val.len();
+                self.byte_index += Header::SIZE + e.val.len();
             }
 
             result
@@ -173,29 +190,31 @@ mod event {
     mod tests {
         use super::*;
         use pretty_assertions::{assert_eq, assert_ne};
+        use proptest::prelude::*;
         use tempfile::TempDir;
 
-        // TODO: proptest, with different byte buffers
-        #[test]
-        fn read_and_write_single_events() {
-            // Setup 
-            let mut rng = rand::thread_rng();
-            let mut buf = Buf::new();
-            let e1 = b"Who is this doin' this synthetic type of alpha beta psychedelic funkin'?";
-            let replica_id = ReplicaID::new(&mut rng);
+        proptest! {
+            #[test]
+            fn read_and_write_single_events(
+                e in prop::collection::vec(any::<u8>(), 0..=8)
+            ) {
+                // Setup 
+                let mut rng = rand::thread_rng();
+                let mut buf = Buf::new();
+                let replica_id = ReplicaID::new(&mut rng);
 
-            // Pre conditions
-            assert_eq!(buf.len(), 0, "buf should start empty");
-            assert!(buf.get(0).is_none(), "should contain no event");
-           
-            // Modifying
-            buf.append(replica_id, e1);
+                // Pre conditions
+                assert_eq!(buf.len(), 0, "buf should start empty");
+                assert!(buf.get(0).is_none(), "should contain no event");
+               
+                // Modifying
+                buf.append(replica_id, &e);
 
-            // Post conditions
-            let actual = buf.get(0).expect("one event to be at 0");
-            assert_eq!(buf.len(), 1, "exactly one event should exist");
-            assert_eq!(actual.val, e1, "values differ");
-
+                // Post conditions
+                let actual = buf.get(0).expect("one event to be at 0");
+                assert_eq!(buf.len(), 1, "exactly one event should exist");
+                assert_eq!(actual.val, &e, "values differ");
+            }
         }
     }
 }
