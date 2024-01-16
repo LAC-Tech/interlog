@@ -41,7 +41,7 @@ mod event {
 
     // Including 'len' here to avoid two sys calls when reading event
     // TODO: probably should be internal to this module
-    pub struct Index { pos: usize, len: usize }
+    struct Index { pos: usize, len: usize }
     
     // 1..N events backed by a fixed capacity byte buffer
     // INVARIANTS
@@ -72,10 +72,10 @@ mod event {
             self.bytes.extend_from_slice(header);
             self.bytes.extend_from_slice(val);
 
-            let padded_new_len = (new_len + 7) & !7;
-            self.bytes[new_len..padded_new_len].fill(0);
+            let aligned_new_len = (new_len + 7) & !7;
+            self.bytes[new_len..aligned_new_len].fill(0);
             // TODO: write padding so that the buffer len is multiples of 8
-            assert_eq!(padded_new_len, self.bytes.len())
+            assert_eq!(aligned_new_len, self.bytes.len())
         }
 
         pub fn clear(&mut self) {
@@ -105,6 +105,10 @@ mod event {
             };
 
             Some(event)
+        }
+
+        pub fn len(&self) -> usize {
+            self.indices.len()
         }
 
         pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
@@ -162,6 +166,36 @@ mod event {
                 event_buf: self,
                 byte_index: 0
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use pretty_assertions::{assert_eq, assert_ne};
+        use tempfile::TempDir;
+
+        // TODO: proptest, with different byte buffers
+        #[test]
+        fn read_and_write_single_events() {
+            // Setup 
+            let mut rng = rand::thread_rng();
+            let mut buf = Buf::new();
+            let e1 = b"Who is this doin' this synthetic type of alpha beta psychedelic funkin'?";
+            let replica_id = ReplicaID::new(&mut rng);
+
+            // Pre conditions
+            assert_eq!(buf.len(), 0, "buf should start empty");
+            assert!(buf.get(0).is_none(), "should contain no event");
+           
+            // Modifying
+            buf.append(replica_id, e1);
+
+            // Post conditions
+            let actual = buf.get(0).expect("one event to be at 0");
+            assert_eq!(buf.len(), 1, "exactly one event should exist");
+            assert_eq!(actual.val, e1, "values differ");
+
         }
     }
 }
