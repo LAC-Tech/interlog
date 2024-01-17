@@ -13,6 +13,70 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
+// Fixed Capacity Byte Buffers
+struct FCBBuf<const CAPACITY: usize> {
+    bytes: Box<[u8; CAPACITY]>,
+    len: usize
+}
+
+impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
+    fn new() -> FCBBuf<CAPACITY> {
+        let bytes = Box::new([0; CAPACITY]);
+        let len = 0;
+
+        Self {bytes, len}
+    }
+
+    fn extend_from_slice(&mut self, other: &[u8]) {
+        let new_len = self.len + other.len();
+        // TODO: proper option type
+        if new_len > CAPACITY { panic!("OVERFLOW") }
+        self.bytes[self.len..new_len].copy_from_slice(other);
+        self.len = new_len;
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
+#[cfg(test)]
+mod test_gen {
+    use super::FCBBuf;
+    use rand::prelude::*;
+
+    impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
+        fn rand_slice_iter<R: Rng + Sized>(&self, rng: R) -> RandSliceIter<CAPACITY, R> {
+            RandSliceIter {
+                buffer: self,
+                start: 0,
+                rng,
+            }
+        }
+    }
+
+    struct RandSliceIter<'a, const CAPACITY: usize, R: Rng> {
+        buffer: &'a FCBBuf<CAPACITY>,
+        start: usize,
+        rng: R,
+    }
+
+    impl<'a, const CAPACITY: usize, R: Rng> Iterator for RandSliceIter<'a, CAPACITY, R> {
+        type Item = &'a [u8];
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.start >= self.buffer.len {
+                None
+            } else {
+                let end = self.start + self.rng.gen_range(1..=(self.buffer.len - self.start));
+                let slice = &self.buffer.bytes[self.start..end];
+                self.start = end;
+                Some(slice)
+            }
+        }
+    }
+}
+
 mod event {
     use rustix::{fd, io};
     use super::ReplicaID;
