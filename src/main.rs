@@ -39,7 +39,7 @@ mod event {
     #[derive(Debug)]
     pub struct Event<'a> { id: ID, val: &'a [u8] }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     struct Index(usize);
 
     impl Index {
@@ -75,6 +75,7 @@ mod event {
         }
 
         pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
+            let new_index = Index(self.len());
             let header = Header { len: ID::LEN + val.len(), origin };
             let new_len = self.bytes.len() + Header::SIZE + val.len();
             if new_len > self.bytes.capacity() { panic!("OVERFLOW") }
@@ -83,12 +84,14 @@ mod event {
             self.bytes.extend_from_slice(header);
             self.bytes.extend_from_slice(val);
 
+            assert_eq!(new_len, self.bytes.len());
+
             let aligned_new_len = (new_len + 7) & !7;
-            self.bytes[new_len..aligned_new_len].fill(0);
+            self.bytes.resize(aligned_new_len, 0);
             // TODO: write padding so that the buffer len is multiples of 8
             assert_eq!(aligned_new_len, self.bytes.len());
 
-            self.indices.push(Index(aligned_new_len));
+            self.indices.push(new_index);
         }
 
         pub fn clear(&mut self) {
@@ -96,23 +99,17 @@ mod event {
         }
 
         fn get(&self, pos: usize) -> Option<Event> {
-            println!("GET at {}", pos);
             if pos >= self.len() { return None; }
 
             let index = self.indices[pos];
             let byte_pos = index.as_usize();
             let header_range = byte_pos..byte_pos + Header::SIZE;
 
-            dbg!(&header_range);
-
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
 
-            dbg!(event_header);
-
             let val_range = 
-                byte_pos + Header::SIZE .. byte_pos + Header::SIZE + event_header.len;
-            dbg!(&val_range);
+                byte_pos + Header::SIZE .. byte_pos + event_header.len;
 
             let event = Event {
                 id: ID { origin: event_header.origin, pos },
@@ -196,7 +193,7 @@ mod event {
         proptest! {
             #[test]
             fn read_and_write_single_events(
-                e in prop::collection::vec(any::<u8>(), 0..=8)
+                e in prop::collection::vec(any::<u8>(), 0..=MAX_SIZE)
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
