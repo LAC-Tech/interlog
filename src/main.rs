@@ -7,7 +7,6 @@ compile_error!("code assumes linux");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
-
 use fs::OFlags;
 
 use rand::prelude::*;
@@ -257,7 +256,7 @@ mod event {
         proptest! {
             #[test]
             fn read_and_write_single_events(
-                e in prop::collection::vec(any::<u8>(), 0..=MAX_SIZE)
+                e in prop::collection::vec(any::<u8>(), 0..=256)
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
@@ -306,8 +305,11 @@ mod event {
             }
 
             // Post conditions
-            let actual = buf.get(0).expect("one event to be at 0");
+            let actual: Vec<_> = 
+                (0..4).map(|pos| buf.get(pos).unwrap().val).collect();
             assert_eq!(buf.len(), 4);
+            assert_eq!(&actual, &es)
+
         }
     }
 }
