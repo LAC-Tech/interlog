@@ -186,7 +186,7 @@ mod event {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use pretty_assertions::{assert_eq, assert_ne};
+        use pretty_assertions::assert_eq;
         use proptest::prelude::*;
         use tempfile::TempDir;
 
@@ -209,9 +209,41 @@ mod event {
 
                 // Post conditions
                 let actual = buf.get(0).expect("one event to be at 0");
-                assert_eq!(buf.len(), 1, "exactly one event should exist");
-                assert_eq!(actual.val, &e, "values differ");
+                assert_eq!(buf.len(), 1);
+                assert_eq!(actual.val, &e);
             }
+        }
+
+        #[test]
+        fn read_and_write_to_log() {
+            // Setup 
+            let mut rng = rand::thread_rng();
+            let mut buf = Buf::new();
+            let replica_id = ReplicaID::new(&mut rng);
+
+            // Pre conditions
+            assert_eq!(buf.len(), 0, "buf should start empty");
+            assert!(buf.get(0).is_none(), "should contain no event");
+
+            let e1 = b"I've not grown weary on lenghty roads";
+            let e2 = b"On strange paths, not gone astray";
+            let e3 = b"Such is the knowledge, the knowledge cast in me";
+            let e4 = b"Such is the knowledge; such are the skills";
+
+            let es: [&[u8]; 4] = [
+                e1.as_slice(),
+                e2.as_slice(),
+                e3.as_slice(),
+                e4.as_slice()
+            ];
+            
+            for e in es {
+                buf.append(replica_id, e);
+            }
+
+            // Post conditions
+            let actual = buf.get(0).expect("one event to be at 0");
+            assert_eq!(buf.len(), 4);
         }
     }
 }
