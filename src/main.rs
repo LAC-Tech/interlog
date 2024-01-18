@@ -1,3 +1,4 @@
+#![feature(generic_const_exprs)]
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
 
@@ -9,6 +10,7 @@ compile_error!("code assumes little-endian");
 
 use fs::OFlags;
 
+use bytemuck::{Pod, Zeroable};
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
@@ -45,7 +47,9 @@ mod test_gen {
     use rand::prelude::*;
 
     impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
-        fn rand_slice_iter<R: Rng + Sized>(&self, rng: R) -> RandSliceIter<CAPACITY, R> {
+        fn rand_slice_iter<R: Rng + Sized>(
+            &self, rng: R
+        ) -> RandSliceIter<CAPACITY, R> {
             RandSliceIter {
                 buffer: self,
                 start: 0,
@@ -83,20 +87,20 @@ mod event {
     // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
     pub const MAX_SIZE: usize = 2048 * 1024;
 
-    #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
     #[repr(C)]
+    #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
     struct ID { origin: ReplicaID, pos: usize }
 
     impl ID {
-        const LEN: usize = std::mem::size_of::<ID>();
+        const SIZE: usize = std::mem::size_of::<Self>();
     }
 
-    #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+    #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
     #[repr(C)]
     struct Header { len: usize, origin: ReplicaID }
 
     impl Header {
-        const SIZE: usize = std::mem::size_of::<Header>();
+        const SIZE: usize = std::mem::size_of::<Self>();
     }
 
     #[derive(Debug)]
@@ -138,8 +142,8 @@ mod event {
         }
 
         pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
-            let new_index = Index(self.len());
-            let header = Header { len: ID::LEN + val.len(), origin };
+            let new_index = Index(self.bytes.len());
+            let header = Header { len: ID::SIZE + val.len(), origin };
             let new_len = self.bytes.len() + Header::SIZE + val.len();
             if new_len > self.bytes.capacity() { panic!("OVERFLOW") }
 
@@ -163,13 +167,18 @@ mod event {
 
         fn get(&self, pos: usize) -> Option<Event> {
             if pos >= self.len() { return None; }
-
+            
+            dbg!(&self.indices);
             let index = self.indices[pos];
             let byte_pos = index.as_usize();
             let header_range = byte_pos..byte_pos + Header::SIZE;
 
+            dbg!(&header_range);
+
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
+
+            dbg!(event_header);
 
             let val_range = 
                 byte_pos + Header::SIZE .. byte_pos + event_header.len;
@@ -314,10 +323,9 @@ mod event {
     }
 }
 
-
 type O = OFlags;
 
-#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct ReplicaID(u128);
 
@@ -333,14 +341,13 @@ impl core::fmt::Display for ReplicaID {
     }
 }
 
-#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 struct EventID { origin: ReplicaID, pos: usize }
 
 impl EventID {
-    const LEN: usize = std::mem::size_of::<EventID>();
+    const SIZE: usize = std::mem::size_of::<Self>();
 }
-
 
 pub struct LocalReplica {
     pub id: ReplicaID,
