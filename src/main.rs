@@ -1,4 +1,3 @@
-#![feature(generic_const_exprs)]
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
 
@@ -10,7 +9,7 @@ compile_error!("code assumes little-endian");
 
 use fs::OFlags;
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
@@ -22,7 +21,14 @@ struct FCBBuf<const CAPACITY: usize> {
 
 impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
     fn new() -> FCBBuf<CAPACITY> {
-        let bytes = Box::new([0; CAPACITY]);
+        // Error: overflows stack
+        // let bytes = Box::new([0; CAPACITY]);
+
+        // Error: returns unsized array
+        let bytes: Box<[u8; CAPACITY]> = 
+            vec![0; CAPACITY].into_boxed_slice().try_into().unwrap();
+
+        assert_eq!(std::mem::size_of_val(&bytes), 8);
         let len = 0;
 
         Self {bytes, len}
@@ -31,13 +37,36 @@ impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
     fn extend_from_slice(&mut self, other: &[u8]) {
         let new_len = self.len + other.len();
         // TODO: proper option type
-        if new_len > CAPACITY { panic!("OVERFLOW") }
+        if new_len > CAPACITY { panic!("overflow") }
         self.bytes[self.len..new_len].copy_from_slice(other);
+        self.len = new_len;
+    }
+
+    fn resize(&mut self, new_len: usize, value: u8) {
+        if new_len > CAPACITY { panic!("overflow"); }
+        let len = self.len;
+
+        if new_len > len {
+            self.bytes[len..new_len].fill(value);
+        }
+        
         self.len = new_len;
     }
 
     fn clear(&mut self) {
         self.len = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<const CAPACITY: usize> std::ops::Deref for FCBBuf<CAPACITY> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.bytes[0..self.len]
     }
 }
 
@@ -82,7 +111,7 @@ mod test_gen {
 
 mod event {
     use rustix::{fd, io};
-    use super::ReplicaID;
+    use super::{FCBBuf, ReplicaID};
 
     // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
     pub const MAX_SIZE: usize = 2048 * 1024;
@@ -104,7 +133,7 @@ mod event {
     }
 
     #[derive(Debug)]
-    pub struct Event<'a> { id: ID, val: &'a [u8] }
+    pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
 
     #[derive(Clone, Copy, Debug)]
     struct Index(usize);
@@ -129,14 +158,14 @@ mod event {
     // - ends at the end of an event
     // - aligns events to 8 bytes
     pub struct Buf{
-        bytes: Vec<u8>,
+        bytes: FCBBuf<MAX_SIZE>,
         indices: Vec<Index>,
     }
 
     impl Buf {
         pub fn new() -> Buf {
             // TODO: deque of MAX_SIZE capacity byte buffers
-            let bytes = Vec::with_capacity(MAX_SIZE);
+            let bytes = FCBBuf::new();
             let indices = vec![];
             Self{bytes, indices}
         }
@@ -145,7 +174,6 @@ mod event {
             let new_index = Index(self.bytes.len());
             let header = Header { len: ID::SIZE + val.len(), origin };
             let new_len = self.bytes.len() + Header::SIZE + val.len();
-            if new_len > self.bytes.capacity() { panic!("OVERFLOW") }
 
             let header = bytemuck::bytes_of(&header);
             self.bytes.extend_from_slice(header);
@@ -165,20 +193,15 @@ mod event {
             self.bytes.clear()
         }
 
-        fn get(&self, pos: usize) -> Option<Event> {
+        pub fn get(&self, pos: usize) -> Option<Event> {
             if pos >= self.len() { return None; }
             
-            dbg!(&self.indices);
             let index = self.indices[pos];
             let byte_pos = index.as_usize();
             let header_range = byte_pos..byte_pos + Header::SIZE;
 
-            dbg!(&header_range);
-
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
-
-            dbg!(event_header);
 
             let val_range = 
                 byte_pos + Header::SIZE .. byte_pos + event_header.len;
@@ -264,8 +287,8 @@ mod event {
 
         proptest! {
             #[test]
-            fn read_and_write_single_events(
-                e in prop::collection::vec(any::<u8>(), 0..=256)
+            fn read_and_write_single_event(
+                e in prop::collection::vec(any::<u8>(), 0..=8)
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
@@ -290,7 +313,9 @@ mod event {
         fn read_and_write_to_log() {
             // Setup 
             let mut rng = rand::thread_rng();
+            
             let mut buf = Buf::new();
+            
             let replica_id = ReplicaID::new(&mut rng);
 
             // Pre conditions
@@ -318,7 +343,6 @@ mod event {
                 (0..4).map(|pos| buf.get(pos).unwrap().val).collect();
             assert_eq!(buf.len(), 4);
             assert_eq!(&actual, &es)
-
         }
     }
 }
@@ -456,4 +480,21 @@ mod tests {
 }
 
 fn main() {
+    let e = b"lol";
+    // Setup 
+    let mut rng = rand::thread_rng();
+    let mut buf = event::Buf::new();
+    let replica_id = ReplicaID::new(&mut rng);
+
+    // Pre conditions
+    assert_eq!(buf.len(), 0, "buf should start empty");
+    assert!(buf.get(0).is_none(), "should contain no event");
+   
+    // Modifying
+    buf.append(replica_id, e);
+
+    // Post conditions
+    let actual = buf.get(0).expect("one event to be at 0");
+    assert_eq!(buf.len(), 1);
+    assert_eq!(actual.val, e);
 }
