@@ -21,13 +21,7 @@ struct FCBBuf<const CAPACITY: usize> {
 
 impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
     fn new() -> FCBBuf<CAPACITY> {
-        // Error: overflows stack
-        // let bytes = Box::new([0; CAPACITY]);
-
-        // Error: returns unsized array
-        let bytes: Box<[u8; CAPACITY]> = 
-            vec![0; CAPACITY].into_boxed_slice().try_into().unwrap();
-
+        let bytes: Box<[u8; CAPACITY]> = vec![0; CAPACITY].try_into().unwrap();
         assert_eq!(std::mem::size_of_val(&bytes), 8);
         let len = 0;
 
@@ -231,7 +225,7 @@ mod event {
         pub fn read_from_file(
            &mut self, fd: fd::BorrowedFd, index: &Index
         ) -> io::Result<()> {
-            // need to set len so pread knows how much to fill
+            // nee to set len so pread knows how much to fill
             if index.len > self.bytes.capacity() { panic!("OVERFLOW") }
             unsafe {
                 self.bytes.set_len(index.len);
@@ -382,7 +376,8 @@ pub struct LocalReplica {
     read_cache: event::Buf
 }
 
-/*
+// TODO: store data larger than read cache
+// TODO: mem cache larger than EVENT_MAX (ciruclar buffer?)
 impl LocalReplica {
     pub fn new<R: Rng>(
         dir_path: &std::path::Path, rng: &mut R
@@ -395,35 +390,26 @@ impl LocalReplica {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len = 0;
-        let indices = vec![];
         let write_cache = event::Buf::new();
         let read_cache = event::Buf::new();
 
-		Ok(Self { id, path, log_fd, log_len, indices, write_cache, read_cache })
+		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
     }
     
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
-        // TODO: this is writing to the disk every loop..
-        // TODO: does event buffer need its own indices??
+        // write to cache
         for data in datums {
-            let header = event::Header {
-                len: EventID::LEN + data.len(),
-                origin: self.id,
-            };
+            self.write_cache.append(self.id, data);
 
-            self.write_cache.append(&header, data);
-
-            let fd = self.log_fd.as_fd();
-            let bytes_written = self.write_cache.append_to_file(fd)?;
-
-            // Updating metadata
-            let index = EventIndex { pos: self.log_len, len: header.len };
-            self.indices.push(index);
-
-            // round up to multiple of 8, for alignment
-            self.log_len += (bytes_written + 7) & !7;
         }
+        
+        // persist
+        let fd = self.log_fd.as_fd();
+        let bytes_written = self.write_cache.append_to_file(fd)?;
+
+        // round up to multiple of 8, for alignment
+        self.log_len += (bytes_written + 7) & !7;
 
         // Resetting
         self.write_cache.clear();
@@ -431,26 +417,16 @@ impl LocalReplica {
 		Ok(())
 	}
     
-    // TODO: try to copy from read cache first before hitting disk
     pub fn read(&mut self, buf: &mut event::Buf, pos: usize) -> io::Result<()> {
-        // TODO: reading from disk every loop
-        // TODO: end condition??
-        for index in &self.indices[pos..] {
-            let fd = self.log_fd.as_fd();
-            buf.read_from_file(fd, index)?;
-        }
-
         Ok(())
     }
 }
-*/
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /*
     #[test]
 	fn read_and_write_to_log() {
         let tmp_dir = 
@@ -476,7 +452,6 @@ mod tests {
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
-    */
 }
 
 fn main() {
