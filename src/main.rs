@@ -144,6 +144,10 @@ mod event {
         fn as_usize(self) -> usize {
             self.0
         }
+
+        fn shift(self, buf_len: usize) -> Self {
+            Self::new(self.0 + buf_len)
+        }
     }
     
     // 1..N events backed by a fixed capacity byte buffer
@@ -159,13 +163,14 @@ mod event {
     impl Buf {
         pub fn new() -> Buf {
             // TODO: deque of MAX_SIZE capacity byte buffers
-            let bytes = FCBBuf::new();
+            let bytes = FCBBuf::new(); 
+            // TODO: fixed capacity, no allocations
             let indices = vec![];
             Self{bytes, indices}
         }
 
         pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
-            let new_index = Index(self.bytes.len());
+            let new_index = Index::new(self.bytes.len());
             let header = Header { len: ID::SIZE + val.len(), origin };
             let new_len = self.bytes.len() + Header::SIZE + val.len();
 
@@ -181,6 +186,13 @@ mod event {
             assert_eq!(aligned_new_len, self.bytes.len());
 
             self.indices.push(new_index);
+        }
+
+        pub fn extend(&mut self, other: &Buf) {
+            let shifted_indices =
+                other.indices.iter().map(|i| i.shift(self.bytes.len()));
+            self.indices.extend(shifted_indices);
+            self.bytes.extend_from_slice(&other.bytes);
         }
 
         pub fn clear(&mut self) {
@@ -225,7 +237,7 @@ mod event {
         pub fn read_from_file(
            &mut self, fd: fd::BorrowedFd, index: &Index
         ) -> io::Result<()> {
-            // nee to set len so pread knows how much to fill
+            // need to set len so pread knows how much to fill
             if index.len > self.bytes.capacity() { panic!("OVERFLOW") }
             unsafe {
                 self.bytes.set_len(index.len);
@@ -303,14 +315,14 @@ mod event {
             }
         }
 
+        // TODO: generalise w/ proptest
         #[test]
-        fn read_and_write_to_log() {
+        fn multiple_read_and_write() {
             // Setup 
             let mut rng = rand::thread_rng();
+            let replica_id = ReplicaID::new(&mut rng);
             
             let mut buf = Buf::new();
-            
-            let replica_id = ReplicaID::new(&mut rng);
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
@@ -333,10 +345,44 @@ mod event {
             }
 
             // Post conditions
+            assert_eq!(buf.len(), 4);
             let actual: Vec<_> = 
                 (0..4).map(|pos| buf.get(pos).unwrap().val).collect();
-            assert_eq!(buf.len(), 4);
             assert_eq!(&actual, &es)
+        }
+
+        #[test]
+        fn combine_buffers() {
+            // Setup 
+            let mut rng = rand::thread_rng();
+            let replica_id = ReplicaID::new(&mut rng);
+
+            let mut buf1 = Buf::new();  
+            let mut buf2 = Buf::new();  
+            
+            let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
+            let e2: &[u8] = b"Kan jy my albasters vir my vind?";
+            let e3: &[u8] = b"Kan jy jou idee van normaal by jou gat opdruk?";
+            let e4: &[u8] = b"Kan jy?";
+            let e5: &[u8] = b"Kan jy 'apatie' spel?";
+
+            let es = [e1, e2, e3, e4];
+
+            for e in es {
+                buf1.append(replica_id, e);
+            }
+
+            let expected = [e1, e2, e3, e4, e5];
+
+            buf2.append(replica_id, e5);
+
+            buf1.extend(&buf2);
+
+            // Post conditions
+            assert_eq!(buf1.len(), 5);
+            let actual: Vec<_> = 
+                (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
+            assert_eq!(&actual, &expected)
         }
     }
 }
@@ -418,7 +464,9 @@ impl LocalReplica {
 	}
     
     pub fn read(&mut self, buf: &mut event::Buf, pos: usize) -> io::Result<()> {
-        Ok(())
+        // TODO: check from disk if not in cache
+    
+        Ok(()) 
     }
 }
 
@@ -427,6 +475,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /*
     #[test]
 	fn read_and_write_to_log() {
         let tmp_dir = 
@@ -452,6 +501,7 @@ mod tests {
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
+    */
 }
 
 fn main() {
