@@ -9,7 +9,6 @@ compile_error!("code assumes little-endian");
 
 use fs::OFlags;
 
-use bytemuck;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
@@ -73,11 +72,7 @@ mod test_gen {
         fn rand_slice_iter<R: Rng + Sized>(
             &self, rng: R
         ) -> RandSliceIter<CAPACITY, R> {
-            RandSliceIter {
-                buffer: self,
-                start: 0,
-                rng,
-            }
+            RandSliceIter { buffer: self, start: 0, rng }
         }
     }
 
@@ -94,7 +89,8 @@ mod test_gen {
             if self.start >= self.buffer.len {
                 None
             } else {
-                let end = self.start + self.rng.gen_range(1..=(self.buffer.len - self.start));
+                let range = 1..=(self.buffer.len - self.start);
+                let end = self.start + self.rng.gen_range(range);
                 let slice = &self.buffer.bytes[self.start..end];
                 self.start = end;
                 Some(slice)
@@ -112,7 +108,7 @@ mod event {
 
     #[repr(C)]
     #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
-    struct ID { origin: ReplicaID, pos: usize }
+    pub struct ID { origin: ReplicaID, pos: usize }
 
     impl ID {
         const SIZE: usize = std::mem::size_of::<Self>();
@@ -227,7 +223,7 @@ mod event {
         pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
             // always sets file offset to EOF.
             let bytes_written = io::write(fd, &self.bytes)?;
-            // Linux 'man open' says appending to file opened w/ O_APPEND is atomic
+            // Linux 'man open': appending to file opened w/ O_APPEND is atomic
             // TODO: will this happen? if so how to recover?
             assert_eq!(bytes_written, self.bytes.len());
             Ok(bytes_written)
@@ -255,19 +251,15 @@ mod event {
 
     pub struct BufIntoIterator<'a> {
         event_buf: &'a Buf,
-        byte_index: usize
+        index: usize
     }
 
     impl<'a> Iterator for BufIntoIterator<'a> {
         type Item = Event<'a>;
 
         fn next(&mut self) -> Option<Self::Item> {
-            let result = self.event_buf.get(self.byte_index);
-
-            if let Some(ref e) = result {
-                self.byte_index += Header::SIZE + e.val.len();
-            }
-
+            let result = self.event_buf.get(self.index);
+            self.index += 1;
             result
         }
     }
@@ -277,10 +269,7 @@ mod event {
         type IntoIter = BufIntoIterator<'a>;
 
         fn into_iter(self) -> Self::IntoIter {
-            BufIntoIterator {
-                event_buf: self,
-                byte_index: 0
-            }
+            BufIntoIterator { event_buf: self, index: 0 }
         }
     }
 
@@ -328,16 +317,11 @@ mod event {
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
 
-            let e1 = b"I've not grown weary on lenghty roads";
-            let e2 = b"On strange paths, not gone astray";
-            let e3 = b"Such is the knowledge, the knowledge cast in me";
-            let e4 = b"Such is the knowledge; such are the skills";
-
             let es: [&[u8]; 4] = [
-                e1.as_slice(),
-                e2.as_slice(),
-                e3.as_slice(),
-                e4.as_slice()
+                b"I've not grown weary on lenghty roads",
+                b"On strange paths, not gone astray",
+                b"Such is the knowledge, the knowledge cast in me",
+                b"Such is the knowledge; such are the skills"
             ];
             
             for e in es {
@@ -348,7 +332,7 @@ mod event {
             assert_eq!(buf.len(), 4);
             let actual: Vec<_> = 
                 (0..4).map(|pos| buf.get(pos).unwrap().val).collect();
-            assert_eq!(&actual, &es)
+            assert_eq!(&actual, &es);
         }
 
         #[test]
@@ -382,7 +366,7 @@ mod event {
             assert_eq!(buf1.len(), 5);
             let actual: Vec<_> = 
                 (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
-            assert_eq!(&actual, &expected)
+            assert_eq!(&actual, &expected);
         }
     }
 }
@@ -408,10 +392,6 @@ impl core::fmt::Display for ReplicaID {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 struct EventID { origin: ReplicaID, pos: usize }
-
-impl EventID {
-    const SIZE: usize = std::mem::size_of::<Self>();
-}
 
 pub struct LocalReplica {
     pub id: ReplicaID,
@@ -444,10 +424,8 @@ impl LocalReplica {
     
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
-        // write to cache
         for data in datums {
             self.write_cache.append(self.id, data);
-
         }
         
         // persist
@@ -457,7 +435,10 @@ impl LocalReplica {
         // round up to multiple of 8, for alignment
         self.log_len += (bytes_written + 7) & !7;
 
-        // Resetting
+        // Updating caches
+        // TODO: should the below be combined to some 'drain' operation?
+        assert_eq!(self.write_cache.len(), datums.len());
+        self.read_cache.extend(&self.write_cache);
         self.write_cache.clear();
 
 		Ok(())
@@ -465,7 +446,8 @@ impl LocalReplica {
     
     pub fn read(&mut self, buf: &mut event::Buf, pos: usize) -> io::Result<()> {
         // TODO: check from disk if not in cache
-    
+
+        buf.extend(&self.read_cache);
         Ok(()) 
     }
 }
@@ -475,33 +457,35 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /*
     #[test]
 	fn read_and_write_to_log() {
-        let tmp_dir = 
-            TempDir::with_prefix("interlog-").expect("failed to open temp file");
+        let tmp_dir = TempDir::with_prefix("interlog-")
+            .expect("failed to open temp file");
 
-        let e1 = b"I've not grown weary on lenghty roads";
-        let e2 = b"On strange paths, not gone astray";
-        let e3 = b"Such is the knowledge, the knowledge cast in me";
-        let e4 = b"Such is the knowledge; such are the skills";
+        let es: [&[u8]; 4] = [
+            b"I've not grown weary on lenghty roads",
+            b"On strange paths, not gone astray",
+            b"Such is the knowledge, the knowledge cast in me",
+            b"Such is the knowledge; such are the skills"
+        ];
+
 		let mut rng = rand::thread_rng();
 		let mut replica = LocalReplica::new(tmp_dir.path(), &mut rng)
             .expect("failed to open file");
-		replica
-            .local_write(&[e1, e2, e3, e4])
-            .expect("failed to write to replica");
+
+		replica.local_write(&es).expect("failed to write to replica");
 
 		let mut read_buf = event::Buf::new();
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
-    
+   
+        assert_eq!(read_buf.len(), 4);
+
         let events: Vec<_> = read_buf.into_iter().collect();
+		assert_eq!(events[0].val, es[0]);
         assert_eq!(events.len(), 4);
-		assert_eq!(events[0].val, e1);
 		let path = replica.path.clone();
 		std::fs::remove_file(path).expect("failed to remove file");
     }
-    */
 }
 
 fn main() {
