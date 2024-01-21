@@ -6,7 +6,7 @@
 
 A distributed, local first log.
 
-Planned Featurs (see [TODO.md](TODO file) for progress):
+Planned Featurs (see [TODO file](TODO.md) for progress):
 
 - Append events to log
 - Sync log w/ other logs
