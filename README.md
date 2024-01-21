@@ -4,6 +4,10 @@
 
 ## Overview
 
+A distributed, local first log.
+
+Planned Featurs (see [TODO.md](TODO file) for progress):
+
 - Append events to log
 - Sync log w/ other logs
 - Event ID is composite of origin replica ID and log position
@@ -19,3 +23,15 @@
 - Assume linux, 64 bit, little endian - for now
 - Provide hooks to sync but actual HTTP (or whatever) server is out of scope
 - Do the dumbest simplest thig you can and test the hell out of it
+
+### Sync Strategy
+
+(TODO: I prototyped this in another repo, figure out which one and link it).
+
+Logs are append only. So the causal state of each log can be expressed by a
+single lamport clock - essentially the log length.
+
+From there, we can capture the causal state of a distributed set of logs with a Version Vector per replica.
+
+Looking at it from another angle, each replica constitutes a single GSet, and
+sync is achieved by delta-state CDRT merge.
