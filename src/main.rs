@@ -12,30 +12,24 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
-// Fixed Capacity Byte Buffers
-struct FCBBuf<const CAPACITY: usize> {
-    bytes: Box<[u8; CAPACITY]>,
+// Fixed Capacity Vector
+// Tigerstyle: There IS a limit
+struct FCVec<T, const CAPACITY: usize> {
+    bytes: Box<[T; CAPACITY]>,
     len: usize
 }
 
-impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
-    fn new() -> FCBBuf<CAPACITY> {
-        let bytes: Box<[u8; CAPACITY]> = vec![0; CAPACITY].try_into().unwrap();
+impl<T: Clone + core::fmt::Debug, const CAPACITY: usize> FCVec<T, CAPACITY> {
+    fn new(default: T) -> FCVec<T, CAPACITY> {
+        let bytes: Box<[T; CAPACITY]> =
+            vec![default; CAPACITY].try_into().unwrap();
         assert_eq!(std::mem::size_of_val(&bytes), 8);
         let len = 0;
 
         Self {bytes, len}
     }
 
-    fn extend_from_slice(&mut self, other: &[u8]) {
-        let new_len = self.len + other.len();
-        // TODO: proper option type
-        if new_len > CAPACITY { panic!("overflow") }
-        self.bytes[self.len..new_len].copy_from_slice(other);
-        self.len = new_len;
-    }
-
-    fn resize(&mut self, new_len: usize, value: u8) {
+    fn resize(&mut self, new_len: usize, value: T) {
         if new_len > CAPACITY { panic!("overflow"); }
         let len = self.len;
 
@@ -55,8 +49,18 @@ impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
     }
 }
 
-impl<const CAPACITY: usize> std::ops::Deref for FCBBuf<CAPACITY> {
-    type Target = [u8];
+impl<T: Copy, const CAPACITY: usize> FCVec<T, CAPACITY> {
+    fn extend_from_slice(&mut self, other: &[T]) {
+        let new_len = self.len + other.len();
+        // TODO: proper option type
+        if new_len > CAPACITY { panic!("overflow") }
+        self.bytes[self.len..new_len].copy_from_slice(other);
+        self.len = new_len;
+    }
+}
+
+impl<T, const CAPACITY: usize> std::ops::Deref for FCVec<T, CAPACITY> {
+    type Target = [T];
 
     fn deref(&self) -> &Self::Target {
         &self.bytes[0..self.len]
@@ -65,10 +69,11 @@ impl<const CAPACITY: usize> std::ops::Deref for FCBBuf<CAPACITY> {
 
 #[cfg(test)]
 mod test_gen {
-    use super::FCBBuf;
+    use super::FCVec;
     use rand::prelude::*;
 
-    impl<const CAPACITY: usize> FCBBuf<CAPACITY> {
+    // TODO: use this for the proptests; allocating separate vectors is slow
+    impl<const CAPACITY: usize> FCVec<u8, CAPACITY> {
         fn rand_slice_iter<R: Rng + Sized>(
             &self, rng: R
         ) -> RandSliceIter<CAPACITY, R> {
@@ -77,7 +82,7 @@ mod test_gen {
     }
 
     struct RandSliceIter<'a, const CAPACITY: usize, R: Rng> {
-        buffer: &'a FCBBuf<CAPACITY>,
+        buffer: &'a FCVec<u8, CAPACITY>,
         start: usize,
         rng: R,
     }
@@ -101,7 +106,7 @@ mod test_gen {
 
 mod event {
     use rustix::{fd, io};
-    use super::{FCBBuf, ReplicaID};
+    use super::{FCVec, ReplicaID};
 
     // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
     pub const MAX_SIZE: usize = 2048 * 1024;
@@ -152,14 +157,14 @@ mod event {
     // - ends at the end of an event
     // - aligns events to 8 bytes
     pub struct Buf{
-        bytes: FCBBuf<MAX_SIZE>,
+        bytes: FCVec<u8, MAX_SIZE>,
         indices: Vec<Index>,
     }
 
     impl Buf {
         pub fn new() -> Buf {
             // TODO: deque of MAX_SIZE capacity byte buffers
-            let bytes = FCBBuf::new(); 
+            let bytes = FCVec::new(0); 
             // TODO: fixed capacity, no allocations
             let indices = vec![];
             Self{bytes, indices}
