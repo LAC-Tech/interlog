@@ -178,7 +178,6 @@ mod event {
 
             let aligned_new_len = (new_len + 7) & !7;
             self.bytes.resize(aligned_new_len, 0);
-            // TODO: write padding so that the buffer len is multiples of 8
             assert_eq!(aligned_new_len, self.bytes.len());
 
             self.indices.push(new_index);
@@ -192,7 +191,8 @@ mod event {
         }
 
         pub fn clear(&mut self) {
-            self.bytes.clear()
+            self.bytes.clear();
+            self.indices.clear();
         }
 
         pub fn get(&self, pos: usize) -> Option<Event> {
@@ -220,15 +220,6 @@ mod event {
             self.indices.len()
         }
 
-        pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
-            // always sets file offset to EOF.
-            let bytes_written = io::write(fd, &self.bytes)?;
-            // Linux 'man open': appending to file opened w/ O_APPEND is atomic
-            // TODO: will this happen? if so how to recover?
-            assert_eq!(bytes_written, self.bytes.len());
-            Ok(bytes_written)
-        }
-
         /*
         pub fn read_from_file(
            &mut self, fd: fd::BorrowedFd, index: &Index
@@ -247,6 +238,15 @@ mod event {
             Ok(())
         }
         */
+
+        pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
+            // always sets file offset to EOF.
+            let bytes_written = io::write(fd, &self.bytes)?;
+            // Linux 'man open': appending to file opened w/ O_APPEND is atomic
+            // TODO: will this happen? if so how to recover?
+            assert_eq!(bytes_written, self.bytes.len());
+            Ok(bytes_written)
+        }
     }
 
     pub struct BufIntoIterator<'a> {
@@ -489,21 +489,5 @@ mod tests {
 }
 
 fn main() {
-    let e = b"lol";
-    // Setup 
-    let mut rng = rand::thread_rng();
-    let mut buf = event::Buf::new();
-    let replica_id = ReplicaID::new(&mut rng);
-
-    // Pre conditions
-    assert_eq!(buf.len(), 0, "buf should start empty");
-    assert!(buf.get(0).is_none(), "should contain no event");
-   
-    // Modifying
-    buf.append(replica_id, e);
-
-    // Post conditions
-    let actual = buf.get(0).expect("one event to be at 0");
-    assert_eq!(buf.len(), 1);
-    assert_eq!(actual.val, e);
+    // TODO: test case I want to debug
 }

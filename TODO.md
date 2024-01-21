@@ -1,14 +1,21 @@
-~~- comptime assert linux, 64 bit usize, little endian~~
-~~- print random u80 to console. then print it as hex~~
-~~- create testing file path "/tmp/interlog/randu80"~~
-~~- link to libC and import fcntl.h~~
-~~- open and close path using direct I/O~~
-~~- delete file when done~~
-~~- make replica struct~~
-~~- write "hello, world!" to that file in a test, read it back, then delete it~~
-~~- do the same but using fnctl with O_DIRECT~~
-~~- write event header as well as event~~
+# Add new tasks to the top
+
+- reconstruct LocalReplica from logfile
+- implement 'read cache miss', so events on disk can be larger than read cache
+- persist index to disk
+- Implement EventBuf as circular buffer
+- figure out max size of indices vec in eventbuf, and pre-alllocate
+- create "FCVec<T>", replace FCBBuf with that
+~~- Factor out EventBuf into its own struct~~
+~~- write two values and read them both (using an index that stores the position)``
 ~~- read back using index~~
-- make constructor for making new DB call generic constructor
-- write two values and read them both (using an index that stores the position)
-- reconstruct index from log (will need event metadata on log)
+~~- write event header as well as event~~
+~~- do the same but using fnctl with O_DIRECT~~
+~~- write "hello, world!" to that file in a test, read it back, then delete it~~
+~~- make replica struct~~
+~~- delete file when done~~
+~~- open and close path using direct I/O~~
+~~- link to libC and import fcntl.h~~
+~~- create testing file path "/tmp/interlog/randu80"~~
+~~- print random u80 to console. then print it as hex~~
+~~- comptime assert linux, 64 bit usize, little endian~~
