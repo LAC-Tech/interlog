@@ -14,23 +14,31 @@ use rustix::{fd, fd::AsFd, fs, io};
 
 // Fixed Capacity Vector
 // Tigerstyle: There IS a limit
-struct FCVec<T, const CAPACITY: usize> {
-    bytes: Box<[T; CAPACITY]>,
+struct FCVec<T> {
+    bytes: Box<[T]>,
     len: usize
 }
 
-impl<T: Clone + core::fmt::Debug, const CAPACITY: usize> FCVec<T, CAPACITY> {
-    fn new(default: T) -> FCVec<T, CAPACITY> {
-        let bytes: Box<[T; CAPACITY]> =
-            vec![default; CAPACITY].try_into().unwrap();
-        assert_eq!(std::mem::size_of_val(&bytes), 8);
+impl<T> FCVec<T> {
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
+impl<T: Clone + core::fmt::Debug> FCVec<T> {
+    fn new(default: T, capacity: usize) -> FCVec<T> {
+        let bytes: Box<[T]> =
+            vec![default; capacity].try_into().unwrap();
+        assert_eq!(std::mem::size_of_val(&bytes), 16);
         let len = 0;
 
         Self {bytes, len}
     }
+    
 
     fn resize(&mut self, new_len: usize, value: T) {
-        if new_len > CAPACITY { panic!("overflow"); }
+        if new_len > self.capacity() { panic!("overflow"); }
         let len = self.len;
 
         if new_len > len {
@@ -49,17 +57,17 @@ impl<T: Clone + core::fmt::Debug, const CAPACITY: usize> FCVec<T, CAPACITY> {
     }
 }
 
-impl<T: Copy, const CAPACITY: usize> FCVec<T, CAPACITY> {
+impl<T: Copy> FCVec<T> {
     fn extend_from_slice(&mut self, other: &[T]) {
         let new_len = self.len + other.len();
         // TODO: proper option type
-        if new_len > CAPACITY { panic!("overflow") }
+        if new_len > self.capacity() { panic!("overflow") }
         self.bytes[self.len..new_len].copy_from_slice(other);
         self.len = new_len;
     }
 }
 
-impl<T, const CAPACITY: usize> std::ops::Deref for FCVec<T, CAPACITY> {
+impl<T> std::ops::Deref for FCVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -73,21 +81,21 @@ mod test_gen {
     use rand::prelude::*;
 
     // TODO: use this for the proptests; allocating separate vectors is slow
-    impl<const CAPACITY: usize> FCVec<u8, CAPACITY> {
+    impl FCVec<u8> {
         fn rand_slice_iter<R: Rng + Sized>(
             &self, rng: R
-        ) -> RandSliceIter<CAPACITY, R> {
+        ) -> RandSliceIter<R> {
             RandSliceIter { buffer: self, start: 0, rng }
         }
     }
 
-    struct RandSliceIter<'a, const CAPACITY: usize, R: Rng> {
-        buffer: &'a FCVec<u8, CAPACITY>,
+    struct RandSliceIter<'a, R: Rng> {
+        buffer: &'a FCVec<u8>,
         start: usize,
         rng: R,
     }
 
-    impl<'a, const CAPACITY: usize, R: Rng> Iterator for RandSliceIter<'a, CAPACITY, R> {
+    impl<'a, R: Rng> Iterator for RandSliceIter<'a, R> {
         type Item = &'a [u8];
 
         fn next(&mut self) -> Option<Self::Item> {
@@ -157,14 +165,14 @@ mod event {
     // - ends at the end of an event
     // - aligns events to 8 bytes
     pub struct Buf{
-        bytes: FCVec<u8, MAX_SIZE>,
+        bytes: FCVec<u8>,
         indices: Vec<Index>,
     }
 
     impl Buf {
         pub fn new() -> Buf {
             // TODO: deque of MAX_SIZE capacity byte buffers
-            let bytes = FCVec::new(0); 
+            let bytes = FCVec::new(0, MAX_SIZE); 
             // TODO: fixed capacity, no allocations
             let indices = vec![];
             Self{bytes, indices}
