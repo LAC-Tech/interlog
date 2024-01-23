@@ -1,3 +1,5 @@
+extern crate alloc;
+
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
 
@@ -15,7 +17,7 @@ use rustix::{fd, fd::AsFd, fs, io};
 // Fixed Capacity Vector
 // Tigerstyle: There IS a limit
 struct FCVec<T> {
-    bytes: Box<[T]>,
+    bytes: alloc::boxed::Box<[T]>,
     len: usize
 }
 
@@ -23,6 +25,25 @@ impl<T> FCVec<T> {
     #[inline]
     fn capacity(&self) -> usize {
         self.bytes.len()
+    }
+
+    fn check_capacity(&self, new_len: usize) {
+        if new_len > self.capacity() { 
+            panic!("overflow");
+        }
+    }
+
+    fn push(&mut self, value: T) {
+        let new_len = self.len + 1;
+        self.check_capacity(new_len);
+        self.bytes[self.len] = value;
+        self.len = new_len;
+    }
+
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for elem in iter {
+            self.push(elem);
+        }
     }
 }
 
@@ -38,11 +59,10 @@ impl<T: Clone + core::fmt::Debug> FCVec<T> {
     
 
     fn resize(&mut self, new_len: usize, value: T) {
-        if new_len > self.capacity() { panic!("overflow"); }
-        let len = self.len;
+        self.check_capacity(new_len);
 
-        if new_len > len {
-            self.bytes[len..new_len].fill(value);
+        if new_len > self.len {
+            self.bytes[self.len..new_len].fill(value);
         }
         
         self.len = new_len;
@@ -166,7 +186,7 @@ mod event {
     // - aligns events to 8 bytes
     pub struct Buf{
         bytes: FCVec<u8>,
-        indices: Vec<Index>,
+        indices: FCVec<Index>,
     }
 
     impl Buf {
@@ -174,7 +194,7 @@ mod event {
             // TODO: deque of MAX_SIZE capacity byte buffers
             let bytes = FCVec::new(0, MAX_SIZE); 
             // TODO: fixed capacity, no allocations
-            let indices = vec![];
+            let indices = FCVec::new(Index::new(0), 8);
             Self{bytes, indices}
         }
 
