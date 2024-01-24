@@ -68,10 +68,12 @@ impl<T: Clone + core::fmt::Debug> FCVec<T> {
         self.len = new_len;
     }
 
+    #[inline]
     fn clear(&mut self) {
         self.len = 0;
     }
 
+    #[inline]
     fn len(&self) -> usize {
         self.len
     }
