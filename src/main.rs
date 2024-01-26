@@ -47,7 +47,11 @@ impl<T> FCVec<T> {
     }
 
     fn get(&self, index: usize) -> Option<&T> {
-        self.elems.get(index)
+        if self.len > index {
+            Some(&self.elems[index])
+        } else {
+            None
+        }
     }
 }
 
@@ -571,11 +575,21 @@ mod tests {
 
 fn main() {
     // TODO: test case I want to debug
+    let e = b"";
+    // Setup 
     let mut rng = rand::thread_rng();
     let mut buf = event::Buf::new();
     let replica_id = ReplicaID::new(&mut rng);
-    buf.append(replica_id, &[]);
 
-    buf.get(0);
+    // Pre conditions
+    assert_eq!(buf.len(), 0, "buf should start empty");
+    assert!(buf.get(0).is_none(), "should contain no event");
+  
+    // Modifying
+    buf.append(replica_id, e);
 
+    // Post conditions
+    let actual = buf.get(0).expect("one event to be at 0");
+    assert_eq!(buf.len(), 1);
+    assert_eq!(actual.val, e);
 }

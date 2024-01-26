@@ -5,7 +5,7 @@
 - persist index to disk
 - Implement EventBuf as circular buffer
 - figure out max size of indices vec in eventbuf, and pre-alllocate
-- FCVec should have runtime capacity value
+~~- FCVec should have runtime capacity value~~
 ~~- create "FCVec<T>", replace FCBBuf with that~~
 ~~- Factor out EventBuf into its own struct~~
 ~~- write two values and read them both (using an index that stores the position)``
