@@ -17,14 +17,14 @@ use rustix::{fd, fd::AsFd, fs, io};
 // Fixed Capacity Vector
 // Tigerstyle: There IS a limit
 struct FCVec<T> {
-    bytes: alloc::boxed::Box<[T]>,
+    elems: alloc::boxed::Box<[T]>,
     len: usize
 }
 
 impl<T> FCVec<T> {
     #[inline]
     fn capacity(&self) -> usize {
-        self.bytes.len()
+        self.elems.len()
     }
 
     fn check_capacity(&self, new_len: usize) {
@@ -36,7 +36,7 @@ impl<T> FCVec<T> {
     fn push(&mut self, value: T) {
         let new_len = self.len + 1;
         self.check_capacity(new_len);
-        self.bytes[self.len] = value;
+        self.elems[self.len] = value;
         self.len = new_len;
     }
 
@@ -44,6 +44,10 @@ impl<T> FCVec<T> {
         for elem in iter {
             self.push(elem);
         }
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        self.elems.get(index)
     }
 }
 
@@ -54,7 +58,7 @@ impl<T: Clone + core::fmt::Debug> FCVec<T> {
         assert_eq!(std::mem::size_of_val(&bytes), 16);
         let len = 0;
 
-        Self {bytes, len}
+        Self {elems: bytes, len}
     }
     
 
@@ -62,7 +66,7 @@ impl<T: Clone + core::fmt::Debug> FCVec<T> {
         self.check_capacity(new_len);
 
         if new_len > self.len {
-            self.bytes[self.len..new_len].fill(value);
+            self.elems[self.len..new_len].fill(value);
         }
         
         self.len = new_len;
@@ -84,7 +88,7 @@ impl<T: Copy> FCVec<T> {
         let new_len = self.len + other.len();
         // TODO: proper option type
         if new_len > self.capacity() { panic!("overflow") }
-        self.bytes[self.len..new_len].copy_from_slice(other);
+        self.elems[self.len..new_len].copy_from_slice(other);
         self.len = new_len;
     }
 }
@@ -93,7 +97,7 @@ impl<T> std::ops::Deref for FCVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        &self.bytes[0..self.len]
+        &self.elems[0..self.len]
     }
 }
 
@@ -126,7 +130,7 @@ mod test_gen {
             } else {
                 let range = 1..=(self.buffer.len - self.start);
                 let end = self.start + self.rng.gen_range(range);
-                let slice = &self.buffer.bytes[self.start..end];
+                let slice = &self.buffer.elems[self.start..end];
                 self.start = end;
                 Some(slice)
             }
@@ -160,6 +164,45 @@ mod event {
     #[derive(Debug)]
     pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
 
+    struct Indices(FCVec<usize>);
+
+    impl Indices {
+        fn new(capacity: usize) -> Self {
+            Self(FCVec::new(0, capacity))
+        }
+
+
+        fn push(&mut self, new_index: usize) {
+            if new_index % 8 != 0 {
+                panic!("All indices must be 8 byte aligned")
+            }
+
+            self.0.push(new_index);
+        }
+
+        fn extend(&mut self, other: &Self) {
+            let len = self.0.len();
+            self.0.extend(other.0.iter().map(|i| i + len));
+        }
+
+        fn get(&self, index: usize) -> Option<usize> {
+            self.0.get(index).cloned()
+        }
+
+        // The methods below here are all very stupid.
+        // They just call methods on FCVec which call methods on vec
+
+        fn clear(&mut self) {
+            self.0.clear();
+        }
+        
+
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+    }
+
+    /*
     #[derive(Clone, Copy, Debug)]
     struct Index(usize);
 
@@ -180,6 +223,7 @@ mod event {
             Self::new(self.0 + buf_len)
         }
     }
+    */
     
     // 1..N events backed by a fixed capacity byte buffer
     // INVARIANTS
@@ -188,7 +232,7 @@ mod event {
     // - aligns events to 8 bytes
     pub struct Buf{
         bytes: FCVec<u8>,
-        indices: FCVec<Index>,
+        indices: Indices,
     }
 
     impl Buf {
@@ -196,12 +240,12 @@ mod event {
             // TODO: deque of MAX_SIZE capacity byte buffers
             let bytes = FCVec::new(0, MAX_SIZE); 
             // TODO: fixed capacity, no allocations
-            let indices = FCVec::new(Index::new(0), 8);
+            let indices = Indices::new(8);
             Self{bytes, indices}
         }
 
         pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
-            let new_index = Index::new(self.bytes.len());
+            let new_index = self.bytes.len();
             let header = Header { len: ID::SIZE + val.len(), origin };
             let new_len = self.bytes.len() + Header::SIZE + val.len();
 
@@ -219,9 +263,7 @@ mod event {
         }
 
         pub fn extend(&mut self, other: &Buf) {
-            let shifted_indices =
-                other.indices.iter().map(|i| i.shift(self.bytes.len()));
-            self.indices.extend(shifted_indices);
+            self.indices.extend(&other.indices);
             self.bytes.extend_from_slice(&other.bytes);
         }
 
@@ -230,18 +272,24 @@ mod event {
             self.indices.clear();
         }
 
+        // So at this point the caller of this is calling
+        // - buf
+        // - indicies
+        // - FCVec
+        // - Vec
+        pub fn len(&self) -> usize {
+            self.indices.len()
+        }
+
         pub fn get(&self, pos: usize) -> Option<Event> {
-            if pos >= self.len() { return None; }
-            
-            let index = self.indices[pos];
-            let byte_pos = index.as_usize();
-            let header_range = byte_pos..byte_pos + Header::SIZE;
+            let index = self.indices.get(pos)?;
+            let header_range = index..index + Header::SIZE;
 
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
 
             let val_range = 
-                byte_pos + Header::SIZE .. byte_pos + event_header.len;
+                index + Header::SIZE .. index + event_header.len;
 
             let event = Event {
                 id: ID { origin: event_header.origin, pos },
@@ -249,10 +297,6 @@ mod event {
             };
 
             Some(event)
-        }
-
-        pub fn len(&self) -> usize {
-            self.indices.len()
         }
 
         /*
@@ -487,6 +531,7 @@ impl LocalReplica {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,7 +567,15 @@ mod tests {
 		std::fs::remove_file(path).expect("failed to remove file");
     }
 }
+*/
 
 fn main() {
     // TODO: test case I want to debug
+    let mut rng = rand::thread_rng();
+    let mut buf = event::Buf::new();
+    let replica_id = ReplicaID::new(&mut rng);
+    buf.append(replica_id, &[]);
+
+    buf.get(0);
+
 }
