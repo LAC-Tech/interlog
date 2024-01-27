@@ -168,68 +168,35 @@ mod event {
     #[derive(Debug)]
     pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
 
-    struct Indices(FCVec<usize>);
-
-    impl Indices {
-        fn new(capacity: usize) -> Self {
-            Self(FCVec::new(0, capacity))
-        }
-
-
-        fn push(&mut self, new_index: usize) {
-            dbg!(new_index);
-            if new_index % 8 != 0 {
-                panic!("All indices must be 8 byte aligned")
-            }
-
-            self.0.push(new_index);
-        }
-
-        fn extend(&mut self, other: &Self) {
-            let len = self.0.len();
-            self.0.extend(other.0.iter().map(|i| i + len));
-        }
-
-        fn get(&self, index: usize) -> Option<usize> {
-            self.0.get(index).cloned()
-        }
-
-        // The methods below here are all very stupid.
-        // They just call methods on FCVec which call methods on vec
-
-        fn clear(&mut self) {
-            self.0.clear();
-        }
-        
-
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-    }
-
-    /*
     #[derive(Clone, Copy, Debug)]
     struct Index(usize);
 
     impl Index {
-        fn new(byte_pos: usize) -> Self {
-            if byte_pos % 8 != 0 {
-                panic!("All indices must be 8 byte aligned")
+        // Constructor with panic for simplicity
+        fn new(value: usize) -> Self {
+            if value % 8 != 0 {
+                panic!("All indices must be 8 byte aligned");
             }
-
-            Self(byte_pos)
+            Index(value)
         }
 
-        fn as_usize(self) -> usize {
-            self.0
-        }
-
-        fn shift(self, buf_len: usize) -> Self {
-            Self::new(self.0 + buf_len)
+        fn shift(self, byte_len: usize) -> Self {
+            Self(self.0 + byte_len)
         }
     }
-    */
-    
+
+    impl Into<usize> for Index {
+        fn into(self) -> usize {
+            self.0
+        }
+    }
+
+    impl Into<Index> for usize {
+        fn into(self) -> Index {
+            Index(self)
+        }
+    }
+
     // 1..N events backed by a fixed capacity byte buffer
     // INVARIANTS
     // - starts at the start of an event
@@ -237,7 +204,7 @@ mod event {
     // - aligns events to 8 bytes
     pub struct Buf{
         bytes: FCVec<u8>,
-        indices: Indices,
+        indices: FCVec<Index>,
     }
 
     impl Buf {
@@ -245,14 +212,14 @@ mod event {
             // TODO: deque of MAX_SIZE capacity byte buffers
             let bytes = FCVec::new(0, MAX_SIZE); 
             // TODO: fixed capacity, no allocations
-            let indices = Indices::new(8);
+            let indices = FCVec::new(0.into(), 8);
             Self{bytes, indices}
         }
 
         pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
             let new_index = self.bytes.len();
             let header = Header { len: ID::SIZE + val.len(), origin };
-            let new_len = self.bytes.len() + Header::SIZE + val.len();
+            let new_len = new_index + Header::SIZE + val.len();
 
             let header = bytemuck::bytes_of(&header);
             self.bytes.extend_from_slice(header);
@@ -264,11 +231,13 @@ mod event {
             self.bytes.resize(aligned_new_len, 0);
             assert_eq!(aligned_new_len, self.bytes.len());
 
-            self.indices.push(new_index);
+            self.indices.push(new_index.into());
         }
 
         pub fn extend(&mut self, other: &Buf) {
-            self.indices.extend(&other.indices);
+            let byte_len = self.bytes.len();
+
+            self.indices.extend(other.indices.iter().map(|i| i.shift(byte_len)));
             self.bytes.extend_from_slice(&other.bytes);
         }
 
@@ -281,13 +250,14 @@ mod event {
         // - buf
         // - indicies
         // - FCVec
-        // - Vec
+        // - slice inside FCVec
         pub fn len(&self) -> usize {
             self.indices.len()
         }
 
         pub fn get(&self, pos: usize) -> Option<Event> {
-            let index = self.indices.get(pos)?;
+            let index: usize = self.indices.get(pos).cloned()?.into();
+
             let header_range = index..index + Header::SIZE;
             
             dbg!(&header_range);
@@ -295,8 +265,7 @@ mod event {
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
 
-            let val_range = 
-                index + Header::SIZE .. index + event_header.len;
+            let val_range = index + Header::SIZE .. index + event_header.len;
 
             let event = Event {
                 id: ID { origin: event_header.origin, pos },
