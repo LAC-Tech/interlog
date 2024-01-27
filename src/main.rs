@@ -177,6 +177,7 @@ mod event {
 
 
         fn push(&mut self, new_index: usize) {
+            dbg!(new_index);
             if new_index % 8 != 0 {
                 panic!("All indices must be 8 byte aligned")
             }
@@ -288,6 +289,8 @@ mod event {
         pub fn get(&self, pos: usize) -> Option<Event> {
             let index = self.indices.get(pos)?;
             let header_range = index..index + Header::SIZE;
+            
+            dbg!(&header_range);
 
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
@@ -575,21 +578,34 @@ mod tests {
 
 fn main() {
     // TODO: test case I want to debug
-    let e = b"";
     // Setup 
     let mut rng = rand::thread_rng();
-    let mut buf = event::Buf::new();
     let replica_id = ReplicaID::new(&mut rng);
 
-    // Pre conditions
-    assert_eq!(buf.len(), 0, "buf should start empty");
-    assert!(buf.get(0).is_none(), "should contain no event");
-  
-    // Modifying
-    buf.append(replica_id, e);
+    let mut buf1 = event::Buf::new();  
+    let mut buf2 = event::Buf::new();  
+    
+    let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
+    let e2: &[u8] = b"Kan jy my albasters vir my vind?";
+    let e3: &[u8] = b"Kan jy jou idee van normaal by jou gat opdruk?";
+    let e4: &[u8] = b"Kan jy?";
+    let e5: &[u8] = b"Kan jy 'apatie' spel?";
+
+    let es = [e1, e2, e3, e4];
+
+    for e in es {
+        buf1.append(replica_id, e);
+    }
+
+    let expected = [e1, e2, e3, e4, e5];
+
+    buf2.append(replica_id, e5);
+
+    buf1.extend(&buf2);
 
     // Post conditions
-    let actual = buf.get(0).expect("one event to be at 0");
-    assert_eq!(buf.len(), 1);
-    assert_eq!(actual.val, e);
+    assert_eq!(buf1.len(), 5);
+    let actual: Vec<_> = 
+        (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
+    assert_eq!(&actual, &expected);
 }
