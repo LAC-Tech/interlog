@@ -90,7 +90,6 @@ impl<T: Clone + core::fmt::Debug> FCVec<T> {
 impl<T: Copy> FCVec<T> {
     fn extend_from_slice(&mut self, other: &[T]) {
         let new_len = self.len + other.len();
-        // TODO: proper option type
         if new_len > self.capacity() { panic!("overflow") }
         self.elems[self.len..new_len].copy_from_slice(other);
         self.len = new_len;
@@ -202,16 +201,14 @@ mod event {
     // - starts at the start of an event
     // - ends at the end of an event
     // - aligns events to 8 bytes
-    pub struct Buf{
+    pub struct FixedBuf{
         bytes: FCVec<u8>,
         indices: FCVec<Index>,
     }
 
-    impl Buf {
-        pub fn new() -> Buf {
-            // TODO: deque of MAX_SIZE capacity byte buffers
+    impl FixedBuf {
+        pub fn new() -> FixedBuf {
             let bytes = FCVec::new(0, MAX_SIZE); 
-            // TODO: fixed capacity, no allocations
             let indices = FCVec::new(0.into(), 8);
             Self{bytes, indices}
         }
@@ -234,9 +231,8 @@ mod event {
             self.indices.push(new_index.into());
         }
 
-        pub fn extend(&mut self, other: &Buf) {
+        pub fn extend(&mut self, other: &FixedBuf) {
             let byte_len = self.bytes.len();
-
             self.indices.extend(other.indices.iter().map(|i| i.shift(byte_len)));
             self.bytes.extend_from_slice(&other.bytes);
         }
@@ -246,11 +242,6 @@ mod event {
             self.indices.clear();
         }
 
-        // So at this point the caller of this is calling
-        // - buf
-        // - indicies
-        // - FCVec
-        // - slice inside FCVec
         pub fn len(&self) -> usize {
             self.indices.len()
         }
@@ -260,8 +251,6 @@ mod event {
 
             let header_range = index..index + Header::SIZE;
             
-            dbg!(&header_range);
-
             let event_header: &Header =
                 bytemuck::from_bytes(&self.bytes[header_range]);
 
@@ -305,7 +294,7 @@ mod event {
     }
 
     pub struct BufIntoIterator<'a> {
-        event_buf: &'a Buf,
+        event_buf: &'a FixedBuf,
         index: usize
     }
 
@@ -319,7 +308,7 @@ mod event {
         }
     }
 
-    impl<'a> IntoIterator for &'a Buf {
+    impl<'a> IntoIterator for &'a FixedBuf {
         type Item = Event<'a>;
         type IntoIter = BufIntoIterator<'a>;
 
@@ -342,7 +331,7 @@ mod event {
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
-                let mut buf = Buf::new();
+                let mut buf = FixedBuf::new();
                 let replica_id = ReplicaID::new(&mut rng);
 
                 // Pre conditions
@@ -366,7 +355,7 @@ mod event {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
             
-            let mut buf = Buf::new();
+            let mut buf = FixedBuf::new();
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
@@ -396,8 +385,8 @@ mod event {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = Buf::new();  
-            let mut buf2 = Buf::new();  
+            let mut buf1 = FixedBuf::new();  
+            let mut buf2 = FixedBuf::new();  
             
             let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
             let e2: &[u8] = b"Kan jy my albasters vir my vind?";
@@ -453,8 +442,8 @@ pub struct LocalReplica {
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: usize,
-    write_cache: event::Buf,
-    read_cache: event::Buf
+    write_cache: event::FixedBuf,
+    read_cache: event::FixedBuf
 }
 
 // TODO: store data larger than read cache
@@ -471,8 +460,8 @@ impl LocalReplica {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len = 0;
-        let write_cache = event::Buf::new();
-        let read_cache = event::Buf::new();
+        let write_cache = event::FixedBuf::new();
+        let read_cache = event::FixedBuf::new();
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
     }
@@ -499,7 +488,7 @@ impl LocalReplica {
 		Ok(())
 	}
     
-    pub fn read(&mut self, buf: &mut event::Buf, pos: usize) -> io::Result<()> {
+    pub fn read(&mut self, buf: &mut event::FixedBuf, pos: usize) -> io::Result<()> {
         // TODO: check from disk if not in cache
 
         buf.extend(&self.read_cache);
@@ -507,7 +496,6 @@ impl LocalReplica {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,7 +519,7 @@ mod tests {
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-		let mut read_buf = event::Buf::new();
+		let mut read_buf = event::FixedBuf::new();
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
         assert_eq!(read_buf.len(), 4);
@@ -543,7 +531,6 @@ mod tests {
 		std::fs::remove_file(path).expect("failed to remove file");
     }
 }
-*/
 
 fn main() {
     // TODO: test case I want to debug
@@ -551,8 +538,8 @@ fn main() {
     let mut rng = rand::thread_rng();
     let replica_id = ReplicaID::new(&mut rng);
 
-    let mut buf1 = event::Buf::new();  
-    let mut buf2 = event::Buf::new();  
+    let mut buf1 = event::FixedBuf::new();  
+    let mut buf2 = event::FixedBuf::new();  
     
     let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
     let e2: &[u8] = b"Kan jy my albasters vir my vind?";
