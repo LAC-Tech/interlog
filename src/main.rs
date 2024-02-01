@@ -112,31 +112,30 @@ mod test_gen {
     // TODO: use this for the proptests; allocating separate vectors is slow
     impl FCVec<u8> {
         fn rand_slice_iter<R: Rng + Sized>(
-            &self, rng: R
+            &self, rng: R, range: core::ops::RangeInclusive<usize>
         ) -> RandSliceIter<R> {
-            RandSliceIter { buffer: self, start: 0, rng }
+            RandSliceIter { buffer: self, pos: 0, range, rng }
         }
     }
 
     struct RandSliceIter<'a, R: Rng> {
         buffer: &'a FCVec<u8>,
-        start: usize,
-        rng: R,
+        pos: usize,
+        range: core::ops::RangeInclusive<usize>,
+        rng: R
     }
 
     impl<'a, R: Rng> Iterator for RandSliceIter<'a, R> {
         type Item = &'a [u8];
 
         fn next(&mut self) -> Option<Self::Item> {
-            if self.start >= self.buffer.len {
-                None
-            } else {
-                let range = 1..=(self.buffer.len - self.start);
-                let end = self.start + self.rng.gen_range(range);
-                let slice = &self.buffer.elems[self.start..end];
-                self.start = end;
-                Some(slice)
-            }
+            if self.pos >= self.buffer.len { return None }
+
+            let range = self.range.clone();
+            let end = self.pos + self.rng.gen_range(range);
+            let slice = &self.buffer.elems[self.pos..end];
+            self.pos = end;
+            Some(slice)
         }
     }
 }
