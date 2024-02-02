@@ -531,6 +531,33 @@ mod tests {
     }
 }
 
+/// Deterministic Simulation Tester for Interlog
+/// Inspired by Tigerbeetle Simulator, as well as Will Wilsons talk.
+mod sim {
+    mod range {
+        use core::ops::Range;
+
+        // TB has 0..8. TODO: Why 0?
+        pub const REPLICA_COUNT: Range<usize> = 2..10;
+        // How many events a replica will consume
+        pub const EVENTS_PER_REPLICA: Range<usize> = 0..256;
+        pub const EVENTS_PER_TICK: Range<usize> = 0..8;
+    }
+
+    mod probability {
+        use core::ops::Range;
+
+        pub const SYNC: Range<f64> = 0.0..0.1;
+        pub const RECV_EVENTS: Range<f64> = 0.0..1.0;
+    }
+
+    struct Stats {
+        total_msgs: u64,
+        new_events: u64,
+        events_sent: Vec<u64>
+    }
+}
+
 fn main() {
     // TODO: test case I want to debug
     // Setup 
@@ -540,27 +567,6 @@ fn main() {
     let mut buf1 = event::FixedBuf::new();  
     let mut buf2 = event::FixedBuf::new();  
     
-    let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
-    let e2: &[u8] = b"Kan jy my albasters vir my vind?";
-    let e3: &[u8] = b"Kan jy jou idee van normaal by jou gat opdruk?";
-    let e4: &[u8] = b"Kan jy?";
-    let e5: &[u8] = b"Kan jy 'apatie' spel?";
-
-    let es = [e1, e2, e3, e4];
-
-    for e in es {
-        buf1.append(replica_id, e);
-    }
-
-    let expected = [e1, e2, e3, e4, e5];
-
-    buf2.append(replica_id, e5);
-
-    buf1.extend(&buf2);
-
-    // Post conditions
-    assert_eq!(buf1.len(), 5);
-    let actual: Vec<_> = 
-        (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
-    assert_eq!(&actual, &expected);
+    // TODO: read and write random batches of events to replica
+    // See they are persisted propewrly
 }
