@@ -534,7 +534,7 @@ mod tests {
 /// Deterministic Simulation Tester for Interlog
 /// Inspired by Tigerbeetle Simulator, as well as Will Wilsons talk.
 mod sim {
-    mod range {
+    pub mod range {
         use core::ops::Range;
 
         // TB has 0..8. TODO: Why 0?
@@ -562,11 +562,11 @@ fn main() {
     // TODO: test case I want to debug
     // Setup 
     let mut rng = rand::thread_rng();
-    let replica_id = ReplicaID::new(&mut rng);
 
-    let mut buf1 = event::FixedBuf::new();  
-    let mut buf2 = event::FixedBuf::new();  
-    
-    // TODO: read and write random batches of events to replica
-    // See they are persisted propewrly
+    let num_replicas = rng.gen_range(sim::range::REPLICA_COUNT); // Rand.int rng Range.replicaCount
+    let addrs = Array.init numReplicas (fun _ -> Rand.addr rng)
+    let (replicas, sendMsg, stats) = replicaNetwork<int> addrs
+    let eventsPerReplica = 
+        Array.init numReplicas (fun _ -> Rand.int rng Range.eventsPerReplica)
+
 }
