@@ -22,6 +22,12 @@ struct FCVec<T> {
 }
 
 impl<T> FCVec<T> {
+    // TODO: use uninitialised memroy so I don't have to provide a default here
+    fn new(capacity: usize) -> FCVec<T> {
+        let elems: Box<[T]> = Vec::with_capacity(capacity).into_boxed_slice();
+        Self {elems, len: 0}
+    }
+
     #[inline]
     fn capacity(&self) -> usize {
         self.elems.len()
@@ -53,19 +59,16 @@ impl<T> FCVec<T> {
             None
         }
     }
+
+    fn init<F>(size: usize, f: F) -> Self where F: FnMut() -> T {
+        let mut result = Self::new(size);
+        result.elems.fill_with(f);
+        result.len = 0;
+        result
+    }
 }
 
 impl<T: Clone + core::fmt::Debug> FCVec<T> {
-    fn new(default: T, capacity: usize) -> FCVec<T> {
-        let bytes: Box<[T]> =
-            vec![default; capacity].try_into().unwrap();
-        assert_eq!(std::mem::size_of_val(&bytes), 16);
-        let len = 0;
-
-        Self {elems: bytes, len}
-    }
-    
-
     fn resize(&mut self, new_len: usize, value: T) {
         self.check_capacity(new_len);
 
@@ -207,8 +210,8 @@ mod event {
 
     impl FixedBuf {
         pub fn new() -> FixedBuf {
-            let bytes = FCVec::new(0, MAX_SIZE); 
-            let indices = FCVec::new(0.into(), 8);
+            let bytes = FCVec::new(MAX_SIZE); 
+            let indices = FCVec::new(8);
             Self{bytes, indices}
         }
 
@@ -320,7 +323,6 @@ mod event {
     mod tests {
         use super::*;
         use pretty_assertions::assert_eq;
-        use proptest::prelude::*;
         use tempfile::TempDir;
 
         proptest! {
@@ -559,14 +561,17 @@ mod sim {
 }
 
 fn main() {
+    use sim::*;
     // TODO: test case I want to debug
     // Setup 
     let mut rng = rand::thread_rng();
+    let num_replicas = rng.gen_range(range::REPLICA_COUNT);
+    let replica_ids = FCVec::init(num_replicas, || ReplicaID::new(&mut rng));
+    //let events_per_replica = FCVec::init(num_replicas, )
 
-    let num_replicas = rng.gen_range(sim::range::REPLICA_COUNT); // Rand.int rng Range.replicaCount
-    let addrs = Array.init numReplicas (fun _ -> Rand.addr rng)
-    let (replicas, sendMsg, stats) = replicaNetwork<int> addrs
+    /*
     let eventsPerReplica = 
         Array.init numReplicas (fun _ -> Rand.int rng Range.eventsPerReplica)
+    */
 
 }
