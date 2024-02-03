@@ -562,16 +562,13 @@ mod sim {
 
 fn main() {
     use sim::*;
-    // TODO: test case I want to debug
-    // Setup 
+
+    // 1 minute in ms increments
+    let sim_time = 1000 * 60;
+
     let mut rng = rand::thread_rng();
     let num_replicas = rng.gen_range(range::REPLICA_COUNT);
     let replica_ids = FCVec::init(num_replicas, || ReplicaID::new(&mut rng));
-    //let events_per_replica = FCVec::init(num_replicas, )
-
-    /*
-    let eventsPerReplica = 
-        Array.init numReplicas (fun _ -> Rand.int rng Range.eventsPerReplica)
-    */
-
+    let events_per_replica = 
+        FCVec::init(num_replicas, || rng.gen_range(range::EVENTS_PER_REPLICA));
 }
