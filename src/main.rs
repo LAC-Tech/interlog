@@ -16,12 +16,12 @@ use rustix::{fd, fd::AsFd, fs, io};
 
 // Fixed Capacity Vector
 // Tigerstyle: There IS a limit
-struct FCVec<T> {
+struct FixVec<T> {
     elems: alloc::boxed::Box<[T]>,
     len: usize
 }
 
-impl<T> FCVec<T> {
+impl<T> FixVec<T> {
     #[inline]
     fn capacity(&self) -> usize {
         self.elems.len()
@@ -55,8 +55,8 @@ impl<T> FCVec<T> {
     }
 }
 
-impl<T: Clone + core::fmt::Debug> FCVec<T> {
-    fn new(default: T, capacity: usize) -> FCVec<T> {
+impl<T: Clone + core::fmt::Debug> FixVec<T> {
+    fn new(default: T, capacity: usize) -> FixVec<T> {
         let bytes: Box<[T]> =
             vec![default; capacity].try_into().unwrap();
         assert_eq!(std::mem::size_of_val(&bytes), 16);
@@ -87,7 +87,7 @@ impl<T: Clone + core::fmt::Debug> FCVec<T> {
     }
 }
 
-impl<T: Copy> FCVec<T> {
+impl<T: Copy> FixVec<T> {
     fn extend_from_slice(&mut self, other: &[T]) {
         let new_len = self.len + other.len();
         if new_len > self.capacity() { panic!("overflow") }
@@ -96,7 +96,7 @@ impl<T: Copy> FCVec<T> {
     }
 }
 
-impl<T> std::ops::Deref for FCVec<T> {
+impl<T> std::ops::Deref for FixVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -106,11 +106,11 @@ impl<T> std::ops::Deref for FCVec<T> {
 
 #[cfg(test)]
 mod test_gen {
-    use super::FCVec;
+    use super::FixVec;
     use rand::prelude::*;
 
     // TODO: use this for the proptests; allocating separate vectors is slow
-    impl FCVec<u8> {
+    impl FixVec<u8> {
         fn rand_slice_iter<R: Rng + Sized>(
             &self, rng: R
         ) -> RandSliceIter<R> {
@@ -119,7 +119,7 @@ mod test_gen {
     }
 
     struct RandSliceIter<'a, R: Rng> {
-        buffer: &'a FCVec<u8>,
+        buffer: &'a FixVec<u8>,
         start: usize,
         rng: R,
     }
@@ -143,7 +143,7 @@ mod test_gen {
 
 mod event {
     use rustix::{fd, io};
-    use super::{FCVec, ReplicaID};
+    use super::{FixVec, ReplicaID};
 
     // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
     pub const MAX_SIZE: usize = 2048 * 1024;
@@ -201,15 +201,15 @@ mod event {
     // - starts at the start of an event
     // - ends at the end of an event
     // - aligns events to 8 bytes
-    pub struct FixedBuf{
-        bytes: FCVec<u8>,
-        indices: FCVec<Index>,
+    pub struct FixBuf {
+        bytes: FixVec<u8>,
+        indices: FixVec<Index>,
     }
 
-    impl FixedBuf {
-        pub fn new() -> FixedBuf {
-            let bytes = FCVec::new(0, MAX_SIZE); 
-            let indices = FCVec::new(0.into(), 8);
+    impl FixBuf {
+        pub fn new() -> FixBuf {
+            let bytes = FixVec::new(0, MAX_SIZE); 
+            let indices = FixVec::new(0.into(), 8);
             Self{bytes, indices}
         }
 
@@ -231,7 +231,7 @@ mod event {
             self.indices.push(new_index.into());
         }
 
-        pub fn extend(&mut self, other: &FixedBuf) {
+        pub fn extend(&mut self, other: &FixBuf) {
             let byte_len = self.bytes.len();
             self.indices.extend(other.indices.iter().map(|i| i.shift(byte_len)));
             self.bytes.extend_from_slice(&other.bytes);
@@ -294,7 +294,7 @@ mod event {
     }
 
     pub struct BufIntoIterator<'a> {
-        event_buf: &'a FixedBuf,
+        event_buf: &'a FixBuf,
         index: usize
     }
 
@@ -308,7 +308,7 @@ mod event {
         }
     }
 
-    impl<'a> IntoIterator for &'a FixedBuf {
+    impl<'a> IntoIterator for &'a FixBuf {
         type Item = Event<'a>;
         type IntoIter = BufIntoIterator<'a>;
 
@@ -331,7 +331,7 @@ mod event {
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
-                let mut buf = FixedBuf::new();
+                let mut buf = FixBuf::new();
                 let replica_id = ReplicaID::new(&mut rng);
 
                 // Pre conditions
@@ -355,7 +355,7 @@ mod event {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
             
-            let mut buf = FixedBuf::new();
+            let mut buf = FixBuf::new();
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
@@ -385,8 +385,8 @@ mod event {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = FixedBuf::new();  
-            let mut buf2 = FixedBuf::new();  
+            let mut buf1 = FixBuf::new();  
+            let mut buf2 = FixBuf::new();  
             
             let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
             let e2: &[u8] = b"Kan jy my albasters vir my vind?";
@@ -442,8 +442,8 @@ pub struct LocalReplica {
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: usize,
-    write_cache: event::FixedBuf,
-    read_cache: event::FixedBuf
+    write_cache: event::FixBuf,
+    read_cache: event::FixBuf
 }
 
 // TODO: store data larger than read cache
@@ -460,8 +460,8 @@ impl LocalReplica {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len = 0;
-        let write_cache = event::FixedBuf::new();
-        let read_cache = event::FixedBuf::new();
+        let write_cache = event::FixBuf::new();
+        let read_cache = event::FixBuf::new();
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
     }
@@ -488,7 +488,7 @@ impl LocalReplica {
 		Ok(())
 	}
     
-    pub fn read(&mut self, buf: &mut event::FixedBuf, pos: usize) -> io::Result<()> {
+    pub fn read(&mut self, buf: &mut event::FixBuf, pos: usize) -> io::Result<()> {
         // TODO: check from disk if not in cache
 
         buf.extend(&self.read_cache);
@@ -519,7 +519,7 @@ mod tests {
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-		let mut read_buf = event::FixedBuf::new();
+		let mut read_buf = event::FixBuf::new();
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
         assert_eq!(read_buf.len(), 4);
@@ -538,8 +538,8 @@ fn main() {
     let mut rng = rand::thread_rng();
     let replica_id = ReplicaID::new(&mut rng);
 
-    let mut buf1 = event::FixedBuf::new();  
-    let mut buf2 = event::FixedBuf::new();  
+    let mut buf1 = event::FixBuf::new();  
+    let mut buf2 = event::FixBuf::new();  
     
     let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
     let e2: &[u8] = b"Kan jy my albasters vir my vind?";
