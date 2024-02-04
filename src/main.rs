@@ -104,42 +104,6 @@ impl<T> std::ops::Deref for FixVec<T> {
     }
 }
 
-#[cfg(test)]
-mod test_gen {
-    use super::FixVec;
-    use rand::prelude::*;
-
-    // TODO: use this for the proptests; allocating separate vectors is slow
-    impl FixVec<u8> {
-        fn rand_slice_iter<R: Rng + Sized>(
-            &self, rng: R, range: core::ops::RangeInclusive<usize>
-        ) -> RandSliceIter<R> {
-            RandSliceIter { buffer: self, pos: 0, range, rng }
-        }
-    }
-
-    struct RandSliceIter<'a, R: Rng> {
-        buffer: &'a FixVec<u8>,
-        pos: usize,
-        range: core::ops::RangeInclusive<usize>,
-        rng: R
-    }
-
-    impl<'a, R: Rng> Iterator for RandSliceIter<'a, R> {
-        type Item = &'a [u8];
-
-        fn next(&mut self) -> Option<Self::Item> {
-            if self.pos >= self.buffer.len { return None }
-
-            let range = self.range.clone();
-            let end = self.pos + self.rng.gen_range(range);
-            let slice = &self.buffer.elems[self.pos..end];
-            self.pos = end;
-            Some(slice)
-        }
-    }
-}
-
 mod event {
     use rustix::{fd, io};
     use super::{FixVec, ReplicaID};
@@ -166,35 +130,6 @@ mod event {
     #[derive(Debug)]
     pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
 
-    #[derive(Clone, Copy, Debug)]
-    struct Index(usize);
-
-    impl Index {
-        // Constructor with panic for simplicity
-        fn new(value: usize) -> Self {
-            if value % 8 != 0 {
-                panic!("All indices must be 8 byte aligned");
-            }
-            Index(value)
-        }
-
-        fn shift(self, byte_len: usize) -> Self {
-            Self(self.0 + byte_len)
-        }
-    }
-
-    impl Into<usize> for Index {
-        fn into(self) -> usize {
-            self.0
-        }
-    }
-
-    impl Into<Index> for usize {
-        fn into(self) -> Index {
-            Index(self)
-        }
-    }
-
     // 1..N events backed by a fixed capacity byte buffer
     // INVARIANTS
     // - starts at the start of an event
@@ -202,13 +137,13 @@ mod event {
     // - aligns events to 8 bytes
     pub struct FixBuf {
         bytes: FixVec<u8>,
-        indices: FixVec<Index>,
+        indices: FixVec<usize>,
     }
 
     impl FixBuf {
         pub fn new() -> FixBuf {
             let bytes = FixVec::new(0, MAX_SIZE); 
-            let indices = FixVec::new(0.into(), 8);
+            let indices = FixVec::new(0, 8);
             Self{bytes, indices}
         }
 
@@ -232,7 +167,7 @@ mod event {
 
         pub fn extend(&mut self, other: &FixBuf) {
             let byte_len = self.bytes.len();
-            self.indices.extend(other.indices.iter().map(|i| i.shift(byte_len)));
+            self.indices.extend(other.indices.iter().map(|i| i + byte_len));
             self.bytes.extend_from_slice(&other.bytes);
         }
 
@@ -323,6 +258,14 @@ mod event {
         use proptest::prelude::*;
         use tempfile::TempDir;
 
+        // TODO: too many allocations. Make a liffe vector implementation
+        fn arb_byte_list(max: usize) -> impl Strategy<Value = Vec<Vec<u8>>> {
+            proptest::collection::vec(
+                proptest::collection::vec(any::<u8>(), 0..=max),
+                0..=max
+            )
+        }
+
         proptest! {
             #[test]
             fn read_and_write_single_event(
@@ -345,37 +288,31 @@ mod event {
                 assert_eq!(buf.len(), 1);
                 assert_eq!(actual.val, &e);
             }
-        }
 
-        // TODO: generalise w/ proptest
-        #[test]
-        fn multiple_read_and_write() {
-            // Setup 
-            let mut rng = rand::thread_rng();
-            let replica_id = ReplicaID::new(&mut rng);
-            
-            let mut buf = FixBuf::new();
+            #[test]
+            fn multiple_read_and_write(
+                es in arb_byte_list(8)
+            ) {
+                // Setup 
+                let mut rng = rand::thread_rng();
+                let replica_id = ReplicaID::new(&mut rng);
+                
+                let mut buf = FixBuf::new();
 
-            // Pre conditions
-            assert_eq!(buf.len(), 0, "buf should start empty");
-            assert!(buf.get(0).is_none(), "should contain no event");
+                // Pre conditions
+                assert_eq!(buf.len(), 0, "buf should start empty");
+                assert!(buf.get(0).is_none(), "should contain no event");
+                
+                for e in &es {
+                    buf.append(replica_id, &e);
+                }
 
-            let es: [&[u8]; 4] = [
-                b"I've not grown weary on lenghty roads",
-                b"On strange paths, not gone astray",
-                b"Such is the knowledge, the knowledge cast in me",
-                b"Such is the knowledge; such are the skills"
-            ];
-            
-            for e in es {
-                buf.append(replica_id, e);
+                // Post conditions
+                assert_eq!(buf.len(), es.len());
+                let actual: Vec<_> = 
+                    (0..es.len()).map(|pos| buf.get(pos).unwrap().val).collect();
+                assert_eq!(&actual, &es);
             }
-
-            // Post conditions
-            assert_eq!(buf.len(), 4);
-            let actual: Vec<_> = 
-                (0..4).map(|pos| buf.get(pos).unwrap().val).collect();
-            assert_eq!(&actual, &es);
         }
 
         #[test]
