@@ -1,6 +1,6 @@
 use rustix::{fd, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr};
+use crate::utils::{FixVec, FixVecErr, Bytes, Indices};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -43,10 +43,15 @@ pub enum FixBufErr {
 pub type FixBufRes = Result<(), FixBufErr>;
 
 impl FixBuf {
-    pub fn with_capacities(max_bytes: usize, max_indices: usize) -> Self {
-        let bytes = FixVec::new(max_bytes); 
-        let indices = FixVec::new(max_indices);
+    pub fn new(max_bytes: Bytes, max_indices: Indices) -> Self {
+        let bytes = FixVec::new(max_bytes.0); 
+        let indices = FixVec::new(max_indices.0);
         Self{bytes, indices}
+    }
+
+    // rust can't destructure
+    pub fn from_tuple(max: (Bytes, Indices)) -> Self {
+        Self::new(max.0, max.1)
     }
 
     pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
@@ -80,8 +85,8 @@ impl FixBuf {
         self.indices.clear();
     }
 
-    pub fn len(&self) -> usize {
-        self.indices.len()
+    pub fn len(&self) -> Indices {
+        Indices(self.indices.len())
     }
 
     pub fn get(&self, pos: usize) -> Option<Event> {
@@ -177,11 +182,11 @@ mod tests {
         ) {
             // Setup 
             let mut rng = rand::thread_rng();
-            let mut buf = FixBuf::with_capacities(256, 1);
+            let mut buf = FixBuf::new(Bytes(256), Indices(1));
             let replica_id = ReplicaID::new(&mut rng);
 
             // Pre conditions
-            assert_eq!(buf.len(), 0, "buf should start empty");
+            assert_eq!(buf.len(), Indices(0), "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
            
             // Modifying
@@ -189,7 +194,7 @@ mod tests {
 
             // Post conditions
             let actual = buf.get(0).expect("one event to be at 0");
-            assert_eq!(buf.len(), 1);
+            assert_eq!(buf.len(), Indices(1));
             assert_eq!(actual.val, &e);
         }
 
@@ -199,10 +204,10 @@ mod tests {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
             
-            let mut buf = FixBuf::with_capacities(0x400, 16);
+            let mut buf = FixBuf::new(Bytes(0x400), Indices(16));
 
             // Pre conditions
-            assert_eq!(buf.len(), 0, "buf should start empty");
+            assert_eq!(buf.len(), Indices(0), "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
             
             for e in &es {
@@ -212,7 +217,7 @@ mod tests {
             let len = es.len();
 
             // Post conditions
-            assert_eq!(buf.len(), len);
+            assert_eq!(buf.len().0, len);
             let actual: Vec<_> =
                 (0..len).map(|pos| buf.get(pos).unwrap().val).collect();
             assert_eq!(&actual, &es);
@@ -224,8 +229,8 @@ mod tests {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = FixBuf::with_capacities(0x800, 32);  
-            let mut buf2 = FixBuf::with_capacities(0x800, 32);  
+            let mut buf1 = FixBuf::new(Bytes(0x800), Indices(32));  
+            let mut buf2 = FixBuf::new(Bytes(0x800), Indices(32));  
             
             for e in &es1 {
                 buf1.append(replica_id, e).expect("buf should have enough")
@@ -235,12 +240,12 @@ mod tests {
                 buf2.append(replica_id, e).expect("buf should have enough")
             }
 
-            assert_eq!(buf1.len(), es1.len());
-            assert_eq!(buf2.len(), es2.len());
+            assert_eq!(buf1.len().0, es1.len());
+            assert_eq!(buf2.len().0, es2.len());
 
             buf1.extend(&buf2).expect("buf should have enough");
 
-            let actual: Vec<_> = (0..buf1.len())
+            let actual: Vec<_> = (0..buf1.len().0)
                 .map(|pos| buf1.get(pos).unwrap().val).collect();
 
             let mut expected = Vec::new();

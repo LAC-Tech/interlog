@@ -18,12 +18,18 @@ use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
 use replica_id::ReplicaID;
+use utils::{Bytes, Indices};
 
 type O = OFlags;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 struct EventID { origin: ReplicaID, pos: usize }
+
+pub struct LocalReplicaConfig {
+    pub read_cache_max: (Bytes, Indices),
+    pub write_cache_max: (Bytes, Indices)
+}
 
 pub struct LocalReplica {
     pub id: ReplicaID,
@@ -35,10 +41,9 @@ pub struct LocalReplica {
 }
 
 // TODO: store data larger than read cache
-// TODO: mem cache larger than EVENT_MAX (ciruclar buffer?)
 impl LocalReplica {
     pub fn new<R: Rng>(
-        dir_path: &std::path::Path, rng: &mut R
+        dir_path: &std::path::Path, rng: &mut R, config: LocalReplicaConfig
     ) -> io::Result<Self> {
         let id = ReplicaID::new(rng);
 
@@ -48,16 +53,18 @@ impl LocalReplica {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len = 0;
-        let write_cache = event::FixBuf::with_capacities(256, 8);
-        let read_cache = event::FixBuf::with_capacities(256, 8);
+        let write_cache = event::FixBuf::from_tuple(config.write_cache_max);
+        // TODO: circular buffer
+        let read_cache = event::FixBuf::from_tuple(config.read_cache_max);
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
     }
     
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
+        assert_eq!(self.write_cache.len(), Indices(0));
         for data in datums {
-            self.write_cache.append(self.id, data).expect("local write read cache");
+            self.write_cache.append(self.id, data).expect("");
         }
         
         // persist
@@ -69,7 +76,7 @@ impl LocalReplica {
 
         // Updating caches
         // TODO: should the below be combined to some 'drain' operation?
-        assert_eq!(self.write_cache.len(), datums.len());
+        assert_eq!(self.write_cache.len(), Indices(datums.len()));
         self.read_cache.extend(&self.write_cache).expect("local write write cache");
         self.write_cache.clear();
 
@@ -102,41 +109,28 @@ mod tests {
         ];
 
 		let mut rng = rand::thread_rng();
-		let mut replica = LocalReplica::new(tmp_dir.path(), &mut rng)
-            .expect("failed to open file");
+        let replica_config = LocalReplicaConfig {
+            read_cache_max: (Bytes(1024), Indices(8)),
+            write_cache_max: (Bytes(1024), Indices(8))
+        };
+		let mut replica = LocalReplica::new(
+            tmp_dir.path(),
+            &mut rng,
+            replica_config
+        ).expect("failed to open file");
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-		let mut read_buf = event::FixBuf::with_capacities(256, 8);
+		let mut read_buf = event::FixBuf::new(Bytes(0x200), Indices(8));
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
-        assert_eq!(read_buf.len(), 4);
+        assert_eq!(read_buf.len(), Indices(4));
 
         let events: Vec<_> = read_buf.into_iter().collect();
 		assert_eq!(events[0].val, es[0]);
         assert_eq!(events.len(), 4);
-		let path = replica.path.clone();
-		std::fs::remove_file(path).expect("failed to remove file");
     }
 }
 
 fn main() {
-    // TODO: test case I want to debug
-    // Setup 
-    let e = b"";
-    let mut rng = rand::thread_rng();
-    let mut buf = event::FixBuf::with_capacities(256, 1);
-    let replica_id = ReplicaID::new(&mut rng);
-
-    // Pre conditions
-    assert_eq!(buf.len(), 0, "buf should start empty");
-    assert!(buf.get(0).is_none(), "should contain no event");
-   
-    // Modifying
-    buf.append(replica_id, e).expect("buf should have enough");
-
-    // Post conditions
-    let actual = buf.get(0).expect("one event to be at 0");
-    assert_eq!(buf.len(), 1);
-    assert_eq!(actual.val, e);
 }

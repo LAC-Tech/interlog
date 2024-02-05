@@ -1,3 +1,8 @@
+#[derive(Debug, PartialEq)]
+pub struct Bytes(pub usize);
+#[derive(Debug, PartialEq)]
+pub struct Indices(pub usize);
+
 // Fixed Capacity Vector
 // Tigerstyle: There IS a limit
 pub struct FixVec<T> {
