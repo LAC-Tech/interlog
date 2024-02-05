@@ -73,14 +73,16 @@ impl<T: Clone + core::fmt::Debug> FixVec<T> {
     }
     
 
-    fn resize(&mut self, new_len: usize, value: T) {
-        self.check_capacity(new_len);
+    fn resize(&mut self, new_len: usize, value: T) -> FixVecRes {
+        self.check_capacity(new_len)?;
 
         if new_len > self.len {
             self.elems[self.len..new_len].fill(value);
         }
         
         self.len = new_len;
+        
+        Ok(())
     }
 
     #[inline]
@@ -95,11 +97,12 @@ impl<T: Clone + core::fmt::Debug> FixVec<T> {
 }
 
 impl<T: Copy> FixVec<T> {
-    fn extend_from_slice(&mut self, other: &[T]) {
+    fn extend_from_slice(&mut self, other: &[T]) -> FixVecRes {
         let new_len = self.len + other.len();
-        if new_len > self.capacity() { panic!("overflow") }
+        self.check_capacity(new_len)?;
         self.elems[self.len..new_len].copy_from_slice(other);
         self.len = new_len;
+        Ok(())
     }
 }
 
