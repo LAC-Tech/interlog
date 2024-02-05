@@ -21,29 +21,37 @@ struct FixVec<T> {
     len: usize
 }
 
+enum FixVecErr { Overflow }
+type FixVecRes = Result<(), FixVecErr>;
+
 impl<T> FixVec<T> {
     #[inline]
     fn capacity(&self) -> usize {
         self.elems.len()
     }
 
-    fn check_capacity(&self, new_len: usize) {
+    fn check_capacity(&self, new_len: usize) -> FixVecRes {
         if new_len > self.capacity() { 
-            panic!("overflow");
+            return Err(FixVecErr::Overflow);
         }
+
+        Ok(())
     }
 
-    fn push(&mut self, value: T) {
+    fn push(&mut self, value: T) -> FixVecRes {
         let new_len = self.len + 1;
-        self.check_capacity(new_len);
+        self.check_capacity(new_len)?;
         self.elems[self.len] = value;
         self.len = new_len;
+        Ok(())
     }
 
-    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> FixVecRes {
         for elem in iter {
-            self.push(elem);
+            self.push(elem)?;
         }
+
+        Ok(())
     }
 
     fn get(&self, index: usize) -> Option<&T> {
@@ -56,9 +64,8 @@ impl<T> FixVec<T> {
 }
 
 impl<T: Clone + core::fmt::Debug> FixVec<T> {
-    fn new(default: T, capacity: usize) -> FixVec<T> {
-        let bytes: Box<[T]> =
-            vec![default; capacity].try_into().unwrap();
+    fn new(capacity: usize) -> FixVec<T> {
+        let bytes: Box<[T]> = Vec::with_capacity(capacity).into_boxed_slice();
         assert_eq!(std::mem::size_of_val(&bytes), 16);
         let len = 0;
 
@@ -141,9 +148,9 @@ mod event {
     }
 
     impl FixBuf {
-        pub fn new() -> FixBuf {
-            let bytes = FixVec::new(0, MAX_SIZE); 
-            let indices = FixVec::new(0, 8);
+        pub fn with_capacities(max_bytes: usize, max_indices: usize) -> Self {
+            let bytes = FixVec::new(max_bytes); 
+            let indices = FixVec::new(max_indices);
             Self{bytes, indices}
         }
 
@@ -273,7 +280,7 @@ mod event {
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
-                let mut buf = FixBuf::new();
+                let mut buf = FixBuf::with_capacities(256, 8);
                 let replica_id = ReplicaID::new(&mut rng);
 
                 // Pre conditions
@@ -290,14 +297,12 @@ mod event {
             }
 
             #[test]
-            fn multiple_read_and_write(
-                es in arb_byte_list(8)
-            ) {
+            fn multiple_read_and_write(es in arb_byte_list(16)) {
                 // Setup 
                 let mut rng = rand::thread_rng();
                 let replica_id = ReplicaID::new(&mut rng);
                 
-                let mut buf = FixBuf::new();
+                let mut buf = FixBuf::with_capacities(256, 8);
 
                 // Pre conditions
                 assert_eq!(buf.len(), 0, "buf should start empty");
@@ -307,46 +312,44 @@ mod event {
                     buf.append(replica_id, &e);
                 }
 
+                let len = es.len();
+
                 // Post conditions
-                assert_eq!(buf.len(), es.len());
-                let actual: Vec<_> = 
-                    (0..es.len()).map(|pos| buf.get(pos).unwrap().val).collect();
+                assert_eq!(buf.len(), len);
+                let actual: Vec<_> =
+                    (0..len).map(|pos| buf.get(pos).unwrap().val).collect();
                 assert_eq!(&actual, &es);
             }
-        }
 
-        #[test]
-        fn combine_buffers() {
-            // Setup 
-            let mut rng = rand::thread_rng();
-            let replica_id = ReplicaID::new(&mut rng);
+            #[test]
+            fn combine_buffers(es1 in arb_byte_list(16), es2 in arb_byte_list(16)) {
+                // Setup 
+                let mut rng = rand::thread_rng();
+                let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = FixBuf::new();  
-            let mut buf2 = FixBuf::new();  
-            
-            let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
-            let e2: &[u8] = b"Kan jy my albasters vir my vind?";
-            let e3: &[u8] = b"Kan jy jou idee van normaal by jou gat opdruk?";
-            let e4: &[u8] = b"Kan jy?";
-            let e5: &[u8] = b"Kan jy 'apatie' spel?";
+                let mut buf1 = FixBuf::with_capacities(256, 16);  
+                let mut buf2 = FixBuf::with_capacities(256, 16);  
+                
+                for e in &es1 {
+                    buf1.append(replica_id, e);
+                }
 
-            let es = [e1, e2, e3, e4];
+                for e in &es2 {
+                    buf2.append(replica_id, e);
+                }
 
-            for e in es {
-                buf1.append(replica_id, e);
+                assert_eq!(buf1.len(), es1.len());
+                assert_eq!(buf2.len(), es2.len());
+
+                buf1.extend(&buf2);
+
+                let actual: Vec<_> = 
+                    (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
+
+                let expected = es1.clone();
+
+                assert_eq!(&actual, &expected);
             }
-
-            let expected = [e1, e2, e3, e4, e5];
-
-            buf2.append(replica_id, e5);
-
-            buf1.extend(&buf2);
-
-            // Post conditions
-            assert_eq!(buf1.len(), 5);
-            let actual: Vec<_> = 
-                (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
-            assert_eq!(&actual, &expected);
         }
     }
 }
@@ -396,8 +399,8 @@ impl LocalReplica {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len = 0;
-        let write_cache = event::FixBuf::new();
-        let read_cache = event::FixBuf::new();
+        let write_cache = event::FixBuf::with_capacities(256, 8);
+        let read_cache = event::FixBuf::with_capacities(256, 8);
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
     }
@@ -455,7 +458,7 @@ mod tests {
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-		let mut read_buf = event::FixBuf::new();
+		let mut read_buf = event::FixBuf::with_capacities(256, 8);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
         assert_eq!(read_buf.len(), 4);
@@ -474,8 +477,8 @@ fn main() {
     let mut rng = rand::thread_rng();
     let replica_id = ReplicaID::new(&mut rng);
 
-    let mut buf1 = event::FixBuf::new();  
-    let mut buf2 = event::FixBuf::new();  
+    let mut buf1 = event::FixBuf::with_capacities(256, 8);  
+    let mut buf2 = event::FixBuf::with_capacities(256, 8);  
     
     let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
     let e2: &[u8] = b"Kan jy my albasters vir my vind?";
