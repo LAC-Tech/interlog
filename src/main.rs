@@ -21,7 +21,8 @@ struct FixVec<T> {
     len: usize
 }
 
-enum FixVecErr { Overflow }
+#[derive(Debug)]
+pub enum FixVecErr { Overflow }
 type FixVecRes = Result<(), FixVecErr>;
 
 impl<T> FixVec<T> {
@@ -65,13 +66,12 @@ impl<T> FixVec<T> {
 
 impl<T: Clone + core::fmt::Debug> FixVec<T> {
     fn new(capacity: usize) -> FixVec<T> {
-        let bytes: Box<[T]> = Vec::with_capacity(capacity).into_boxed_slice();
-        assert_eq!(std::mem::size_of_val(&bytes), 16);
-        let len = 0;
-
-        Self {elems: bytes, len}
+        let mut elems = Vec::with_capacity(capacity);
+        unsafe { elems.set_len(capacity) };
+        let elems = elems.into_boxed_slice();
+        assert_eq!(std::mem::size_of_val(&elems), 16);
+        Self {elems, len: 0}
     }
-    
 
     fn resize(&mut self, new_len: usize, value: T) -> FixVecRes {
         self.check_capacity(new_len)?;
@@ -116,7 +116,7 @@ impl<T> std::ops::Deref for FixVec<T> {
 
 mod event {
     use rustix::{fd, io};
-    use super::{FixVec, ReplicaID};
+    use super::{FixVec, FixVecErr, ReplicaID};
 
     // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
     pub const MAX_SIZE: usize = 2048 * 1024;
@@ -150,6 +150,14 @@ mod event {
         indices: FixVec<usize>,
     }
 
+    #[derive(Debug)]
+    pub enum FixBufErr {
+        Bytes(FixVecErr),
+        Indices(FixVecErr)
+    }
+
+    pub type FixBufRes = Result<(), FixBufErr>;
+
     impl FixBuf {
         pub fn with_capacities(max_bytes: usize, max_indices: usize) -> Self {
             let bytes = FixVec::new(max_bytes); 
@@ -157,28 +165,30 @@ mod event {
             Self{bytes, indices}
         }
 
-        pub fn append(&mut self, origin: ReplicaID, val: &[u8]) {
+        pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
             let new_index = self.bytes.len();
             let header = Header { len: ID::SIZE + val.len(), origin };
             let new_len = new_index + Header::SIZE + val.len();
 
             let header = bytemuck::bytes_of(&header);
-            self.bytes.extend_from_slice(header);
-            self.bytes.extend_from_slice(val);
+            self.bytes.extend_from_slice(header).map_err(FixBufErr::Bytes)?;
+            self.bytes.extend_from_slice(val).map_err(FixBufErr::Bytes)?;
 
             assert_eq!(new_len, self.bytes.len());
 
             let aligned_new_len = (new_len + 7) & !7;
-            self.bytes.resize(aligned_new_len, 0);
+            self.bytes.resize(aligned_new_len, 0).map_err(FixBufErr::Bytes)?;
             assert_eq!(aligned_new_len, self.bytes.len());
 
-            self.indices.push(new_index.into());
+            self.indices.push(new_index).map_err(FixBufErr::Indices)
         }
 
-        pub fn extend(&mut self, other: &FixBuf) {
+        pub fn extend(&mut self, other: &FixBuf) -> FixBufRes {
             let byte_len = self.bytes.len();
-            self.indices.extend(other.indices.iter().map(|i| i + byte_len));
-            self.bytes.extend_from_slice(&other.bytes);
+            self.indices.extend(other.indices.iter().map(|i| i + byte_len))
+                .map_err(FixBufErr::Indices)?;
+            self.bytes.extend_from_slice(&other.bytes)
+                .map_err(FixBufErr::Bytes)
         }
 
         pub fn clear(&mut self) {
@@ -191,7 +201,7 @@ mod event {
         }
 
         pub fn get(&self, pos: usize) -> Option<Event> {
-            let index: usize = self.indices.get(pos).cloned()?.into();
+            let index: usize = self.indices.get(pos).cloned()?;
 
             let header_range = index..index + Header::SIZE;
             
@@ -283,7 +293,7 @@ mod event {
             ) {
                 // Setup 
                 let mut rng = rand::thread_rng();
-                let mut buf = FixBuf::with_capacities(256, 8);
+                let mut buf = FixBuf::with_capacities(256, 1);
                 let replica_id = ReplicaID::new(&mut rng);
 
                 // Pre conditions
@@ -291,7 +301,7 @@ mod event {
                 assert!(buf.get(0).is_none(), "should contain no event");
                
                 // Modifying
-                buf.append(replica_id, &e);
+                buf.append(replica_id, &e).expect("buf should have enough");
 
                 // Post conditions
                 let actual = buf.get(0).expect("one event to be at 0");
@@ -305,14 +315,14 @@ mod event {
                 let mut rng = rand::thread_rng();
                 let replica_id = ReplicaID::new(&mut rng);
                 
-                let mut buf = FixBuf::with_capacities(256, 8);
+                let mut buf = FixBuf::with_capacities(0x400, 16);
 
                 // Pre conditions
                 assert_eq!(buf.len(), 0, "buf should start empty");
                 assert!(buf.get(0).is_none(), "should contain no event");
                 
                 for e in &es {
-                    buf.append(replica_id, &e);
+                    buf.append(replica_id, &e).expect("buf should have enough");
                 }
 
                 let len = es.len();
@@ -330,26 +340,28 @@ mod event {
                 let mut rng = rand::thread_rng();
                 let replica_id = ReplicaID::new(&mut rng);
 
-                let mut buf1 = FixBuf::with_capacities(256, 16);  
-                let mut buf2 = FixBuf::with_capacities(256, 16);  
+                let mut buf1 = FixBuf::with_capacities(0x800, 32);  
+                let mut buf2 = FixBuf::with_capacities(0x800, 32);  
                 
                 for e in &es1 {
-                    buf1.append(replica_id, e);
+                    buf1.append(replica_id, e).expect("buf should have enough")
                 }
 
                 for e in &es2 {
-                    buf2.append(replica_id, e);
+                    buf2.append(replica_id, e).expect("buf should have enough")
                 }
 
                 assert_eq!(buf1.len(), es1.len());
                 assert_eq!(buf2.len(), es2.len());
 
-                buf1.extend(&buf2);
+                buf1.extend(&buf2).expect("buf should have enough");
 
-                let actual: Vec<_> = 
-                    (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
+                let actual: Vec<_> = (0..buf1.len())
+                    .map(|pos| buf1.get(pos).unwrap().val).collect();
 
-                let expected = es1.clone();
+                let mut expected = Vec::new();
+                expected.extend(&es1);
+                expected.extend(&es2);
 
                 assert_eq!(&actual, &expected);
             }
@@ -411,7 +423,7 @@ impl LocalReplica {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
         for data in datums {
-            self.write_cache.append(self.id, data);
+            self.write_cache.append(self.id, data).expect("local write read cache");
         }
         
         // persist
@@ -424,7 +436,7 @@ impl LocalReplica {
         // Updating caches
         // TODO: should the below be combined to some 'drain' operation?
         assert_eq!(self.write_cache.len(), datums.len());
-        self.read_cache.extend(&self.write_cache);
+        self.read_cache.extend(&self.write_cache).expect("local write write cache");
         self.write_cache.clear();
 
 		Ok(())
@@ -433,7 +445,7 @@ impl LocalReplica {
     pub fn read(&mut self, buf: &mut event::FixBuf, pos: usize) -> io::Result<()> {
         // TODO: check from disk if not in cache
 
-        buf.extend(&self.read_cache);
+        buf.extend(&self.read_cache).expect("read read cache");
         Ok(()) 
     }
 }
@@ -477,33 +489,20 @@ mod tests {
 fn main() {
     // TODO: test case I want to debug
     // Setup 
+    let e = b"";
     let mut rng = rand::thread_rng();
+    let mut buf = event::FixBuf::with_capacities(256, 1);
     let replica_id = ReplicaID::new(&mut rng);
 
-    let mut buf1 = event::FixBuf::with_capacities(256, 8);  
-    let mut buf2 = event::FixBuf::with_capacities(256, 8);  
-    
-    let e1: &[u8] = b"Kan jy my skroewe vir my vasdraai?";
-    let e2: &[u8] = b"Kan jy my albasters vir my vind?";
-    let e3: &[u8] = b"Kan jy jou idee van normaal by jou gat opdruk?";
-    let e4: &[u8] = b"Kan jy?";
-    let e5: &[u8] = b"Kan jy 'apatie' spel?";
-
-    let es = [e1, e2, e3, e4];
-
-    for e in es {
-        buf1.append(replica_id, e);
-    }
-
-    let expected = [e1, e2, e3, e4, e5];
-
-    buf2.append(replica_id, e5);
-
-    buf1.extend(&buf2);
+    // Pre conditions
+    assert_eq!(buf.len(), 0, "buf should start empty");
+    assert!(buf.get(0).is_none(), "should contain no event");
+   
+    // Modifying
+    buf.append(replica_id, e).expect("buf should have enough");
 
     // Post conditions
-    assert_eq!(buf1.len(), 5);
-    let actual: Vec<_> = 
-        (0..5).map(|pos| buf1.get(pos).unwrap().val).collect();
-    assert_eq!(&actual, &expected);
+    let actual = buf.get(0).expect("one event to be at 0");
+    assert_eq!(buf.len(), 1);
+    assert_eq!(actual.val, e);
 }
