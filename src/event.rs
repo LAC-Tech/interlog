@@ -1,6 +1,6 @@
 use rustix::{fd, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr, Bytes, Indices};
+use crate::utils::{FixVec, FixVecErr};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -24,6 +24,21 @@ impl Header {
 #[derive(Debug)]
 pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
 
+// Can be used for both Fixed and Circular?
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BufSize {
+    pub bytes: usize,
+    pub indices: usize
+}
+
+impl BufSize {
+    pub const fn new(bytes: usize, indices: usize) -> Self {
+        Self {bytes, indices}
+    }
+
+    pub const ZERO: BufSize = BufSize::new(0, 0);
+}
+
 // 1..N events backed by a fixed capacity byte buffer
 // INVARIANTS
 // - starts at the start of an event
@@ -43,32 +58,25 @@ pub enum FixBufErr {
 pub type FixBufRes = Result<(), FixBufErr>;
 
 impl FixBuf {
-    pub fn new(max_bytes: Bytes, max_indices: Indices) -> Self {
-        let bytes = FixVec::new(max_bytes.0); 
-        let indices = FixVec::new(max_indices.0);
+    pub fn new(capacity: BufSize) -> Self {
+        let bytes = FixVec::new(capacity.bytes); 
+        let indices = FixVec::new(capacity.indices);
         Self{bytes, indices}
-    }
-
-    // rust can't destructure
-    pub fn from_tuple(max: (Bytes, Indices)) -> Self {
-        Self::new(max.0, max.1)
     }
 
     pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
         let new_index = self.bytes.len();
         let header = Header { len: ID::SIZE + val.len(), origin };
-        let new_len = new_index + Header::SIZE + val.len();
+        let val_start = new_index + Header::SIZE;
+        let new_len = val_start + val.len();
+        // aligning to 8 bytes
+        let new_len = (new_len + 7) & !7;
 
+        self.bytes.resize(new_len, 0).map_err(FixBufErr::Bytes)?;
         let header = bytemuck::bytes_of(&header);
-        self.bytes.extend_from_slice(header).map_err(FixBufErr::Bytes)?;
-        self.bytes.extend_from_slice(val).map_err(FixBufErr::Bytes)?;
-
+        self.bytes[new_index..val_start].copy_from_slice(header);
+        self.bytes[val_start..val_start + val.len()].copy_from_slice(val);
         assert_eq!(new_len, self.bytes.len());
-
-        let aligned_new_len = (new_len + 7) & !7;
-        self.bytes.resize(aligned_new_len, 0).map_err(FixBufErr::Bytes)?;
-        assert_eq!(aligned_new_len, self.bytes.len());
-
         self.indices.push(new_index).map_err(FixBufErr::Indices)
     }
 
@@ -85,8 +93,8 @@ impl FixBuf {
         self.indices.clear();
     }
 
-    pub fn len(&self) -> Indices {
-        Indices(self.indices.len())
+    pub fn len(&self) -> BufSize {
+        BufSize::new(self.bytes.len(), self.indices.len())
     }
 
     pub fn get(&self, pos: usize) -> Option<Event> {
@@ -182,11 +190,11 @@ mod tests {
         ) {
             // Setup 
             let mut rng = rand::thread_rng();
-            let mut buf = FixBuf::new(Bytes(256), Indices(1));
+            let mut buf = FixBuf::new(BufSize::new(256, 1));
             let replica_id = ReplicaID::new(&mut rng);
 
             // Pre conditions
-            assert_eq!(buf.len(), Indices(0), "buf should start empty");
+            assert_eq!(buf.len(), BufSize::ZERO, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
            
             // Modifying
@@ -194,7 +202,7 @@ mod tests {
 
             // Post conditions
             let actual = buf.get(0).expect("one event to be at 0");
-            assert_eq!(buf.len(), Indices(1));
+            assert_eq!(buf.len().indices, 1);
             assert_eq!(actual.val, &e);
         }
 
@@ -204,10 +212,10 @@ mod tests {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
             
-            let mut buf = FixBuf::new(Bytes(0x400), Indices(16));
+            let mut buf = FixBuf::new(BufSize::new(0x400, 16));
 
             // Pre conditions
-            assert_eq!(buf.len(), Indices(0), "buf should start empty");
+            assert_eq!(buf.len(), BufSize::ZERO, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
             
             for e in &es {
@@ -217,7 +225,7 @@ mod tests {
             let len = es.len();
 
             // Post conditions
-            assert_eq!(buf.len().0, len);
+            assert_eq!(buf.len().indices, len);
             let actual: Vec<_> =
                 (0..len).map(|pos| buf.get(pos).unwrap().val).collect();
             assert_eq!(&actual, &es);
@@ -229,8 +237,8 @@ mod tests {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = FixBuf::new(Bytes(0x800), Indices(32));  
-            let mut buf2 = FixBuf::new(Bytes(0x800), Indices(32));  
+            let mut buf1 = FixBuf::new(BufSize::new(0x800, 32));  
+            let mut buf2 = FixBuf::new(BufSize::new(0x800, 32));  
             
             for e in &es1 {
                 buf1.append(replica_id, e).expect("buf should have enough")
@@ -240,12 +248,12 @@ mod tests {
                 buf2.append(replica_id, e).expect("buf should have enough")
             }
 
-            assert_eq!(buf1.len().0, es1.len());
-            assert_eq!(buf2.len().0, es2.len());
+            assert_eq!(buf1.len().indices, es1.len());
+            assert_eq!(buf2.len().indices, es2.len());
 
             buf1.extend(&buf2).expect("buf should have enough");
 
-            let actual: Vec<_> = (0..buf1.len().0)
+            let actual: Vec<_> = (0..buf1.len().indices)
                 .map(|pos| buf1.get(pos).unwrap().val).collect();
 
             let mut expected = Vec::new();

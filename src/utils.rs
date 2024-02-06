@@ -1,8 +1,3 @@
-#[derive(Debug, PartialEq)]
-pub struct Bytes(pub usize);
-#[derive(Debug, PartialEq)]
-pub struct Indices(pub usize);
-
 // Fixed Capacity Vector
 // Tigerstyle: There IS a limit
 pub struct FixVec<T> {
@@ -54,6 +49,7 @@ impl<T> FixVec<T> {
 }
 
 impl<T: Clone + core::fmt::Debug> FixVec<T> {
+    #[allow(clippy::uninit_vec)]
     pub fn new(capacity: usize) -> FixVec<T> {
         let mut elems = Vec::with_capacity(capacity);
         unsafe { elems.set_len(capacity) };
@@ -100,5 +96,11 @@ impl<T> std::ops::Deref for FixVec<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.elems[0..self.len]
+    }
+}
+
+impl<T> std::ops::DerefMut for FixVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.elems[0..self.len]
     }
 }

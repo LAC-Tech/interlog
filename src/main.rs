@@ -18,7 +18,6 @@ use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 
 use replica_id::ReplicaID;
-use utils::{Bytes, Indices};
 
 type O = OFlags;
 
@@ -27,8 +26,8 @@ type O = OFlags;
 struct EventID { origin: ReplicaID, pos: usize }
 
 pub struct LocalReplicaConfig {
-    pub read_cache_max: (Bytes, Indices),
-    pub write_cache_max: (Bytes, Indices)
+    pub read_cache_capacity: event::BufSize,
+    pub write_cache_capacity: event::BufSize 
 }
 
 pub struct LocalReplica {
@@ -53,16 +52,16 @@ impl LocalReplica {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len = 0;
-        let write_cache = event::FixBuf::from_tuple(config.write_cache_max);
+        let write_cache = event::FixBuf::new(config.write_cache_capacity);
         // TODO: circular buffer
-        let read_cache = event::FixBuf::from_tuple(config.read_cache_max);
+        let read_cache = event::FixBuf::new(config.read_cache_capacity);
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
     }
     
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
-        assert_eq!(self.write_cache.len(), Indices(0));
+        assert_eq!(self.write_cache.len(), event::BufSize::ZERO);
         for data in datums {
             self.write_cache.append(self.id, data).expect("");
         }
@@ -76,7 +75,7 @@ impl LocalReplica {
 
         // Updating caches
         // TODO: should the below be combined to some 'drain' operation?
-        assert_eq!(self.write_cache.len(), Indices(datums.len()));
+        assert_eq!(self.write_cache.len().indices, datums.len());
         self.read_cache.extend(&self.write_cache).expect("local write write cache");
         self.write_cache.clear();
 
@@ -110,8 +109,8 @@ mod tests {
 
 		let mut rng = rand::thread_rng();
         let replica_config = LocalReplicaConfig {
-            read_cache_max: (Bytes(1024), Indices(8)),
-            write_cache_max: (Bytes(1024), Indices(8))
+            read_cache_capacity: event::BufSize::new(1024, 8),
+            write_cache_capacity: event::BufSize::new(1024, 8)
         };
 		let mut replica = LocalReplica::new(
             tmp_dir.path(),
@@ -121,10 +120,10 @@ mod tests {
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-		let mut read_buf = event::FixBuf::new(Bytes(0x200), Indices(8));
+		let mut read_buf = event::FixBuf::new(event::BufSize::new(0x200, 8));
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
-        assert_eq!(read_buf.len(), Indices(4));
+        assert_eq!(read_buf.len().indices, 4);
 
         let events: Vec<_> = read_buf.into_iter().collect();
 		assert_eq!(events[0].val, es[0]);
