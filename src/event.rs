@@ -64,6 +64,7 @@ impl FixBuf {
         Self{bytes, indices}
     }
 
+    // TODO: bulk append: calc length upfront and resize once
     pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
         let new_index = self.bytes.len();
         let header = Header { len: ID::SIZE + val.len(), origin };
@@ -115,6 +116,9 @@ impl FixBuf {
         Some(event)
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
     /*
     pub fn read_from_file(
        &mut self, fd: fd::BorrowedFd, index: &Index
@@ -132,8 +136,7 @@ impl FixBuf {
 
         Ok(())
     }
-    */
-
+    
     pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
         // always sets file offset to EOF.
         let bytes_written = io::write(fd, &self.bytes)?;
@@ -142,6 +145,7 @@ impl FixBuf {
         assert_eq!(bytes_written, self.bytes.len());
         Ok(bytes_written)
     }
+    */
 }
 
 pub struct BufIntoIterator<'a> {

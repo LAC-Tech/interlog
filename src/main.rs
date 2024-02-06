@@ -1,6 +1,7 @@
 extern crate alloc;
-mod replica_id;
+mod disk;
 mod event;
+mod replica_id;
 mod utils;
 
 #[cfg(not(target_pointer_width = "64"))]
@@ -60,7 +61,7 @@ impl LocalReplica {
     }
     
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write(&mut self, datums: &[&[u8]]) -> io::Result<()> {
+    pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), disk::Err> {
         assert_eq!(self.write_cache.len(), event::BufSize::ZERO);
         for data in datums {
             self.write_cache.append(self.id, data).expect("");
@@ -68,7 +69,8 @@ impl LocalReplica {
         
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_written = self.write_cache.append_to_file(fd)?;
+
+        let bytes_written = disk::write(fd, self.write_cache.as_bytes())?;
 
         // round up to multiple of 8, for alignment
         self.log_len += (bytes_written + 7) & !7;

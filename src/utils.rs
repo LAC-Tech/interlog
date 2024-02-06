@@ -10,9 +10,28 @@ pub enum FixVecErr { Overflow }
 type FixVecRes = Result<(), FixVecErr>;
 
 impl<T> FixVec<T> {
+    #[allow(clippy::uninit_vec)]
+    pub fn new(capacity: usize) -> FixVec<T> {
+        let mut elems = Vec::with_capacity(capacity);
+        unsafe { elems.set_len(capacity) };
+        let elems = elems.into_boxed_slice();
+        assert_eq!(std::mem::size_of_val(&elems), 16);
+        Self {elems, len: 0}
+    }
+
     #[inline]
     fn capacity(&self) -> usize {
         self.elems.len()
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
     }
 
     fn check_capacity(&self, new_len: usize) -> FixVecRes {
@@ -49,15 +68,6 @@ impl<T> FixVec<T> {
 }
 
 impl<T: Clone + core::fmt::Debug> FixVec<T> {
-    #[allow(clippy::uninit_vec)]
-    pub fn new(capacity: usize) -> FixVec<T> {
-        let mut elems = Vec::with_capacity(capacity);
-        unsafe { elems.set_len(capacity) };
-        let elems = elems.into_boxed_slice();
-        assert_eq!(std::mem::size_of_val(&elems), 16);
-        Self {elems, len: 0}
-    }
-
     pub fn resize(&mut self, new_len: usize, value: T) -> FixVecRes {
         self.check_capacity(new_len)?;
 
@@ -68,16 +78,6 @@ impl<T: Clone + core::fmt::Debug> FixVec<T> {
         self.len = new_len;
         
         Ok(())
-    }
-
-    #[inline]
-    pub fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        self.len
     }
 }
 
