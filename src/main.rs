@@ -78,16 +78,18 @@ impl LocalReplica {
         // Updating caches
         // TODO: should the below be combined to some 'drain' operation?
         assert_eq!(self.write_cache.len().indices, datums.len());
-        self.read_cache.extend(&self.write_cache).expect("local write write cache");
+        self.read_cache.extend(&self.write_cache, 0).expect("local write write cache");
         self.write_cache.clear();
 
 		Ok(())
 	}
     
-    pub fn read(&mut self, buf: &mut event::FixBuf, pos: usize) -> io::Result<()> {
+    pub fn read(
+        &mut self, client_buf: &mut event::FixBuf, pos: usize
+    ) -> io::Result<()> {
         // TODO: check from disk if not in cache
 
-        buf.extend(&self.read_cache).expect("read read cache");
+        client_buf.extend(&self.read_cache, pos).expect("read read cache");
         Ok(()) 
     }
 }

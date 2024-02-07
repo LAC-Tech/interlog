@@ -81,10 +81,11 @@ impl FixBuf {
         self.indices.push(new_index).map_err(FixBufErr::Indices)
     }
 
-    pub fn extend(&mut self, other: &FixBuf) -> FixBufRes {
+    pub fn extend(&mut self, other: &FixBuf, from_pos: usize) -> FixBufRes {
         let byte_len = self.bytes.len();
-        self.indices.extend(other.indices.iter().map(|i| i + byte_len))
-            .map_err(FixBufErr::Indices)?;
+        let remapped_indices = other.indices.iter().map(|i| i + byte_len);
+        self.indices.extend(remapped_indices).map_err(FixBufErr::Indices)?;
+        // TODO: undo the extension at this point? should be atomic
         self.bytes.extend_from_slice(&other.bytes)
             .map_err(FixBufErr::Bytes)
     }
@@ -119,33 +120,6 @@ impl FixBuf {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
-    /*
-    pub fn read_from_file(
-       &mut self, fd: fd::BorrowedFd, index: &Index
-    ) -> io::Result<()> {
-        // need to set len so pread knows how much to fill
-        if index.len > self.bytes.capacity() { panic!("OVERFLOW") }
-        unsafe {
-            self.bytes.set_len(index.len);
-        }
-
-        // pread ignores the fd offset, supply your own
-        let bytes_read = io::pread(fd, &mut self.bytes, index.pos as u64)?;
-        // If this isn't the case, we should figure out why!
-        assert_eq!(bytes_read, index.len);
-
-        Ok(())
-    }
-    
-    pub fn append_to_file(&mut self, fd: fd::BorrowedFd) -> io::Result<usize> {
-        // always sets file offset to EOF.
-        let bytes_written = io::write(fd, &self.bytes)?;
-        // Linux 'man open': appending to file opened w/ O_APPEND is atomic
-        // TODO: will this happen? if so how to recover?
-        assert_eq!(bytes_written, self.bytes.len());
-        Ok(bytes_written)
-    }
-    */
 }
 
 pub struct BufIntoIterator<'a> {
@@ -255,7 +229,7 @@ mod tests {
             assert_eq!(buf1.len().indices, es1.len());
             assert_eq!(buf2.len().indices, es2.len());
 
-            buf1.extend(&buf2).expect("buf should have enough");
+            buf1.extend(&buf2, 0).expect("buf should have enough");
 
             let actual: Vec<_> = (0..buf1.len().indices)
                 .map(|pos| buf1.get(pos).unwrap().val).collect();
