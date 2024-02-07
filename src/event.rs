@@ -87,7 +87,7 @@ impl FixBuf {
         self.indices.push(new_index).map_err(FixBufErr::Indices)
     }
 
-    pub fn extend(&mut self, other: &FixBuf, from_pos: usize) -> FixBufRes {
+    pub fn extend(&mut self, other: &FixBuf, from_pos: Pos) -> FixBufRes {
         let byte_len = self.bytes.len();
         let remapped_indices = other.indices.iter().map(|i| i + byte_len);
         self.indices.extend(remapped_indices).map_err(FixBufErr::Indices)?;
@@ -179,13 +179,13 @@ mod tests {
 
             // Pre conditions
             assert_eq!(buf.len(), BufSize::ZERO, "buf should start empty");
-            assert!(buf.get(0).is_none(), "should contain no event");
+            assert!(buf.get(Pos(0)).is_none(), "should contain no event");
            
             // Modifying
             buf.append(replica_id, &e).expect("buf should have enough");
 
             // Post conditions
-            let actual = buf.get(0).expect("one event to be at 0");
+            let actual = buf.get(Pos(0)).expect("one event to be at 0");
             assert_eq!(buf.len().indices, 1);
             assert_eq!(actual.val, &e);
         }
@@ -200,7 +200,7 @@ mod tests {
 
             // Pre conditions
             assert_eq!(buf.len(), BufSize::ZERO, "buf should start empty");
-            assert!(buf.get(0).is_none(), "should contain no event");
+            assert!(buf.get(Pos(0)).is_none(), "should contain no event");
             
             for e in &es {
                 buf.append(replica_id, &e).expect("buf should have enough");
@@ -211,7 +211,7 @@ mod tests {
             // Post conditions
             assert_eq!(buf.len().indices, len);
             let actual: Vec<_> =
-                (0..len).map(|pos| buf.get(pos).unwrap().val).collect();
+                (0..len).map(|pos| buf.get(pos.into()).unwrap().val).collect();
             assert_eq!(&actual, &es);
         }
 
@@ -235,10 +235,10 @@ mod tests {
             assert_eq!(buf1.len().indices, es1.len());
             assert_eq!(buf2.len().indices, es2.len());
 
-            buf1.extend(&buf2, 0).expect("buf should have enough");
+            buf1.extend(&buf2, Pos(0)).expect("buf should have enough");
 
             let actual: Vec<_> = (0..buf1.len().indices)
-                .map(|pos| buf1.get(pos).unwrap().val).collect();
+                .map(|pos| buf1.get(pos.into()).unwrap().val).collect();
 
             let mut expected = Vec::new();
             expected.extend(&es1);
