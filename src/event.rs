@@ -1,13 +1,18 @@
-use rustix::{fd, io};
 use crate::replica_id::ReplicaID;
 use crate::utils::{FixVec, FixVecErr};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
 
+#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug)]
+#[derive(derive_more::AddAssign, derive_more::From, derive_more::Into)]
+#[repr(transparent)]
+pub struct Pos(usize);
+
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
-pub struct ID { origin: ReplicaID, pos: usize }
+pub struct ID { origin: ReplicaID, pos: Pos }
 
 impl ID {
     const SIZE: usize = std::mem::size_of::<Self>();
@@ -23,6 +28,7 @@ impl Header {
 
 #[derive(Debug)]
 pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
+
 
 // Can be used for both Fixed and Circular?
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -99,8 +105,8 @@ impl FixBuf {
         BufSize::new(self.bytes.len(), self.indices.len())
     }
 
-    pub fn get(&self, pos: usize) -> Option<Event> {
-        let index: usize = self.indices.get(pos).cloned()?;
+    pub fn get(&self, pos: Pos) -> Option<Event> {
+        let index: usize = self.indices.get(pos.into()).cloned()?;
 
         let header_range = index..index + Header::SIZE;
         
@@ -124,7 +130,7 @@ impl FixBuf {
 
 pub struct BufIntoIterator<'a> {
     event_buf: &'a FixBuf,
-    index: usize
+    index: Pos
 }
 
 impl<'a> Iterator for BufIntoIterator<'a> {
@@ -132,7 +138,7 @@ impl<'a> Iterator for BufIntoIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let result = self.event_buf.get(self.index);
-        self.index += 1;
+        self.index += 1.into();
         result
     }
 }
@@ -142,7 +148,7 @@ impl<'a> IntoIterator for &'a FixBuf {
     type IntoIter = BufIntoIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        BufIntoIterator { event_buf: self, index: 0 }
+        BufIntoIterator { event_buf: self, index: Pos(0) }
     }
 }
 
