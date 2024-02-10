@@ -35,11 +35,7 @@ impl<T> FixVec<T> {
     }
 
     fn check_capacity(&self, new_len: usize) -> FixVecRes {
-        if new_len > self.capacity() { 
-            return Err(FixVecErr::Overflow);
-        }
-
-        Ok(())
+        (self.capacity() >= new_len).then_some(()).ok_or(FixVecErr::Overflow)
     }
 
     pub fn push(&mut self, value: T) -> FixVecRes {
@@ -59,11 +55,7 @@ impl<T> FixVec<T> {
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
-        if self.len > index {
-            Some(&self.elems[index])
-        } else {
-            None
-        }
+        (self.len > index).then(|| &self.elems[index])
     }
 }
 

@@ -63,7 +63,7 @@ impl LocalReplica {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), disk::Err> {
         assert_eq!(self.write_cache.len(), event::BufSize::ZERO);
-        for data in datums {
+        for &data in datums {
             self.write_cache.append(self.id, data).expect("");
         }
         
@@ -77,8 +77,8 @@ impl LocalReplica {
 
         // Updating caches
         // TODO: should the below be combined to some 'drain' operation?
-        assert_eq!(self.write_cache.len().indices, datums.len());
-        self.read_cache.extend(&self.write_cache, 0.into())
+        assert_eq!(self.write_cache.len().logical, datums.len());
+        self.read_cache.extend(&self.write_cache, 0)
             .expect("local write write cache");
 
         self.write_cache.clear();
@@ -87,11 +87,11 @@ impl LocalReplica {
 	}
     
     pub fn read(
-        &mut self, client_buf: &mut event::FixBuf, pos: event::Pos
+        &mut self, client_buf: &mut event::FixBuf, logical_pos: usize
     ) -> io::Result<()> {
         // TODO: check from disk if not in cache
 
-        client_buf.extend(&self.read_cache, pos).expect("read read cache");
+        client_buf.extend(&self.read_cache, logical_pos).expect("read read cache");
         Ok(()) 
     }
 }
@@ -127,9 +127,9 @@ mod tests {
 		replica.local_write(&es).expect("failed to write to replica");
 
 		let mut read_buf = event::FixBuf::new(event::BufSize::new(0x200, 8));
-		replica.read(&mut read_buf, 0.into()).expect("failed to read to file");
+		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
-        assert_eq!(read_buf.len().indices, 4);
+        assert_eq!(read_buf.len().logical, 4);
 
         let events: Vec<_> = read_buf.into_iter().collect();
 		assert_eq!(events[0].val, es[0]);
@@ -138,4 +138,23 @@ mod tests {
 }
 
 fn main() {
+    use event::*;
+    // Setup 
+    let mut rng = rand::thread_rng();
+    let mut buf = FixBuf::new(BufSize::new(256, 1));
+    let replica_id = ReplicaID::new(&mut rng);
+
+    // Pre conditions
+    assert_eq!(buf.len(), BufSize::ZERO, "buf should start empty");
+    assert!(buf.get(0).is_none(), "should contain no event");
+  
+    let e = b"hello";
+
+    // Modifying
+    buf.append(replica_id, e).expect("buf should have enough");
+
+    // Post conditions
+    let actual = buf.get(0).expect("one event to be at 0");
+    assert_eq!(buf.len(), BufSize::new(5, 1));
+    assert_eq!(actual.val, e);
 }
