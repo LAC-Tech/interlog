@@ -126,7 +126,8 @@ mod tests {
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-		let mut read_buf = event::FixBuf::new(event::BufSize::new(0x200, 8));
+        let capacity = event::BufSize::new(0x200, 8);
+		let mut read_buf = event::FixBuf::new(capacity);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
         assert_eq!(read_buf.len().logical, 4);

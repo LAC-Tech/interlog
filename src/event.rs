@@ -9,10 +9,6 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 pub struct ID { origin: ReplicaID, logical_pos: usize }
 
-impl ID {
-    const SIZE: usize = std::mem::size_of::<Self>();
-}
-
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
 struct Header { byte_len: usize, origin: ReplicaID }
@@ -84,11 +80,12 @@ impl BufSize {
     pub const ZERO: BufSize = BufSize::new(0, 0);
 }
 
-// 1..N events backed by a fixed capacity byte buffer
-// INVARIANTS
-// - starts at the start of an event
-// - ends at the end of an event
-// - aligns events to 8 bytes
+/// 1..N events backed by a fixed capacity byte buffer
+///
+/// INVARIANTS
+/// - starts at the start of an event
+/// - ends at the end of an event
+/// - aligns events to 8 bytes
 pub struct FixBuf {
     bytes: FixVec<u8>,
     /// Maps logical positions to byte offsets
@@ -112,14 +109,16 @@ impl FixBuf {
 
     // TODO: bulk append: calc length upfront and resize once
     pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
-        self.bytes.append_event(origin, val)
-            .and_then(|new_offset| self.offsets.push(new_offset))
-            .map_err(FixBufErr::Indices)
+        let new_offset = self.bytes.append_event(origin, val)
+            .map_err(FixBufErr::Bytes)?;
+
+        self.offsets.push(new_offset).map_err(FixBufErr::Indices)
     }
 
-    pub fn extend(&mut self, other: &FixBuf, from_logical_pos: usize) -> FixBufRes {
+    pub fn extend(&mut self, other: &FixBuf, logical_pos: usize) -> FixBufRes {
         let offset = ByteOffset(self.bytes.len());
-        let remapped_indices = other.offsets.iter().map(|&i| i + offset);
+        let remapped_indices = 
+            other.offsets.iter().skip(logical_pos).map(|&i| i + offset);
         self.offsets.extend(remapped_indices).map_err(FixBufErr::Indices)?;
         // TODO: undo the extension at this point? should be atomic
         self.bytes.extend_from_slice(&other.bytes).map_err(FixBufErr::Bytes)

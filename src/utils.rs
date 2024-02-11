@@ -1,5 +1,5 @@
-// Fixed Capacity Vector
-// Tigerstyle: There IS a limit
+/// Fixed Capacity Vector
+/// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
     elems: alloc::boxed::Box<[T]>,
     len: usize
