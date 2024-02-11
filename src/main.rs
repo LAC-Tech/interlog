@@ -69,7 +69,6 @@ impl LocalReplica {
         
         // persist
         let fd = self.log_fd.as_fd();
-
         let bytes_written = disk::write(fd, self.write_cache.as_bytes())?;
 
         // round up to multiple of 8, for alignment
@@ -79,7 +78,7 @@ impl LocalReplica {
         // TODO: should the below be combined to some 'drain' operation?
         assert_eq!(self.write_cache.len().logical, datums.len());
         self.read_cache.extend(&self.write_cache, 0)
-            .expect("local write write cache");
+            .expect("local write cache");
 
         self.write_cache.clear();
 

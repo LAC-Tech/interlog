@@ -31,38 +31,43 @@ impl ByteOffset {
     }
 }
 
-impl FixVec<u8> {
-    fn append_event(
+struct Bytes(FixVec<u8>);
+
+impl Bytes {
+    fn append(
         &mut self, 
         origin: ReplicaID,
         val: &[u8]
     ) -> Result<ByteOffset, FixVecErr> {
-        let offset = ByteOffset(self.len());
+        let offset = ByteOffset(self.0.len());
         let header_range = offset.header_range();
         let val_start = header_range.end;
         let byte_len = val.len();
         let val_range = val_start .. val_start + byte_len;
         let new_len = (val_range.end + 7) & !7;
-        self.resize(new_len, 0)?;
+        self.0.resize(new_len, 0)?;
 
         let header = Header { byte_len, origin };
         let header = bytemuck::bytes_of(&header);
 
-        self[header_range].copy_from_slice(header);
-        self[val_range].copy_from_slice(val);
+        self.0[header_range].copy_from_slice(header);
+        self.0[val_range].copy_from_slice(val);
 
         Ok(offset)
     }
 
-    fn read_event(&self, offset: ByteOffset, logical_pos: usize) -> Event<'_> {
+    fn read(&self, offset: ByteOffset, logical_pos: usize) -> Event<'_> {
         let header_range = offset.header_range();
         let val_start = header_range.end;
-        let header_bytes = &self[header_range];
+        let header_bytes = &self.0[header_range];
         let &Header {origin, byte_len} = bytemuck::from_bytes(header_bytes);
         let id = ID { origin, logical_pos };
-        let val = &self[val_start..val_start + byte_len];
+        let val = &self.0[val_start..val_start + byte_len];
         Event {id, val}
     }
+
+    fn len(&self) -> usize { self.0.len() }
+    fn clear(&mut self) { self.0.clear() }
 }
 
 // Can be used for both Fixed and Circular?
@@ -87,7 +92,7 @@ impl BufSize {
 /// - ends at the end of an event
 /// - aligns events to 8 bytes
 pub struct FixBuf {
-    bytes: FixVec<u8>,
+    bytes: Bytes,
     /// Maps logical positions to byte offsets
     offsets: FixVec<ByteOffset>,
 }
@@ -102,15 +107,15 @@ pub type FixBufRes = Result<(), FixBufErr>;
 
 impl FixBuf {
     pub fn new(capacity: BufSize) -> Self {
-        let bytes = FixVec::new(capacity.bytes); 
+        let bytes = Bytes(FixVec::new(capacity.bytes));
         let offsets = FixVec::new(capacity.logical);
         Self{bytes, offsets}
     }
 
     // TODO: bulk append: calc length upfront and resize once
     pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
-        let new_offset = self.bytes.append_event(origin, val)
-            .map_err(FixBufErr::Bytes)?;
+        let new_offset = 
+            self.bytes.append(origin, val).map_err(FixBufErr::Bytes)?;
 
         self.offsets.push(new_offset).map_err(FixBufErr::Indices)
     }
@@ -121,7 +126,7 @@ impl FixBuf {
             other.offsets.iter().skip(logical_pos).map(|&i| i + offset);
         self.offsets.extend(remapped_indices).map_err(FixBufErr::Indices)?;
         // TODO: undo the extension at this point? should be atomic
-        self.bytes.extend_from_slice(&other.bytes).map_err(FixBufErr::Bytes)
+        self.bytes.0.extend_from_slice(&other.bytes.0).map_err(FixBufErr::Bytes)
     }
 
     pub fn clear(&mut self) {
@@ -135,11 +140,11 @@ impl FixBuf {
 
     pub fn get(&self, logical_pos: usize) -> Option<Event> {
         let offset = self.offsets.get(logical_pos).cloned()?;
-        Some(self.bytes.read_event(offset, logical_pos))
+        Some(self.bytes.read(offset, logical_pos))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+        &self.bytes.0
     }
 }
 
