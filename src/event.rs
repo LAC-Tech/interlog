@@ -44,10 +44,11 @@ pub struct ByteOffset(pub usize);
 impl FixVec<u8> {
     pub fn append_event(
         &mut self,
+        byte_start: ByteOffset,
         id: ID,
         val: &[u8]
-    ) -> Result<ByteOffset, FixVecErr> {
-        let offset = ByteOffset(self.len());
+    ) -> Result<(), FixVecErr> {
+        let offset = byte_start + self.len().into();
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let byte_len = val.len();
@@ -61,10 +62,25 @@ impl FixVec<u8> {
         self[header_range].copy_from_slice(header);
         self[val_range].copy_from_slice(val);
 
-        Ok(offset)
+        Ok(())
     }
 
-    pub fn read(&self, offset: ByteOffset) -> Option<Event<'_>> {
+    pub fn append_events(
+        &mut self,
+        origin: ReplicaID,
+        vals: &[&[u8]]
+    ) -> Result<(), FixVecErr> {
+        for (i, &data) in vals.into_iter().enumerate() {
+            let logical_pos = logical_len + i;
+            let id = ID { origin, logical_pos };
+            self.append_event(id, data)?;
+        }
+
+        Ok(())
+
+    }
+
+    pub fn read_event(&self, offset: ByteOffset) -> Option<Event<'_>> {
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let header_bytes = &self.get(header_range)?;
@@ -120,7 +136,7 @@ mod tests {
         ) {
             // Setup 
             let mut rng = rand::thread_rng();
-            let mut buf = Buf::new(256);
+            let mut buf = FixVec::new(256);
             let replica_id = ReplicaID::new(&mut rng);
 
             // Pre conditions
@@ -128,10 +144,10 @@ mod tests {
             assert!(buf.get(0).is_none(), "should contain no event");
            
             // Modifying
-            buf.append(replica_id, &e).expect("buf should have enough");
+            buf.append_event(replica_id, &e).expect("buf should have enough");
 
             // Post conditions
-            let actual = buf.get(0).expect("one event to be at 0");
+            let actual = buf.read_event(0.into()).expect("one event to be at 0");
             assert_eq!(buf.len(), 1);
             assert_eq!(actual.val, &e);
         }
@@ -142,22 +158,23 @@ mod tests {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
             
-            let mut buf = Buf::new(0x400);
+            let mut buf = FixVec::new(0x400);
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
-            assert!(buf.get(0).is_none(), "should contain no event");
+            assert!(buf.read_event(0.into()).is_none(), "should contain no event");
             
             for e in &es {
-                buf.append(replica_id, &e).expect("buf should have enough");
+                buf.append_event(replica_id, &e).expect("buf should have enough");
             }
 
             let len = es.len();
 
             // Post conditions
             assert_eq!(buf.len(), len);
-            let actual: Vec<_> =
-                (0..len).map(|pos| buf.get(pos.into()).unwrap().val).collect();
+            let actual: Vec<_> = (0..len)
+                .map(|pos| buf.read_event(pos.into()).unwrap().val)
+                .collect();
             assert_eq!(&actual, &es);
         }
 
@@ -167,24 +184,25 @@ mod tests {
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = Buf::new(0x800); 
-            let mut buf2 = Buf::new(0x800);  
+            let mut buf1 = FixVec::new(0x800); 
+            let mut buf2 = FixVec::new(0x800);  
             
             for e in &es1 {
-                buf1.append(replica_id, e).expect("buf should have enough")
+                buf1.append_event(replica_id, e).expect("buf should have enough");
             }
 
             for e in &es2 {
-                buf2.append(replica_id, e).expect("buf should have enough")
+                buf2.append_event(replica_id, e).expect("buf should have enough");
             }
 
             assert_eq!(buf1.len(), es1.len());
             assert_eq!(buf2.len(), es2.len());
 
-            buf1.extend(&buf2).expect("buf should have enough");
+            buf1.extend_from_slice(&buf2).expect("buf should have enough");
 
             let actual: Vec<_> = (0..buf1.len())
-                .map(|pos| buf1.get(pos.into()).unwrap().val).collect();
+                .map(|pos| buf1.read_event(pos.into()).unwrap().val)
+                .collect();
 
             let mut expected = Vec::new();
             expected.extend(&es1);

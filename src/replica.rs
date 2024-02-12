@@ -106,20 +106,20 @@ mod tests {
         ];
 
 		let mut rng = rand::thread_rng();
-        let replica_config = LocalReplicaConfig {
+        let config = Config {
             index_capacity: 16,
             read_cache_capacity: 1024,
             write_cache_capacity: 1024
         };
-		let mut replica = LocalReplica::new(
+		let mut replica = Local::new(
             tmp_dir.path(),
             &mut rng,
-            replica_config
+            config
         ).expect("failed to open file");
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-        let mut read_buf = event::Buf::new(0x200);
+        let mut read_buf = FixVec::new(0x200);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
         let events: Vec<_> = read_buf.into_iter().collect();
