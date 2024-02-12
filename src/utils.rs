@@ -1,3 +1,5 @@
+use std::slice::SliceIndex;
+
 /// Fixed Capacity Vector
 /// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
@@ -7,7 +9,7 @@ pub struct FixVec<T> {
 
 #[derive(Debug)]
 pub enum FixVecErr { Overflow }
-type FixVecRes = Result<(), FixVecErr>;
+pub type FixVecRes = Result<(), FixVecErr>;
 
 impl<T> FixVec<T> {
     #[allow(clippy::uninit_vec)]
@@ -54,8 +56,9 @@ impl<T> FixVec<T> {
         Ok(())
     }
 
-    pub fn get(&self, index: usize) -> Option<&T> {
-        (self.len > index).then(|| &self.elems[index])
+    pub fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
+    where I: SliceIndex<[T]> {
+        self.elems[..self.len].get(index)
     }
 }
 

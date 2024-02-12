@@ -20,6 +20,8 @@ use rustix::{fd, fd::AsFd, fs, io};
 
 use replica_id::ReplicaID;
 
+use crate::utils::{FixVec, FixVecErr};
+
 type O = OFlags;
 
 #[derive(Clone, Copy, Debug)]
@@ -27,17 +29,30 @@ type O = OFlags;
 struct EventID { origin: ReplicaID, pos: usize }
 
 pub struct LocalReplicaConfig {
-    pub read_cache_capacity: event::BufSize,
-    pub write_cache_capacity: event::BufSize 
+    pub index_capacity: usize,
+    pub read_cache_capacity: usize,
+    pub write_cache_capacity: usize
 }
+
+#[derive(Debug)]
+pub enum LogicalReplicaErr {
+    Disk(disk::Err),
+    ReadCache(FixVecErr),
+    WriteCache(FixVecErr),
+    KeyIndex(FixVecErr)
+}
+
+type LogicalReplicaRes = Result<(), LogicalReplicaErr>;
 
 pub struct LocalReplica {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
-    log_len: usize,
-    write_cache: event::FixBuf,
-    read_cache: event::FixBuf
+    log_len: event::ByteOffset,
+    write_cache: FixVec<u8>,
+    read_cache: FixVec<u8>,
+    // The entire index in memory, like bitcask's KeyDir
+    key_index: FixVec<event::ByteOffset>
 }
 
 // TODO: store data larger than read cache
@@ -52,46 +67,46 @@ impl LocalReplica {
         let mode = fs::Mode::RUSR | fs::Mode::WUSR;
 		let log_fd = fs::open(&path, flags, mode)?;
 
-		let log_len = 0;
-        let write_cache = event::FixBuf::new(config.write_cache_capacity);
+		let log_len: event::ByteOffset = 0.into();
+        let write_cache = FixVec::new(config.write_cache_capacity);
         // TODO: circular buffer
-        let read_cache = event::FixBuf::new(config.read_cache_capacity);
+        let read_cache = FixVec::new(config.read_cache_capacity);
+        let key_index = FixVec::new(config.index_capacity); 
 
-		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache })
+		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache, key_index })
     }
     
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), disk::Err> {
-        assert_eq!(self.write_cache.len(), event::BufSize::ZERO);
-        for &data in datums {
-            self.write_cache.append(self.id, data).expect("");
+    pub fn local_write(&mut self, datums: &[&[u8]]) -> LogicalReplicaRes {
+        self.write_cache.clear();
+        let logical_len = self.key_index.len();
+        for (i, &data) in datums.into_iter().enumerate() {
+            let logical_pos = logical_len + i;
+            let id = event::ID { origin: self.id, logical_pos };
+            self.write_cache.append_event(id, data)
+                .map_err(LogicalReplicaErr::WriteCache);
         }
         
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_written = disk::write(fd, self.write_cache.as_bytes())?;
+        let bytes_written = disk::write(fd, &self.write_cache)
+            .map_err(LogicalReplicaErr::Disk)?;
 
-        // round up to multiple of 8, for alignment
-        self.log_len += (bytes_written + 7) & !7;
 
         // Updating caches
-        // TODO: should the below be combined to some 'drain' operation?
-        assert_eq!(self.write_cache.len().logical, datums.len());
-        self.read_cache.extend(&self.write_cache, 0)
-            .expect("local write cache");
+        self.read_cache.extend_from_slice(&self.write_cache)
+            .map_err(LogicalReplicaErr::ReadCache)?;
+        self.key_index.push(self.log_len).map_err(LogicalReplicaErr::KeyIndex)?;
+        // round up to multiple of 8, for alignment
+        self.log_len += event::ByteOffset((bytes_written + 7) & !7);
 
-        self.write_cache.clear();
-
-		Ok(())
+        Ok(())
 	}
     
     pub fn read(
-        &mut self, client_buf: &mut event::FixBuf, logical_pos: usize
+        &mut self, client_buf: &mut FixVec<u8>, logical_pos: usize
     ) -> io::Result<()> {
-        // TODO: check from disk if not in cache
-
-        client_buf.extend(&self.read_cache, logical_pos).expect("read read cache");
-        Ok(()) 
+        panic!("first look up key in index. if it exists, check cache. then check disk")
     }
 }
 
@@ -114,8 +129,9 @@ mod tests {
 
 		let mut rng = rand::thread_rng();
         let replica_config = LocalReplicaConfig {
-            read_cache_capacity: event::BufSize::new(1024, 8),
-            write_cache_capacity: event::BufSize::new(1024, 8)
+            index_capacity: 16,
+            read_cache_capacity: 1024,
+            write_cache_capacity: 1024
         };
 		let mut replica = LocalReplica::new(
             tmp_dir.path(),
@@ -125,12 +141,9 @@ mod tests {
 
 		replica.local_write(&es).expect("failed to write to replica");
 
-        let capacity = event::BufSize::new(0x200, 8);
-		let mut read_buf = event::FixBuf::new(capacity);
+        let mut read_buf = event::Buf::new(0x200);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
    
-        assert_eq!(read_buf.len().logical, 4);
-
         let events: Vec<_> = read_buf.into_iter().collect();
 		assert_eq!(events[0].val, es[0]);
         assert_eq!(events.len(), 4);
@@ -138,23 +151,4 @@ mod tests {
 }
 
 fn main() {
-    use event::*;
-    // Setup 
-    let mut rng = rand::thread_rng();
-    let mut buf = FixBuf::new(BufSize::new(256, 1));
-    let replica_id = ReplicaID::new(&mut rng);
-
-    // Pre conditions
-    assert_eq!(buf.len(), BufSize::ZERO, "buf should start empty");
-    assert!(buf.get(0).is_none(), "should contain no event");
-  
-    let e = b"hello";
-
-    // Modifying
-    buf.append(replica_id, e).expect("buf should have enough");
-
-    // Post conditions
-    let actual = buf.get(0).expect("one event to be at 0");
-    assert_eq!(buf.len(), BufSize::new(5, 1));
-    assert_eq!(actual.val, e);
 }
