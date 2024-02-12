@@ -11,7 +11,7 @@ pub struct ID { origin: ReplicaID, logical_pos: usize }
 
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
-struct Header { byte_len: usize, origin: ReplicaID }
+struct Header { byte_len: usize, id: ID }
 
 impl Header {
     const SIZE: usize = std::mem::size_of::<Self>();
@@ -31,12 +31,15 @@ impl ByteOffset {
     }
 }
 
-struct Bytes(FixVec<u8>);
+pub struct Bytes(FixVec<u8>);
 
 impl Bytes {
+    fn new(capacity: usize) -> Self {
+        Self(FixVec::new(capacity))
+    }
     fn append(
         &mut self, 
-        origin: ReplicaID,
+        id: ID,
         val: &[u8]
     ) -> Result<ByteOffset, FixVecErr> {
         let offset = ByteOffset(self.0.len());
@@ -47,7 +50,7 @@ impl Bytes {
         let new_len = (val_range.end + 7) & !7;
         self.0.resize(new_len, 0)?;
 
-        let header = Header { byte_len, origin };
+        let header = Header { byte_len, id };
         let header = bytemuck::bytes_of(&header);
 
         self.0[header_range].copy_from_slice(header);
@@ -56,12 +59,11 @@ impl Bytes {
         Ok(offset)
     }
 
-    fn read(&self, offset: ByteOffset, logical_pos: usize) -> Event<'_> {
+    fn read(&self, offset: ByteOffset) -> Event<'_> {
         let header_range = offset.header_range();
         let val_start = header_range.end;
         let header_bytes = &self.0[header_range];
-        let &Header {origin, byte_len} = bytemuck::from_bytes(header_bytes);
-        let id = ID { origin, logical_pos };
+        let &Header {id, byte_len} = bytemuck::from_bytes(header_bytes);
         let val = &self.0[val_start..val_start + byte_len];
         Event {id, val}
     }
@@ -107,16 +109,15 @@ pub type FixBufRes = Result<(), FixBufErr>;
 
 impl FixBuf {
     pub fn new(capacity: BufSize) -> Self {
-        let bytes = Bytes(FixVec::new(capacity.bytes));
+        let bytes = Bytes::new(capacity.bytes);
         let offsets = FixVec::new(capacity.logical);
         Self{bytes, offsets}
     }
 
     // TODO: bulk append: calc length upfront and resize once
-    pub fn append(&mut self, origin: ReplicaID, val: &[u8]) -> FixBufRes {
-        let new_offset = 
-            self.bytes.append(origin, val).map_err(FixBufErr::Bytes)?;
-
+    pub fn append(&mut self, replica_id: ReplicaID, val: &[u8]) -> FixBufRes {
+        let id = ID { origin: replica_id, logical_pos: self.offsets.len() };
+        let new_offset = self.bytes.append(id, val).map_err(FixBufErr::Bytes)?;
         self.offsets.push(new_offset).map_err(FixBufErr::Indices)
     }
 
@@ -140,7 +141,7 @@ impl FixBuf {
 
     pub fn get(&self, logical_pos: usize) -> Option<Event> {
         let offset = self.offsets.get(logical_pos).cloned()?;
-        Some(self.bytes.read(offset, logical_pos))
+        Some(self.bytes.read(offset))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
