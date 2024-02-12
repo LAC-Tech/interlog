@@ -3,7 +3,7 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr};
+use crate::utils::{FixVec, FixVecErr, offset};
 use crate::{disk, event};
 
 type O = OFlags;
@@ -27,11 +27,11 @@ pub struct Local {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
-    log_len: event::ByteOffset,
+    log_len: offset::Byte,
     write_cache: FixVec<u8>,
     read_cache: FixVec<u8>,
     // The entire index in memory, like bitcask's KeyDir
-    key_index: FixVec<event::ByteOffset>
+    key_index: FixVec<offset::Byte>
 }
 
 // TODO: store data larger than read cache
@@ -46,7 +46,7 @@ impl Local {
         let mode = fs::Mode::RUSR | fs::Mode::WUSR;
 		let log_fd = fs::open(&path, flags, mode)?;
 
-		let log_len: event::ByteOffset = 0.into();
+		let log_len: offset::Byte = 0.into();
         let write_cache = FixVec::new(config.write_cache_capacity);
         // TODO: circular buffer
         let read_cache = FixVec::new(config.read_cache_capacity);
@@ -58,25 +58,31 @@ impl Local {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), Err> {
         self.write_cache.clear();
-        let logical_len = self.key_index.len();
-        for (i, &data) in datums.into_iter().enumerate() {
-            let logical_pos = logical_len + i;
-            let id = event::ID { origin: self.id, logical_pos };
-            self.write_cache.append_event(id, data).map_err(Err::WriteCache);
-        }
+        let logical_start: offset::Logical = self.key_index.len().into();
+        
+        self.write_cache
+            .append_events((logical_start, self.log_len), self.id, datums)
+            .map_err(Err::WriteCache)?;
         
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_written =
-            disk::write(fd, &self.write_cache).map_err(Err::Disk)?;
+        let _ = disk::write(fd, &self.write_cache).map_err(Err::Disk)?;
 
+        // TODO: the below operations need to be made atomic w/ each other
 
         // Updating caches
         self.read_cache.extend_from_slice(&self.write_cache)
             .map_err(Err::ReadCache)?;
-        self.key_index.push(self.log_len).map_err(Err::KeyIndex)?;
-        // round up to multiple of 8, for alignment
-        self.log_len += event::ByteOffset((bytes_written + 7) & !7);
+
+
+        let mut byte_offset = self.log_len;
+
+        for e in self.read_cache.into_iter() {
+            self.key_index.push(byte_offset).map_err(Err::KeyIndex)?;
+            byte_offset += e.on_disk_size().into();
+        }
+
+        self.log_len += byte_offset;
 
         Ok(())
 	}

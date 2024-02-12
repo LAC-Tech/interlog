@@ -99,3 +99,17 @@ impl<T> std::ops::DerefMut for FixVec<T> {
         &mut self.elems[0..self.len]
     }
 }
+
+pub mod offset {
+    use derive_more::*;
+
+    /// Represents a byte address, divisible by 8, where an Event starts
+    #[repr(transparent)]
+    #[derive(Add, AddAssign, Clone, Copy, From)]
+    pub struct Byte(pub usize);
+
+    #[repr(transparent)]
+    #[derive(Add, AddAssign, Clone, Copy, From)]
+    #[derive(bytemuck::Pod, bytemuck::Zeroable, Debug)]
+    pub struct Logical(pub usize);
+}

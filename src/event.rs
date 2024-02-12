@@ -1,6 +1,6 @@
 use derive_more::*;
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr, FixVecRes};
+use crate::utils::{FixVec, FixVecErr, FixVecRes, offset};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -8,7 +8,7 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
-pub struct ID { pub origin: ReplicaID, pub logical_pos: usize }
+pub struct ID { pub origin: ReplicaID, pub logical_pos: offset::Logical }
 
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
@@ -16,7 +16,7 @@ struct Header { byte_len: usize, id: ID }
 
 impl Header {
     const SIZE: usize = std::mem::size_of::<Self>();
-    fn range(start: ByteOffset) -> core::ops::Range<usize> {
+    fn range(start: offset::Byte) -> core::ops::Range<usize> {
         start.0 .. start.0 + Self::SIZE
     }
 }
@@ -25,15 +25,10 @@ impl Header {
 pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
 
 impl<'a> Event<'a> {
-    fn on_disk_size(&self) -> ByteOffset {
-        ByteOffset(Header::SIZE + self.val.len())
+    pub fn on_disk_size(&self) -> usize {
+        Header::SIZE + self.val.len()
     }
 }
-
-/// Represents a byte address, divisible by 8, where an Event starts
-#[repr(transparent)]
-#[derive(Add, AddAssign, Clone, Copy, From)]
-pub struct ByteOffset(pub usize);
 
 /// 1..N events backed by a fixed capacity byte buffer
 ///
@@ -42,13 +37,13 @@ pub struct ByteOffset(pub usize);
 /// - ends at the end of an event
 /// - aligns events to 8 bytes
 impl FixVec<u8> {
-    pub fn append_event(
+    fn append_event(
         &mut self,
-        byte_start: ByteOffset,
+        start: offset::Byte,
         id: ID,
         val: &[u8]
-    ) -> Result<(), FixVecErr> {
-        let offset = byte_start + self.len().into();
+    ) -> Result<offset::Byte, FixVecErr> {
+        let offset = start + self.len().into();
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let byte_len = val.len();
@@ -62,25 +57,29 @@ impl FixVec<u8> {
         self[header_range].copy_from_slice(header);
         self[val_range].copy_from_slice(val);
 
-        Ok(())
+        Ok(offset)
     }
 
     pub fn append_events(
         &mut self,
+        (logical_start, byte_start): (offset::Logical, offset::Byte),
         origin: ReplicaID,
         vals: &[&[u8]]
     ) -> Result<(), FixVecErr> {
+        let mut byte_start = byte_start;
+
         for (i, &data) in vals.into_iter().enumerate() {
-            let logical_pos = logical_len + i;
+            let logical_pos = logical_start + i.into();
             let id = ID { origin, logical_pos };
-            self.append_event(id, data)?;
+            let bytes_appended = self.append_event(byte_start, id, data)?;
+            byte_start += bytes_appended
         }
 
         Ok(())
 
     }
 
-    pub fn read_event(&self, offset: ByteOffset) -> Option<Event<'_>> {
+    pub fn read_event(&self, offset: offset::Byte) -> Option<Event<'_>> {
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let header_bytes = &self.get(header_range)?;
@@ -92,15 +91,15 @@ impl FixVec<u8> {
 
 pub struct BufIntoIterator<'a> {
     event_buf: &'a FixVec<u8>,
-    index: ByteOffset
+    index: offset::Byte
 }
 
 impl<'a> Iterator for BufIntoIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.event_buf.read(self.index);
-        self.index += result.clone()?.on_disk_size();
+        let result = self.event_buf.read_event(self.index);
+        self.index += result.clone()?.on_disk_size().into();
         result
     }
 }
