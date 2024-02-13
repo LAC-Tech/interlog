@@ -3,7 +3,7 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr, unit};
+use crate::utils::{FixVec, FixVecOverflow, unit};
 use crate::{disk, event};
 
 type O = OFlags;
@@ -17,9 +17,9 @@ pub struct Config {
 #[derive(Debug)]
 pub enum WriteErr {
     Disk(disk::Err),
-    ReadCache(FixVecErr),
-    WriteCache(FixVecErr),
-    KeyIndex(FixVecErr)
+    ReadCache(FixVecOverflow),
+    WriteCache(FixVecOverflow),
+    KeyIndex(FixVecOverflow)
 }
 
 #[derive(Debug)]
@@ -102,7 +102,7 @@ impl Local {
         self.read_cache.extend_from_slice(&self.write_cache)
             .map_err(WriteErr::ReadCache)?;
 
-        let mut byte_offset = self.log_len;;
+        let mut byte_offset = self.log_len;
 
         for e in self.read_cache.into_iter() {
             self.key_index.push(byte_offset)?;

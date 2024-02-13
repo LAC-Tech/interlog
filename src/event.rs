@@ -1,6 +1,6 @@
 use derive_more::*;
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr, FixVecRes, unit};
+use crate::utils::{FixVec, FixVecOverflow, unit};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -42,7 +42,7 @@ impl FixVec<u8> {
         start: unit::Byte,
         id: ID,
         val: &[u8]
-    ) -> Result<unit::Byte, FixVecErr> {
+    ) -> Result<unit::Byte, FixVecOverflow> {
         let offset = start + self.len().into();
         let header_range = Header::range(offset);
         let val_start = header_range.end;
@@ -65,7 +65,7 @@ impl FixVec<u8> {
         (logical_start, byte_start): (unit::Logical, unit::Byte),
         origin: ReplicaID,
         vals: &[&[u8]]
-    ) -> Result<(), FixVecErr> {
+    ) -> Result<(), FixVecOverflow> {
         let mut byte_start = byte_start;
 
         for (i, &data) in vals.into_iter().enumerate() {
@@ -138,12 +138,14 @@ mod tests {
             let mut buf = FixVec::new(256);
             let replica_id = ReplicaID::new(&mut rng);
 
+            let bytes: &[u8] = vec![].into();
+
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
            
             // Modifying
-            buf.append_event(replica_id, &e).expect("buf should have enough");
+            buf.append_event(0.into(), replica_id, &e).expect("buf should have enough");
 
             // Post conditions
             let actual = buf.read_event(0.into()).expect("one event to be at 0");

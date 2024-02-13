@@ -8,8 +8,8 @@ pub struct FixVec<T> {
 }
 
 #[derive(Debug)]
-pub enum FixVecErr { Overflow }
-pub type FixVecRes = Result<(), FixVecErr>;
+pub struct FixVecOverflow;
+pub type FixVecRes = Result<(), FixVecOverflow>;
 
 impl<T> FixVec<T> {
     #[allow(clippy::uninit_vec)]
@@ -37,7 +37,7 @@ impl<T> FixVec<T> {
     }
 
     fn check_capacity(&self, new_len: usize) -> FixVecRes {
-        (self.capacity() >= new_len).then_some(()).ok_or(FixVecErr::Overflow)
+        (self.capacity() >= new_len).then_some(()).ok_or(FixVecOverflow)
     }
 
     pub fn push(&mut self, value: T) -> FixVecRes {
