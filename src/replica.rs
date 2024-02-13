@@ -3,7 +3,7 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr, offset};
+use crate::utils::{FixVec, FixVecErr, unit};
 use crate::{disk, event};
 
 type O = OFlags;
@@ -15,23 +15,48 @@ pub struct Config {
 }
 
 #[derive(Debug)]
-pub enum Err {
+pub enum WriteErr {
     Disk(disk::Err),
     ReadCache(FixVecErr),
     WriteCache(FixVecErr),
     KeyIndex(FixVecErr)
 }
 
+#[derive(Debug)]
+pub enum ReadErr {
+    KeyIndex,
+}
+
+struct KeyIndex(FixVec<unit::Byte>);
+
+impl KeyIndex {
+    fn new(capacity: usize) -> Self {
+        Self(FixVec::new(capacity))
+    } 
+    
+    fn len(&self) -> unit::Logical {
+        self.0.len().into()
+    }
+
+    fn push(&mut self, byte_offset: unit::Byte) -> Result<(), WriteErr> {
+        self.0.push(byte_offset).map_err(WriteErr::KeyIndex)
+    }
+
+    fn get(&self, logical_pos: unit::Logical) -> Result<unit::Byte, ReadErr> {
+        let i: usize = logical_pos.into();
+        self.0.get(i).cloned().ok_or(ReadErr::KeyIndex)
+    }
+}
 
 pub struct Local {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
-    log_len: offset::Byte,
+    log_len: unit::Byte,
     write_cache: FixVec<u8>,
     read_cache: FixVec<u8>,
     // The entire index in memory, like bitcask's KeyDir
-    key_index: FixVec<offset::Byte>
+    key_index: KeyIndex
 }
 
 // TODO: store data larger than read cache
@@ -46,50 +71,59 @@ impl Local {
         let mode = fs::Mode::RUSR | fs::Mode::WUSR;
 		let log_fd = fs::open(&path, flags, mode)?;
 
-		let log_len: offset::Byte = 0.into();
+		let log_len: unit::Byte = 0.into();
         let write_cache = FixVec::new(config.write_cache_capacity);
         // TODO: circular buffer
         let read_cache = FixVec::new(config.read_cache_capacity);
-        let key_index = FixVec::new(config.index_capacity); 
+        let key_index = KeyIndex::new(config.index_capacity); 
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache, key_index })
     }
     
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), Err> {
+    pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), WriteErr> {
         self.write_cache.clear();
-        let logical_start: offset::Logical = self.key_index.len().into();
+        let logical_start: unit::Logical = self.key_index.len().into();
         
         self.write_cache
             .append_events((logical_start, self.log_len), self.id, datums)
-            .map_err(Err::WriteCache)?;
+            .map_err(WriteErr::WriteCache)?;
         
         // persist
         let fd = self.log_fd.as_fd();
-        let _ = disk::write(fd, &self.write_cache).map_err(Err::Disk)?;
+        let bytes_written =  disk::write(fd, &self.write_cache)
+            .map_err(WriteErr::Disk)?;
+
+        let bytes_written = bytes_written.align();
 
         // TODO: the below operations need to be made atomic w/ each other
 
         // Updating caches
         self.read_cache.extend_from_slice(&self.write_cache)
-            .map_err(Err::ReadCache)?;
+            .map_err(WriteErr::ReadCache)?;
 
-
-        let mut byte_offset = self.log_len;
+        let mut byte_offset = self.log_len;;
 
         for e in self.read_cache.into_iter() {
-            self.key_index.push(byte_offset).map_err(Err::KeyIndex)?;
+            self.key_index.push(byte_offset)?;
             byte_offset += e.on_disk_size().into();
         }
 
+        assert_eq!(byte_offset - self.log_len, bytes_written);
+        
         self.log_len += byte_offset;
+
 
         Ok(())
 	}
     
     pub fn read(
         &mut self, client_buf: &mut FixVec<u8>, logical_pos: usize
-    ) -> io::Result<()> {
+    ) -> Result<(), ReadErr> {
+        let disk_pos = self.key_index.get(logical_pos.into())?;
+
+        
+
         panic!("first look up key in index. if it exists, check cache. then check disk")
     }
 }

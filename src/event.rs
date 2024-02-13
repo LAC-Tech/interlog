@@ -1,6 +1,6 @@
 use derive_more::*;
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecErr, FixVecRes, offset};
+use crate::utils::{FixVec, FixVecErr, FixVecRes, unit};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -8,7 +8,7 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
-pub struct ID { pub origin: ReplicaID, pub logical_pos: offset::Logical }
+pub struct ID { pub origin: ReplicaID, pub logical_pos: unit::Logical }
 
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
@@ -16,7 +16,7 @@ struct Header { byte_len: usize, id: ID }
 
 impl Header {
     const SIZE: usize = std::mem::size_of::<Self>();
-    fn range(start: offset::Byte) -> core::ops::Range<usize> {
+    fn range(start: unit::Byte) -> core::ops::Range<usize> {
         start.0 .. start.0 + Self::SIZE
     }
 }
@@ -39,17 +39,17 @@ impl<'a> Event<'a> {
 impl FixVec<u8> {
     fn append_event(
         &mut self,
-        start: offset::Byte,
+        start: unit::Byte,
         id: ID,
         val: &[u8]
-    ) -> Result<offset::Byte, FixVecErr> {
+    ) -> Result<unit::Byte, FixVecErr> {
         let offset = start + self.len().into();
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let byte_len = val.len();
         let val_range = val_start .. val_start + byte_len;
-        let new_len = (val_range.end + 7) & !7;
-        self.resize(new_len, 0)?;
+        let new_len = unit::Byte(val_range.end).align();
+        self.resize(new_len.into(), 0)?;
 
         let header = Header { byte_len, id };
         let header = bytemuck::bytes_of(&header);
@@ -62,7 +62,7 @@ impl FixVec<u8> {
 
     pub fn append_events(
         &mut self,
-        (logical_start, byte_start): (offset::Logical, offset::Byte),
+        (logical_start, byte_start): (unit::Logical, unit::Byte),
         origin: ReplicaID,
         vals: &[&[u8]]
     ) -> Result<(), FixVecErr> {
@@ -79,7 +79,7 @@ impl FixVec<u8> {
 
     }
 
-    pub fn read_event(&self, offset: offset::Byte) -> Option<Event<'_>> {
+    pub fn read_event(&self, offset: unit::Byte) -> Option<Event<'_>> {
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let header_bytes = &self.get(header_range)?;
@@ -91,7 +91,7 @@ impl FixVec<u8> {
 
 pub struct BufIntoIterator<'a> {
     event_buf: &'a FixVec<u8>,
-    index: offset::Byte
+    index: unit::Byte
 }
 
 impl<'a> Iterator for BufIntoIterator<'a> {

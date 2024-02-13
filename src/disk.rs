@@ -1,5 +1,5 @@
 use rustix::{fd, io};
-
+use crate::utils::unit;
 /*
 pub fn read_from_file(
    bytes: &mut [u8], fd: fd::BorrowedFd, index: &Index
@@ -21,15 +21,15 @@ pub fn read_from_file(
 #[derive(Debug, PartialEq)]
 pub enum Err {
     OS(rustix::io::Errno),
-    NonAtomic {bytes_expected: usize, bytes_written: usize}
+    NonAtomic {bytes_expected: unit::Byte, bytes_written: unit::Byte}
 }
 
-pub fn write(fd: fd::BorrowedFd, bytes: &[u8]) -> Result<usize, Err> {
+pub fn write(fd: fd::BorrowedFd, bytes: &[u8]) -> Result<unit::Byte, Err> {
     // always sets file offset to EOF.
-    let bytes_written = io::write(fd, bytes).map_err(Err::OS)?;
+    let bytes_written = io::write(fd, bytes).map(unit::Byte).map_err(Err::OS)?;
     // Linux 'man open': appending to file opened w/ O_APPEND is atomic
     // TODO: will this happen? if so how to recover?
-    let bytes_expected = bytes.len();
+    let bytes_expected: unit::Byte = bytes.len().into();
     if bytes_written != bytes_expected {
         return Err(Err::NonAtomic{bytes_expected, bytes_written})
     }
