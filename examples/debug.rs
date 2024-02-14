@@ -4,7 +4,7 @@ use core::ops::Deref;
 use interlog::*;
 
 fn main() {
-    let e = [0u8; 8];
+    let e = [0u8; 0];
 
     // Setup
     let mut rng = rand::thread_rng();

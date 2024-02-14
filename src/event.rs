@@ -112,7 +112,7 @@ impl FixVec<u8> {
         let val_end = val_start + byte_len;
         let val_range = val_start .. val_end;
         dbg!(&val_range);
-        if val_start == val_end && val_end == self.len() { return None }
+        //if val_start == val_end && val_end == self.len() { return None }
         let val = &self.get(val_range)?;
         let event = Event { id, val };
         dbg!(&event);
@@ -163,7 +163,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn read_and_write_single_event(
+        fn rw_single_event(
             e in prop::collection::vec(any::<u8>(), 0..=8)
         ) {
             // Setup
@@ -176,17 +176,19 @@ mod tests {
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
 
+            println!("\nAPPEND\n");
             // Modifying
             buf.append_event(&event).expect("buf should have enough");
 
+            println!("\nREAD\n");
             // Post conditions
-            let actual = buf.read_event(unit::Byte(0))
+            let actual = buf.read_event(0.into())
                 .expect("one event to be at 0");
             assert_eq!(actual.val, &e);
         }
 
         #[test]
-        fn multiple_read_and_write(es in arb_byte_list(16)) {
+        fn rw_many_events(es in arb_byte_list(16)) {
             // Setup
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
@@ -225,9 +227,7 @@ mod tests {
 
             buf1.extend_from_slice(&buf2).expect("buf should have enough");
 
-            let actual: Vec<_> = (0..buf1.len())
-                .map(|pos| buf1.read_event(pos.into()).unwrap().val)
-                .collect();
+            let actual: Vec<_> = buf1.into_iter().map(|e| e.val).collect();
 
             let mut expected = Vec::new();
             expected.extend(&es1);
