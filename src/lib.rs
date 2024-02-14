@@ -14,8 +14,6 @@ compile_error!("code assumes linux");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
-use core::ops::Deref;
-use utils::FixVec;
-
 pub use replica::*;
 pub use replica_id::*;
+pub use utils::FixVec;

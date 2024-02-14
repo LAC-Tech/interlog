@@ -90,13 +90,13 @@ impl<T> std::ops::Deref for FixVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        &self.elems[0..self.len]
+        &self.elems[..self.len]
     }
 }
 
 impl<T> std::ops::DerefMut for FixVec<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.elems[0..self.len]
+        &mut self.elems[..self.len]
     }
 }
 

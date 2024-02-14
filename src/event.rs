@@ -1,6 +1,5 @@
-use derive_more::*;
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecOverflow, unit};
+use crate::utils::{unit, FixVec, FixVecOverflow};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -8,31 +7,44 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
-pub struct ID { pub origin: ReplicaID, pub disk_pos: unit::Logical }
+pub struct ID {
+    pub origin: ReplicaID,
+    pub disk_pos: unit::Logical,
+}
 
 impl ID {
     fn new<P: Into<unit::Logical>>(origin: ReplicaID, disk_pos: P) -> Self {
-        ID { origin, disk_pos: disk_pos.into() }
+        ID {
+            origin,
+            disk_pos: disk_pos.into(),
+        }
     }
 }
 
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
-struct Header { byte_len: usize, id: ID }
+struct Header {
+    byte_len: usize,
+    id: ID,
+}
 
 impl Header {
     const SIZE: usize = std::mem::size_of::<Self>();
     fn range(start: unit::Byte) -> core::ops::Range<usize> {
-        start.0 .. start.0 + Self::SIZE
+        start.0..start.0 + Self::SIZE
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct Event<'a> { pub id: ID, pub val: &'a [u8] }
+pub struct Event<'a> {
+    pub id: ID,
+    pub val: &'a [u8],
+}
 
 impl<'a> Event<'a> {
-    pub fn on_disk_size(&self) -> usize {
-        Header::SIZE + self.val.len()
+    pub fn on_disk_size(&self) -> unit::Byte {
+        let size: unit::Byte = (Header::SIZE + self.val.len()).into();
+        size.align()
     }
 }
 
@@ -47,13 +59,13 @@ impl FixVec<u8> {
         &mut self,
         start: unit::Byte,
         id: ID,
-        val: &[u8]
+        val: &[u8],
     ) -> Result<unit::Byte, FixVecOverflow> {
         let offset = start + self.len().into();
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let byte_len = val.len();
-        let val_range = val_start .. val_start + byte_len;
+        let val_range = val_start..val_start + byte_len;
         let new_len = unit::Byte(val_range.end).align();
         self.resize(new_len.into(), 0)?;
 
@@ -70,10 +82,10 @@ impl FixVec<u8> {
         &mut self,
         start: (unit::Logical, unit::Byte),
         origin: ReplicaID,
-        vals: I
+        vals: I,
     ) -> Result<(), FixVecOverflow>
     where
-        I: IntoIterator<Item = &'a [u8]>
+        I: IntoIterator<Item = &'a [u8]>,
     {
         let (logical_start, byte_start) = start;
         let mut byte_start = byte_start;
@@ -81,6 +93,7 @@ impl FixVec<u8> {
         for (i, data) in vals.into_iter().enumerate() {
             let disk_pos = logical_start + i.into();
             let id = ID { origin, disk_pos };
+
             let bytes_appended = self.append_event(byte_start, id, data)?;
             byte_start += bytes_appended
         }
@@ -92,24 +105,31 @@ impl FixVec<u8> {
         let header_range = Header::range(offset);
         let val_start = header_range.end;
         let header_bytes = &self.get(header_range)?;
-        let &Header {id, byte_len} = bytemuck::from_bytes(header_bytes);
-        let val = &self[val_start..val_start + byte_len];
-        Some(Event {id, val})
+        let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
+        let val_end = val_start + byte_len;
+
+        if val_end == self.len() { return None }
+        let val = &self.get(val_start..val_end)?;
+        let event = Event { id, val };
+        dbg!(&event);
+        Some(event)
     }
 }
 
 pub struct BufIntoIterator<'a> {
     event_buf: &'a FixVec<u8>,
-    index: unit::Byte
+    index: unit::Byte,
 }
 
 impl<'a> Iterator for BufIntoIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.event_buf.read_event(self.index);
-        self.index += result.clone()?.on_disk_size().into();
-        result
+        dbg!(self.index);
+        dbg!(self.event_buf.len());
+        let result = self.event_buf.read_event(self.index)?;
+        self.index += result.clone().on_disk_size().into();
+        Some(result)
     }
 }
 
@@ -118,24 +138,24 @@ impl<'a> IntoIterator for &'a FixVec<u8> {
     type IntoIter = BufIntoIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        BufIntoIterator { event_buf: self, index: 0.into() }
+        BufIntoIterator {
+            event_buf: self,
+            index: 0.into(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::ops::Deref;
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
     use tempfile::TempDir;
-    use core::ops::Deref;
 
     // TODO: too many allocations. Make a liffe vector implementation
     fn arb_byte_list(max: usize) -> impl Strategy<Value = Vec<Vec<u8>>> {
-        proptest::collection::vec(
-            proptest::collection::vec(any::<u8>(), 0..=max),
-            0..=max
-        )
+        proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..=max), 0..=max)
     }
 
     proptest! {
@@ -143,7 +163,7 @@ mod tests {
         fn read_and_write_single_event(
             e in prop::collection::vec(any::<u8>(), 0..=8)
         ) {
-            // Setup 
+            // Setup
             let mut rng = rand::thread_rng();
             let mut buf = FixVec::new(256);
             let replica_id = ReplicaID::new(&mut rng);
@@ -152,7 +172,7 @@ mod tests {
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
-           
+
             // Modifying
             buf.append_event(unit::Byte(0), event_id, &e)
                 .expect("buf should have enough");
@@ -165,40 +185,36 @@ mod tests {
 
         #[test]
         fn multiple_read_and_write(es in arb_byte_list(16)) {
-            // Setup 
+            // Setup
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
-            
+
             let mut buf = FixVec::new(0x400);
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.read_event(0.into()).is_none(), "should contain no event");
-            
+
             let vals = es.iter().map(Deref::deref);
             buf.append_events((0.into(), 0.into()), replica_id, vals)
                 .expect("buf should have enough");
 
-            let len = es.len();
-
             // Post conditions
-            let actual: Vec<_> = (0..len)
-                .map(|pos| buf.read_event(pos.into()).unwrap().val)
-                .collect();
+            let actual: Vec<_> = buf.into_iter().map(|e| e.val).collect();
             assert_eq!(&actual, &es);
         }
 
         #[test]
         fn combine_buffers(es1 in arb_byte_list(16), es2 in arb_byte_list(16)) {
-            // Setup 
+            // Setup
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
 
-            let mut buf1 = FixVec::new(0x800); 
-            let mut buf2 = FixVec::new(0x800);  
+            let mut buf1 = FixVec::new(0x800);
+            let mut buf2 = FixVec::new(0x800);
 
             let start: (unit::Logical, unit::Byte) = (0.into(), 0.into());
-            
+
             buf1.append_events(start, replica_id, es1.iter().map(Deref::deref))
                 .expect("buf should have enough");
 

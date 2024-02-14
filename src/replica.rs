@@ -83,7 +83,7 @@ impl Local {
     // Event local to the replica, that don't yet have an ID
     pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), WriteErr> {
         self.write_cache.clear();
-        let logical_start: unit::Logical = self.key_index.len().into();
+        let logical_start = self.key_index.len();
         
         self.write_cache
             .append_events((logical_start, self.log_len), self.id, datums.iter().copied())
