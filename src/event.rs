@@ -8,7 +8,13 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
-pub struct ID { pub origin: ReplicaID, pub logical_pos: unit::Logical }
+pub struct ID { pub origin: ReplicaID, pub disk_pos: unit::Logical }
+
+impl ID {
+    fn new<P: Into<unit::Logical>>(origin: ReplicaID, disk_pos: P) -> Self {
+        ID { origin, disk_pos: disk_pos.into() }
+    }
+}
 
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
@@ -60,23 +66,26 @@ impl FixVec<u8> {
         Ok(offset)
     }
 
-    pub fn append_events(
+    pub fn append_events<'a, I>(
         &mut self,
-        (logical_start, byte_start): (unit::Logical, unit::Byte),
+        start: (unit::Logical, unit::Byte),
         origin: ReplicaID,
-        vals: &[&[u8]]
-    ) -> Result<(), FixVecOverflow> {
+        vals: I
+    ) -> Result<(), FixVecOverflow>
+    where
+        I: IntoIterator<Item = &'a [u8]>
+    {
+        let (logical_start, byte_start) = start;
         let mut byte_start = byte_start;
 
-        for (i, &data) in vals.into_iter().enumerate() {
-            let logical_pos = logical_start + i.into();
-            let id = ID { origin, logical_pos };
+        for (i, data) in vals.into_iter().enumerate() {
+            let disk_pos = logical_start + i.into();
+            let id = ID { origin, disk_pos };
             let bytes_appended = self.append_event(byte_start, id, data)?;
             byte_start += bytes_appended
         }
 
         Ok(())
-
     }
 
     pub fn read_event(&self, offset: unit::Byte) -> Option<Event<'_>> {
@@ -119,6 +128,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
     use tempfile::TempDir;
+    use core::ops::Deref;
 
     // TODO: too many allocations. Make a liffe vector implementation
     fn arb_byte_list(max: usize) -> impl Strategy<Value = Vec<Vec<u8>>> {
@@ -137,19 +147,19 @@ mod tests {
             let mut rng = rand::thread_rng();
             let mut buf = FixVec::new(256);
             let replica_id = ReplicaID::new(&mut rng);
-
-            let bytes: &[u8] = vec![].into();
+            let event_id = ID::new(replica_id, 0);
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.get(0).is_none(), "should contain no event");
            
             // Modifying
-            buf.append_event(0.into(), replica_id, &e).expect("buf should have enough");
+            buf.append_event(unit::Byte(0), event_id, &e)
+                .expect("buf should have enough");
 
             // Post conditions
-            let actual = buf.read_event(0.into()).expect("one event to be at 0");
-            assert_eq!(buf.len(), 1);
+            let actual = buf.read_event(unit::Byte(0))
+                .expect("one event to be at 0");
             assert_eq!(actual.val, &e);
         }
 
@@ -165,14 +175,13 @@ mod tests {
             assert_eq!(buf.len(), 0, "buf should start empty");
             assert!(buf.read_event(0.into()).is_none(), "should contain no event");
             
-            for e in &es {
-                buf.append_event(replica_id, &e).expect("buf should have enough");
-            }
+            let vals = es.iter().map(Deref::deref);
+            buf.append_events((0.into(), 0.into()), replica_id, vals)
+                .expect("buf should have enough");
 
             let len = es.len();
 
             // Post conditions
-            assert_eq!(buf.len(), len);
             let actual: Vec<_> = (0..len)
                 .map(|pos| buf.read_event(pos.into()).unwrap().val)
                 .collect();
@@ -187,17 +196,14 @@ mod tests {
 
             let mut buf1 = FixVec::new(0x800); 
             let mut buf2 = FixVec::new(0x800);  
+
+            let start: (unit::Logical, unit::Byte) = (0.into(), 0.into());
             
-            for e in &es1 {
-                buf1.append_event(replica_id, e).expect("buf should have enough");
-            }
+            buf1.append_events(start, replica_id, es1.iter().map(Deref::deref))
+                .expect("buf should have enough");
 
-            for e in &es2 {
-                buf2.append_event(replica_id, e).expect("buf should have enough");
-            }
-
-            assert_eq!(buf1.len(), es1.len());
-            assert_eq!(buf2.len(), es2.len());
+            buf2.append_events(start, replica_id, es2.iter().map(Deref::deref))
+                .expect("buf should have enough");
 
             buf1.extend_from_slice(&buf2).expect("buf should have enough");
 

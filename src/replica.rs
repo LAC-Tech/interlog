@@ -86,7 +86,7 @@ impl Local {
         let logical_start: unit::Logical = self.key_index.len().into();
         
         self.write_cache
-            .append_events((logical_start, self.log_len), self.id, datums)
+            .append_events((logical_start, self.log_len), self.id, datums.iter().copied())
             .map_err(WriteErr::WriteCache)?;
         
         // persist
