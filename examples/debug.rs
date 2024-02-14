@@ -1,25 +1,28 @@
 extern crate interlog;
 
 use core::ops::Deref;
-use interlog::{ReplicaID, FixVec};
+use interlog::*;
 
 fn main() {
-    let minimal_failing = vec![vec![], vec![], vec![0]];
-    // Setup 
+    let e = [0u8; 8];
+
+    // Setup
     let mut rng = rand::thread_rng();
+    let mut buf = FixVec::new(256);
     let replica_id = ReplicaID::new(&mut rng);
-    
-    let mut buf = FixVec::new(0x400);
+    let event = Event {id: ID::new(replica_id, 0), val: &e};
 
     // Pre conditions
     assert_eq!(buf.len(), 0, "buf should start empty");
-    assert!(buf.read_event(0.into()).is_none(), "should contain no event");
-    
-    let vals = minimal_failing.iter().map(Deref::deref);
-    buf.append_events((0.into(), 0.into()), replica_id, vals)
-        .expect("buf should have enough");
+    assert!(buf.get(0).is_none(), "should contain no event");
 
+    println!("\nAPPEND\n");
+    // Modifying
+    buf.append_event(&event).expect("buf should have enough");
+
+    println!("\nREAD\n");
     // Post conditions
-    let actual: Vec<_> = buf.into_iter().map(|e| e.val).collect();
-    assert_eq!(&actual, &minimal_failing);
+    let actual = buf.read_event(0.into())
+        .expect("one event to be at 0");
+    assert_eq!(actual.val, &e);
 }

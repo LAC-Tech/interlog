@@ -102,6 +102,7 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 
 pub mod unit {
     use derive_more::*;
+    use core::fmt;
 
     /// Represents a byte address, divisible by 8, where an Event starts
     #[repr(transparent)]
@@ -116,6 +117,18 @@ pub mod unit {
 
     #[repr(transparent)]
     #[derive(Add, AddAssign, Clone, Copy, From, Into)]
-    #[derive(bytemuck::Pod, bytemuck::Zeroable, Debug)]
+    #[derive(bytemuck::Pod, bytemuck::Zeroable)]
     pub struct Logical(pub usize);
+
+    impl fmt::Display for Logical {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Logical({})", self.0)
+        }
+    }
+
+    impl fmt::Debug for Logical {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
 }

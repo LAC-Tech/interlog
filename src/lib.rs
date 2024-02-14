@@ -17,3 +17,4 @@ compile_error!("code assumes little-endian");
 pub use replica::*;
 pub use replica_id::*;
 pub use utils::FixVec;
+pub use event::*;

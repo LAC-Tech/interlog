@@ -7,3 +7,4 @@
 cc e423ec96cd47bc6f3b574571da51741b7cb708989015f2bf75fc516a07dfa14d # shrinks to es = [[0, 0, 0, 0], []]
 cc db00f568bb499ff58926871762ad6bacee229a5e692196ac572c73fd9aeb0cc6 # shrinks to es1 = [], es2 = [[0, 0, 0, 0, 0, 0, 0, 0], []]
 cc eb6ebec9c606ce9512675c58fc48e261cc9f4b45ceaa0d8a345b05995cec2fab # shrinks to e = [0]
+cc 83c8b5f7cdff509c5e18b016933bfd916d7aafa300651d41541993dc22148a78 # shrinks to es = [[]]

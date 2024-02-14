@@ -1,6 +1,7 @@
 use rand::prelude::*;
+use core::fmt;
 
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 #[repr(transparent)]
 pub struct ReplicaID(u128);
 
@@ -10,8 +11,14 @@ impl ReplicaID {
     }
 }
 
-impl core::fmt::Display for ReplicaID {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+impl fmt::Display for ReplicaID {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ReplicaID({:x})", self.0)
+    }
+}
+
+impl fmt::Debug for ReplicaID {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:x}", self.0)
     }
 }
