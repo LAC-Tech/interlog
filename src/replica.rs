@@ -25,6 +25,7 @@ pub enum WriteErr {
 #[derive(Debug)]
 pub enum ReadErr {
     KeyIndex,
+    ClientBuf(FixVecOverflow)
 }
 
 struct KeyIndex(FixVec<unit::Byte>);
@@ -45,6 +46,10 @@ impl KeyIndex {
     fn get(&self, logical_pos: unit::Logical) -> Result<unit::Byte, ReadErr> {
         let i: usize = logical_pos.into();
         self.0.get(i).cloned().ok_or(ReadErr::KeyIndex)
+    }
+    
+    fn read_since(&self, pos: unit::Logical) -> impl Iterator<Item=unit::Byte> + '_ {
+        self.0.iter().skip(pos.into()).copied()
     }
 }
 
@@ -120,11 +125,14 @@ impl Local {
     pub fn read(
         &mut self, client_buf: &mut FixVec<u8>, logical_pos: usize
     ) -> Result<(), ReadErr> {
-        let disk_pos = self.key_index.get(logical_pos.into())?;
+        let disk_positions = self.key_index.get(logical_pos.into())?;
+        // TODO: assumes the disk is 1:1 w/ read cache.
+        let event = self.read_cache.read_event(disk_pos)
+            .expect("TODO: handle not in read cache, by checking disk");
 
-        
 
-        panic!("first look up key in index. if it exists, check cache. then check disk")
+
+        client_buf.append_event(&event).map_err(ReadErr::ClientBuf)
     }
 }
 
