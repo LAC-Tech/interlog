@@ -149,37 +149,39 @@ impl Local {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::ops::Deref;
     use tempfile::TempDir;
+    use proptest::prelude::*;
+    use crate::test_utils::*;
 
-    #[test]
-	fn read_and_write_to_log() {
-        let tmp_dir = TempDir::with_prefix("interlog-")
-            .expect("failed to open temp file");
+    proptest! {
+        #[test]
+        fn read_and_write_to_log(es in arb_byte_list(16)) {
+            let tmp_dir = TempDir::with_prefix("interlog-")
+                .expect("failed to open temp file");
 
-        let es: [&[u8]; 4] = [
-            b"I've not grown weary on lenghty roads",
-            b"On strange paths, not gone astray",
-            b"Such is the knowledge, the knowledge cast in me",
-            b"Such is the knowledge; such are the skills"
-        ];
+            let mut rng = rand::thread_rng();
+            let config = Config {
+                index_capacity: 16,
+                read_cache_capacity: 1024,
+                write_cache_capacity: 1024
+            };
 
-		let mut rng = rand::thread_rng();
-        let config = Config {
-            index_capacity: 16,
-            read_cache_capacity: 1024,
-            write_cache_capacity: 1024
-        };
+            let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
+                .expect("failed to open file");
 
-		let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
-            .expect("failed to open file");
+            let vals = es.iter().map(Deref::deref);
+            replica.local_write(vals)
+                .expect("failed to write to replica");
 
-		replica.local_write(es).expect("failed to write to replica");
+            let mut read_buf = FixVec::new(0x400);
+            replica.read(&mut read_buf, 0).expect("failed to read to file");
+       
+            let events: Vec<_> = read_buf.into_iter()
+                .map(|e| e.val.to_vec())
+                .collect();
 
-        let mut read_buf = FixVec::new(0x200);
-		replica.read(&mut read_buf, 0).expect("failed to read to file");
-   
-        let events: Vec<_> = read_buf.into_iter().collect();
-		assert_eq!(events[0].val, es[0]);
-        assert_eq!(events.len(), 4);
+            assert_eq!(events, es);
+        }
     }
 }

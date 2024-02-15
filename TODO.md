@@ -3,8 +3,8 @@
 - reconstruct LocalReplica from logfile
 - implement 'read cache miss', so events on disk can be larger than read cache
 - implement circular buffer for event read cache, with cache miss semantics 
-- make all example based tests, property tests
-- test utils file 
+~~- make all example based tests, property tests~~
+~~- test utils file~~
 ~~- FCVec should have runtime capacity value~~
 ~~- create "FCVec<T>", replace FCBBuf with that~~
 ~~- Factor out EventBuf into its own struct~~

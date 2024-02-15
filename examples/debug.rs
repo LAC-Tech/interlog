@@ -2,27 +2,30 @@ extern crate interlog;
 
 use core::ops::Deref;
 use interlog::*;
+use tempfile::TempDir;
 
 fn main() {
-    let e = [0u8; 0];
+    let es = vec![vec![], vec![], vec![], vec![], vec![]];
+    let tmp_dir = TempDir::with_prefix("interlog-")
+        .expect("failed to open temp file");
 
-    // Setup
     let mut rng = rand::thread_rng();
-    let mut buf = FixVec::new(256);
-    let replica_id = ReplicaID::new(&mut rng);
-    let event = Event {id: ID::new(replica_id, 0), val: &e};
+    let config = Config {
+        index_capacity: 16,
+        read_cache_capacity: 1024,
+        write_cache_capacity: 1024
+    };
 
-    // Pre conditions
-    assert_eq!(buf.len(), 0, "buf should start empty");
-    assert!(buf.get(0).is_none(), "should contain no event");
+    let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
+        .expect("failed to open file");
 
-    println!("\nAPPEND\n");
-    // Modifying
-    buf.append_event(&event).expect("buf should have enough");
+    let vals = es.iter().map(Deref::deref);
+    replica.local_write(vals)
+        .expect("failed to write to replica");
 
-    println!("\nREAD\n");
-    // Post conditions
-    let actual = buf.read_event(0.into())
-        .expect("one event to be at 0");
-    assert_eq!(actual.val, &e);
+    let mut read_buf = FixVec::new(0x800);
+    replica.read(&mut read_buf, 0).expect("failed to read to file");
+
+    let events: Vec<_> = read_buf.into_iter().map(|e| e.val.to_vec()).collect();
+    assert_eq!(events, es);
 }

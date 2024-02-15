@@ -60,7 +60,6 @@ impl FixVec<u8> {
         &mut self,
         event: &Event
     ) -> Result<(), FixVecOverflow> {
-        dbg!(event);
         let Event { id, val } = *event;
         let offset = self.len().into();
         let header_range = Header::range(offset);
@@ -73,8 +72,6 @@ impl FixVec<u8> {
         let header = Header { byte_len, id };
         let header = bytemuck::bytes_of(&header);
 
-        dbg!(&header_range);
-        dbg!(&val_range);
         self[header_range].copy_from_slice(header);
         self[val_range].copy_from_slice(val);
 
@@ -117,19 +114,14 @@ impl FixVec<u8> {
 
     pub fn read_event(&self, offset: unit::Byte) -> Option<Event<'_>> {
         let header_range = Header::range(offset);
-        dbg!(&header_range);
         let val_start = header_range.end;
         let header_bytes = &self.get(header_range)?;
         let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-        dbg!(id);
-        dbg!(byte_len);
         let val_end = val_start + byte_len;
         let val_range = val_start .. val_end;
-        dbg!(&val_range);
         //if val_start == val_end && val_end == self.len() { return None }
         let val = &self.get(val_range)?;
         let event = Event { id, val };
-        dbg!(&event);
         Some(event)
     }
 }
@@ -143,7 +135,6 @@ impl<'a> Iterator for BufIntoIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        dbg!(self.index);
         let result = self.event_buf.read_event(self.index)?;
         self.index += result.clone().on_disk_size();
         Some(result)
