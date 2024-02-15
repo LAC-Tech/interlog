@@ -145,7 +145,7 @@ impl<'a> Iterator for BufIntoIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         dbg!(self.index);
         let result = self.event_buf.read_event(self.index)?;
-        self.index += result.clone().on_disk_size().into();
+        self.index += result.clone().on_disk_size();
         Some(result)
     }
 }
@@ -168,7 +168,6 @@ mod tests {
     use core::ops::Deref;
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
-    use tempfile::TempDir;
 
     // TODO: too many allocations. Make a liffe vector implementation
     fn arb_byte_list(max: usize) -> impl Strategy<Value = Vec<Vec<u8>>> {

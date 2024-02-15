@@ -4,7 +4,7 @@ use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
 use crate::utils::{FixVec, FixVecOverflow, unit};
-use crate::{disk, event};
+use crate::disk;
 
 type O = OFlags;
 
@@ -48,7 +48,9 @@ impl KeyIndex {
         self.0.get(i).cloned().ok_or(ReadErr::KeyIndex)
     }
     
-    fn read_since(&self, pos: unit::Logical) -> impl Iterator<Item=unit::Byte> + '_ {
+    fn read_since(
+        &self, pos: unit::Logical
+    ) -> impl Iterator<Item=unit::Byte> + '_ {
         self.0.iter().skip(pos.into()).copied()
     }
 }
@@ -111,7 +113,7 @@ impl Local {
 
         for e in self.read_cache.into_iter() {
             self.key_index.push(byte_offset)?;
-            byte_offset += e.on_disk_size().into();
+            byte_offset += e.on_disk_size();
         }
 
         assert_eq!(byte_offset - self.log_len, bytes_written);
@@ -122,13 +124,15 @@ impl Local {
         Ok(())
 	}
     
-    pub fn read(
-        &mut self, client_buf: &mut FixVec<u8>, logical_pos: usize
-    ) -> Result<(), ReadErr> {
+    // TODO: assumes cache is 1:1 with disk
+    pub fn read<P>(
+        &mut self, client_buf: &mut FixVec<u8>, pos: P 
+    ) -> Result<(), ReadErr>
+    where P: Into<unit::Logical> {
         let events = self.key_index
-            .read_since(logical_pos.into())
+            .read_since(pos.into())
             .map(|byte_offset| self.read_cache.read_event(byte_offset))
-            .take_while(|e| e.is_some())
+            .fuse()
             .flatten();
 
         client_buf.append_events(events).map_err(ReadErr::ClientBuf)
@@ -158,11 +162,9 @@ mod tests {
             read_cache_capacity: 1024,
             write_cache_capacity: 1024
         };
-		let mut replica = Local::new(
-            tmp_dir.path(),
-            &mut rng,
-            config
-        ).expect("failed to open file");
+
+		let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
+            .expect("failed to open file");
 
 		replica.local_write(&es).expect("failed to write to replica");
 
