@@ -5,6 +5,7 @@ mod replica;
 mod replica_id;
 mod utils;
 
+    mod test_utils;
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
 
