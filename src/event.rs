@@ -171,7 +171,9 @@ mod tests {
 
     // TODO: too many allocations. Make a liffe vector implementation
     fn arb_byte_list(max: usize) -> impl Strategy<Value = Vec<Vec<u8>>> {
-        proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..=max), 0..=max)
+        proptest::collection::vec(
+            proptest::collection::vec(any::<u8>(), 0..=max),
+            0..=max)
     }
 
     proptest! {

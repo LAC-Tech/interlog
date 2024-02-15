@@ -4,7 +4,7 @@ use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
 use crate::utils::{FixVec, FixVecOverflow, unit};
-use crate::disk;
+use crate::{disk, event};
 
 type O = OFlags;
 
@@ -87,13 +87,22 @@ impl Local {
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache, key_index })
     }
     
+    /*
+    pub fn append_events<'a, I>(
+        &mut self,
+        events: I,
+    ) -> Result<(), FixVecOverflow>
+    where
+        I: IntoIterator<Item = Event<'a>>,
+    */
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write(&mut self, datums: &[&[u8]]) -> Result<(), WriteErr> {
+    pub fn local_write<'a, I>(&mut self, datums: I) -> Result<(), WriteErr>
+    where I: IntoIterator<Item = &'a[u8]> {
         self.write_cache.clear();
         let logical_start = self.key_index.len();
         
         self.write_cache
-            .append_local_events(logical_start, self.id, datums.iter().copied())
+            .append_local_events(logical_start, self.id, datums)
             .map_err(WriteErr::WriteCache)?;
         
         // persist
@@ -120,15 +129,13 @@ impl Local {
         
         self.log_len += byte_offset;
 
-
         Ok(())
 	}
     
     // TODO: assumes cache is 1:1 with disk
-    pub fn read<P>(
+    pub fn read<P: Into<unit::Logical>>(
         &mut self, client_buf: &mut FixVec<u8>, pos: P 
-    ) -> Result<(), ReadErr>
-    where P: Into<unit::Logical> {
+    ) -> Result<(), ReadErr> { 
         let events = self.key_index
             .read_since(pos.into())
             .map(|byte_offset| self.read_cache.read_event(byte_offset))
@@ -166,7 +173,7 @@ mod tests {
 		let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
             .expect("failed to open file");
 
-		replica.local_write(&es).expect("failed to write to replica");
+		replica.local_write(es).expect("failed to write to replica");
 
         let mut read_buf = FixVec::new(0x200);
 		replica.read(&mut read_buf, 0).expect("failed to read to file");
