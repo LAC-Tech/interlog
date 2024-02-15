@@ -91,7 +91,7 @@ impl Local {
         let logical_start = self.key_index.len();
         
         self.write_cache
-            .append_events(logical_start, self.id, datums.iter().copied())
+            .append_local_events(logical_start, self.id, datums.iter().copied())
             .map_err(WriteErr::WriteCache)?;
         
         // persist
@@ -125,14 +125,13 @@ impl Local {
     pub fn read(
         &mut self, client_buf: &mut FixVec<u8>, logical_pos: usize
     ) -> Result<(), ReadErr> {
-        let disk_positions = self.key_index.get(logical_pos.into())?;
-        // TODO: assumes the disk is 1:1 w/ read cache.
-        let event = self.read_cache.read_event(disk_pos)
-            .expect("TODO: handle not in read cache, by checking disk");
+        let events = self.key_index
+            .read_since(logical_pos.into())
+            .map(|byte_offset| self.read_cache.read_event(byte_offset))
+            .take_while(|e| e.is_some())
+            .flatten();
 
-
-
-        client_buf.append_event(&event).map_err(ReadErr::ClientBuf)
+        client_buf.append_events(events).map_err(ReadErr::ClientBuf)
     }
 }
 

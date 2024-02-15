@@ -82,7 +82,7 @@ impl FixVec<u8> {
         Ok(())
     }
 
-    pub fn append_events<'a, I>(
+    pub fn append_local_events<'a, I>(
         &mut self,
         start: unit::Logical,
         origin: ReplicaID,
@@ -95,6 +95,20 @@ impl FixVec<u8> {
             let pos = start + i.into();
             let id = ID { origin, pos };
             let e = Event {id, val};
+            self.append_event(&e)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn append_events<'a, I>(
+        &mut self,
+        events: I,
+    ) -> Result<(), FixVecOverflow>
+    where
+        I: IntoIterator<Item = Event<'a>>,
+    {
+        for e in events {
             self.append_event(&e)?;
         }
 
@@ -200,7 +214,7 @@ mod tests {
             assert!(buf.read_event(0.into()).is_none(), "should contain no event");
 
             let vals = es.iter().map(Deref::deref);
-            buf.append_events(0.into(), replica_id, vals)
+            buf.append_local_events(0.into(), replica_id, vals)
                 .expect("buf should have enough");
 
             // Post conditions
@@ -219,10 +233,10 @@ mod tests {
 
             let start: unit::Logical = 0.into();
 
-            buf1.append_events(start, replica_id, es1.iter().map(Deref::deref))
+            buf1.append_local_events(start, replica_id, es1.iter().map(Deref::deref))
                 .expect("buf should have enough");
 
-            buf2.append_events(start, replica_id, es2.iter().map(Deref::deref))
+            buf2.append_local_events(start, replica_id, es2.iter().map(Deref::deref))
                 .expect("buf should have enough");
 
             buf1.extend_from_slice(&buf2).expect("buf should have enough");
