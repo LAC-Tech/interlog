@@ -12,8 +12,8 @@ fn main() {
     let mut rng = rand::thread_rng();
     let config = Config {
         index_capacity: 16,
-        read_cache_capacity: 1024,
-        write_cache_capacity: 1024
+        read_cache_capacity: 1024.into(),
+        write_cache_capacity: 1024.into()
     };
 
     let mut replica = Local::new(tmp_dir.path(), &mut rng, config)

@@ -10,8 +10,8 @@ type O = OFlags;
 
 pub struct Config {
     pub index_capacity: usize,
-    pub read_cache_capacity: usize,
-    pub write_cache_capacity: usize
+    pub read_cache_capacity: unit::Byte,
+    pub write_cache_capacity: unit::Byte
 }
 
 #[derive(Debug)]
@@ -55,13 +55,35 @@ impl KeyIndex {
     }
 }
 
+struct ReadCache(FixVec<u8>);
+
+impl ReadCache {
+    fn new(capacity: unit::Byte) -> Self {
+       Self(FixVec::new(capacity.into())) 
+    }
+
+    fn update(&mut self, write_cache_bytes: &[u8]) -> Result<(), WriteErr> {
+        self.0
+            .extend_from_slice(write_cache_bytes)
+            .map_err(WriteErr::ReadCache)
+    }
+
+    fn read<B>(&self, byte_offsets: B) -> impl Iterator<Item = event::Event<'_>>
+    where B: Iterator<Item = unit::Byte> {
+        byte_offsets
+            .map(|byte_offset| self.0.read_event(byte_offset))
+            .fuse()
+            .flatten()
+    } 
+}
+
 pub struct Local {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: unit::Byte,
     write_cache: FixVec<u8>,
-    read_cache: FixVec<u8>,
+    read_cache: ReadCache,
     // The entire index in memory, like bitcask's KeyDir
     key_index: KeyIndex
 }
@@ -79,22 +101,14 @@ impl Local {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len: unit::Byte = 0.into();
-        let write_cache = FixVec::new(config.write_cache_capacity);
+        let write_cache = FixVec::new(config.write_cache_capacity.into());
         // TODO: circular buffer
-        let read_cache = FixVec::new(config.read_cache_capacity);
+        let read_cache = ReadCache::new(config.read_cache_capacity);
         let key_index = KeyIndex::new(config.index_capacity); 
 
 		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache, key_index })
     }
     
-    /*
-    pub fn append_events<'a, I>(
-        &mut self,
-        events: I,
-    ) -> Result<(), FixVecOverflow>
-    where
-        I: IntoIterator<Item = Event<'a>>,
-    */
     // Event local to the replica, that don't yet have an ID
     pub fn local_write<'a, I>(&mut self, datums: I) -> Result<(), WriteErr>
     where I: IntoIterator<Item = &'a[u8]> {
@@ -114,13 +128,11 @@ impl Local {
 
         // TODO: the below operations need to be made atomic w/ each other
 
-        // Updating caches
-        self.read_cache.extend_from_slice(&self.write_cache)
-            .map_err(WriteErr::ReadCache)?;
+        self.read_cache.update(&self.write_cache)?;
 
         let mut byte_offset = self.log_len;
 
-        for e in self.read_cache.into_iter() {
+        for e in self.read_cache.0.into_iter() {
             self.key_index.push(byte_offset)?;
             byte_offset += e.on_disk_size();
         }
@@ -136,12 +148,8 @@ impl Local {
     pub fn read<P: Into<unit::Logical>>(
         &mut self, client_buf: &mut FixVec<u8>, pos: P 
     ) -> Result<(), ReadErr> { 
-        let events = self.key_index
-            .read_since(pos.into())
-            .map(|byte_offset| self.read_cache.read_event(byte_offset))
-            .fuse()
-            .flatten();
-
+        let byte_offsets = self.key_index.read_since(pos.into());
+        let events = self.read_cache.read(byte_offsets);
         client_buf.append_events(events).map_err(ReadErr::ClientBuf)
     }
 }
@@ -163,8 +171,8 @@ mod tests {
             let mut rng = rand::thread_rng();
             let config = Config {
                 index_capacity: 16,
-                read_cache_capacity: 1024,
-                write_cache_capacity: 1024
+                read_cache_capacity: unit::Byte(1024),
+                write_cache_capacity: unit::Byte(1024)
             };
 
             let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
