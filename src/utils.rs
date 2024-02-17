@@ -101,9 +101,27 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 }
 
 pub struct CircBuf<T> {
-    buffer: FixVec<T>,
+    buffer: Box<[T]>,
     write_idx: usize,
     read_idx: usize
+}
+
+impl<T> CircBuf<T> {
+    fn capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    fn push(&mut self, item: T) {
+        if (self.write_idx + 1) % self.capacity() == self.read_idx {
+            // Buffer is full
+            self.buffer[0] = item;
+            self.write_idx = 1;
+            return;
+        }
+
+        self.buffer[self.write_idx] = item;
+        self.write_idx = (self.write_idx + 1) % self.capacity()
+    }
 }
 
 pub mod unit {
