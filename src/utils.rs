@@ -100,12 +100,6 @@ impl<T> std::ops::DerefMut for FixVec<T> {
     }
 }
 
-pub struct CircBuf<T> {
-    buffer: FixVec<T>,
-    write_idx: usize,
-    read_idx: usize
-}
-
 pub mod unit {
     use derive_more::*;
     use core::fmt;

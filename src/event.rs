@@ -1,15 +1,13 @@
 use crate::replica_id::ReplicaID;
 use crate::utils::{unit, FixVec, FixVecOverflow};
 
-// Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
-pub const MAX_SIZE: usize = 2048 * 1024;
 
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 pub struct ID {
     pub origin: ReplicaID,
-    pub pos: unit::Logical,
+    pub pos: unit::Logical
 }
 
 impl ID {
@@ -136,7 +134,7 @@ impl<'a> Iterator for BufIntoIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let result = self.event_buf.read_event(self.index)?;
-        self.index += result.clone().on_disk_size();
+        self.index += result.on_disk_size();
         Some(result)
     }
 }

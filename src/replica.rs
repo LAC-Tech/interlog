@@ -6,6 +6,9 @@ use crate::replica_id::ReplicaID;
 use crate::utils::{FixVec, FixVecOverflow, unit};
 use crate::{disk, event};
 
+// Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
+pub const MAX_SIZE: usize = 2048 * 1024;
+
 type O = OFlags;
 
 pub struct Config {
