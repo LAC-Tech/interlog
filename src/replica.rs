@@ -65,19 +65,14 @@ impl ReadCache {
        Self(FixVec::new(capacity.into())) 
     }
 
-    fn update(&mut self, write_cache_bytes: &[u8]) -> Result<(), WriteErr> {
-        self.0
-            .extend_from_slice(write_cache_bytes)
-            .map_err(WriteErr::ReadCache)
+    fn update(&mut self, write_cache: &[u8]) -> Result<(), WriteErr> {
+        self.0.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)
     }
 
-    fn read<B>(&self, byte_offsets: B) -> impl Iterator<Item = event::Event<'_>>
-    where B: Iterator<Item = unit::Byte> {
-        byte_offsets
-            .map(|byte_offset| self.0.read_event(byte_offset))
-            .fuse()
-            .flatten()
-    } 
+    fn read<O>(&self, offsets: O) -> impl Iterator<Item = event::Event<'_>>
+    where O: Iterator<Item = unit::Byte> {
+        offsets.map(|offset| self.0.read_event(offset)).fuse().flatten()
+    }
 }
 
 pub struct Local {
