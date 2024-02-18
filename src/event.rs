@@ -54,7 +54,7 @@ impl<'a> Event<'a> {
 /// - aligns events to 8 bytes
 impl FixVec<u8> {
     // TODO: make private, only public to debug test
-    pub fn append_event(
+    fn append_event(
         &mut self,
         event: &Event
     ) -> Result<(), FixVecOverflow> {
@@ -117,7 +117,6 @@ impl FixVec<u8> {
         let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
         let val_end = val_start + byte_len;
         let val_range = val_start .. val_end;
-        //if val_start == val_end && val_end == self.len() { return None }
         let val = &self.get(val_range)?;
         let event = Event { id, val };
         Some(event)

@@ -121,14 +121,14 @@ pub struct CircBuf<T> {
 }
 
 impl<T> CircBuf<T> {
-    fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         let buffer = uninit_boxed_slice(capacity);
         let len = 0;
         let write_idx = 0;
         Self { buffer, len, write_idx }
     }
 
-    fn push(&mut self, item: T) {
+    pub fn push(&mut self, item: T) {
         self.buffer[self.write_idx] = item;
         self.write_idx = (self.write_idx + 1) % self.buffer.len();
         if self.len != self.buffer.len() {
@@ -136,7 +136,7 @@ impl<T> CircBuf<T> {
         }
     }
 
-    fn get(&self, index: usize) -> Option<&T> {
+    pub fn get(&self, index: usize) -> Option<&T> {
         if self.len == 0 { return None }
         let index = (index + self.write_idx).wrapping_rem_euclid(self.len);
         (self.len > index).then(|| &self.buffer[index])
