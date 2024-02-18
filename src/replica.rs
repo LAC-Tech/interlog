@@ -158,6 +158,7 @@ mod tests {
     use core::ops::Deref;
     use tempfile::TempDir;
     use proptest::prelude::*;
+    use pretty_assertions::assert_eq;
     use crate::test_utils::*;
 
     proptest! {

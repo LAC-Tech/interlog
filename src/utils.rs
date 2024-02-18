@@ -1,10 +1,16 @@
 use std::slice::SliceIndex;
 
+fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
+    let mut result = Vec::with_capacity(size);
+    unsafe { result.set_len(size) };
+    result.into_boxed_slice()
+}
+
 /// Fixed Capacity Vector
 /// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
     elems: alloc::boxed::Box<[T]>,
-    len: usize
+    len: usize,
 }
 
 #[derive(Debug)]
@@ -14,11 +20,9 @@ pub type FixVecRes = Result<(), FixVecOverflow>;
 impl<T> FixVec<T> {
     #[allow(clippy::uninit_vec)]
     pub fn new(capacity: usize) -> FixVec<T> {
-        let mut elems = Vec::with_capacity(capacity);
-        unsafe { elems.set_len(capacity) };
-        let elems = elems.into_boxed_slice();
+        let elems = uninit_boxed_slice(capacity);
         assert_eq!(std::mem::size_of_val(&elems), 16);
-        Self {elems, len: 0}
+        Self { elems, len: 0 }
     }
 
     #[inline]
@@ -37,7 +41,9 @@ impl<T> FixVec<T> {
     }
 
     fn check_capacity(&self, new_len: usize) -> FixVecRes {
-        (self.capacity() >= new_len).then_some(()).ok_or(FixVecOverflow)
+        (self.capacity() >= new_len)
+            .then_some(())
+            .ok_or(FixVecOverflow)
     }
 
     pub fn push(&mut self, value: T) -> FixVecRes {
@@ -57,8 +63,16 @@ impl<T> FixVec<T> {
     }
 
     pub fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
-    where I: SliceIndex<[T]> {
+    where
+        I: SliceIndex<[T]>,
+    {
         self.elems[..self.len].get(index)
+    }
+
+    fn insert(&mut self, index: usize, element: T) -> FixVecRes {
+        self.check_capacity(index + 1)?;
+        self.elems[index] = element;
+        Ok(())
     }
 }
 
@@ -69,9 +83,9 @@ impl<T: Clone + core::fmt::Debug> FixVec<T> {
         if new_len > self.len {
             self.elems[self.len..new_len].fill(value);
         }
-        
+
         self.len = new_len;
-        
+
         Ok(())
     }
 }
@@ -102,31 +116,65 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 
 pub struct CircBuf<T> {
     buffer: Box<[T]>,
+    len: usize,
     write_idx: usize,
-    read_idx: usize
 }
 
 impl<T> CircBuf<T> {
-    fn capacity(&self) -> usize {
-        self.buffer.len()
+    fn new(capacity: usize) -> Self {
+        let buffer = uninit_boxed_slice(capacity);
+        let len = 0;
+        let write_idx = 0;
+        Self { buffer, len, write_idx }
     }
 
     fn push(&mut self, item: T) {
-        if (self.write_idx + 1) % self.capacity() == self.read_idx {
-            // Buffer is full
-            self.buffer[0] = item;
-            self.write_idx = 1;
-            return;
-        }
-
         self.buffer[self.write_idx] = item;
-        self.write_idx = (self.write_idx + 1) % self.capacity()
+        self.write_idx = (self.write_idx + 1) % self.buffer.len();
+        if self.len != self.buffer.len() {
+            self.len += 1;
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        if self.len == 0 { return None }
+        let index = (index + self.write_idx).wrapping_rem_euclid(self.len);
+        (self.len > index).then(|| &self.buffer[index])
+    }
+}
+
+impl<T> CircBuf<T> {
+    fn iter(&self) -> CircBufIterator<'_, T> {
+        CircBufIterator {
+            circ_buf: self,
+            index: 0,
+        }
+    }
+}
+
+struct CircBufIterator<'a, T> {
+    circ_buf: &'a CircBuf<T>,
+    index: usize,
+}
+
+impl<'a, T> Iterator for CircBufIterator<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // This check prevents going around the circle infinitely
+        if self.index < self.circ_buf.len {
+            let item = self.circ_buf.get(self.index)?;
+            self.index += 1;
+            Some(item)
+        } else {
+            None
+        }
     }
 }
 
 pub mod unit {
-    use derive_more::*;
     use core::fmt;
+    use derive_more::*;
 
     /// Represents a byte address, divisible by 8, where an Event starts
     #[repr(transparent)]
@@ -135,12 +183,12 @@ pub mod unit {
 
     impl Byte {
         pub fn align(self) -> Byte {
-            Self((self.0 + 7)  & !7)
+            Self((self.0 + 7) & !7)
         }
     }
 
     #[repr(transparent)]
-    #[derive(Add, AddAssign, Clone, Copy, From, Into)]
+    #[derive(Add, AddAssign, Clone, Copy, From, Into)] 
     #[derive(bytemuck::Pod, bytemuck::Zeroable)]
     pub struct Logical(pub usize);
 
@@ -154,5 +202,53 @@ pub mod unit {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "{:?}", self.0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use pretty_assertions::assert_eq;
+    use crate::test_utils::*;
+
+    #[test]
+    fn circ_buf() {
+       let mut cb = CircBuf::new(4);
+       
+       // Preconditions
+       assert_eq!(cb.iter().collect::<String>(), "");
+       assert_eq!(cb.write_idx, 0);
+       assert_eq!(cb.len, 0);
+
+       cb.push('s');
+       assert_eq!(cb.iter().copied().collect::<String>(), "s");
+       assert_eq!(cb.write_idx, 1);
+       assert_eq!(cb.len, 1);
+
+       cb.push('i');
+       assert_eq!(cb.iter().copied().collect::<String>(), "si");
+       assert_eq!(cb.write_idx, 2);
+       assert_eq!(cb.len, 2);
+
+       cb.push('l');
+       assert_eq!(cb.iter().collect::<String>(), "sil");
+       assert_eq!(cb.write_idx, 3);
+       assert_eq!(cb.len, 3);
+
+       cb.push('m');
+       assert_eq!(cb.iter().collect::<String>(), "silm");
+       assert_eq!(cb.write_idx, 0);
+       assert_eq!(cb.len, 4);
+
+       cb.push('a');
+       assert_eq!(cb.iter().collect::<String>(), "ilma");
+       assert_eq!(cb.write_idx, 1);
+       assert_eq!(cb.len, 4);
+
+       cb.push('r');
+       assert_eq!(cb.iter().collect::<String>(), "lmar");
+       assert_eq!(cb.write_idx, 2);
+       assert_eq!(cb.len, 4);
     }
 }
