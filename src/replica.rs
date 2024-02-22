@@ -163,7 +163,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn read_and_write_to_log(es in arb_byte_list(16)) {
+        fn rw_log(es in arb_byte_list(16)) {
             let tmp_dir = TempDir::with_prefix("interlog-")
                 .expect("failed to open temp file");
 

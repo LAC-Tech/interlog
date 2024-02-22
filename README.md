@@ -18,6 +18,7 @@ Planned Featurs (see [TODO file](TODO.md) for progress):
 
 ## Implementation
 
+- Allocate all memory at startup
 - Direct I/O append only file, with 'working index' that maps ID's to log offsets
 - Work at libc level (rustix), so you can follow man pages.
 - Assume linux, 64 bit, little endian - for now

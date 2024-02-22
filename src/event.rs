@@ -12,10 +12,7 @@ pub struct ID {
 
 impl ID {
     pub fn new<P: Into<unit::Logical>>(origin: ReplicaID, disk_pos: P) -> Self {
-        ID {
-            origin,
-            pos: disk_pos.into(),
-        }
+        ID { origin, pos: disk_pos.into() }
     }
 }
 
@@ -54,10 +51,7 @@ impl<'a> Event<'a> {
 /// - aligns events to 8 bytes
 impl FixVec<u8> {
     // TODO: make private, only public to debug test
-    fn append_event(
-        &mut self,
-        event: &Event
-    ) -> Result<(), FixVecOverflow> {
+    fn append_event(&mut self, event: &Event) -> Result<(), FixVecOverflow> {
         let Event { id, val } = *event;
         let offset = self.len().into();
         let header_range = Header::range(offset);
@@ -73,7 +67,6 @@ impl FixVec<u8> {
         self[header_range].copy_from_slice(header);
         self[val_range].copy_from_slice(val);
 
-
         Ok(())
     }
 
@@ -83,9 +76,7 @@ impl FixVec<u8> {
         origin: ReplicaID,
         vals: I,
     ) -> Result<(), FixVecOverflow>
-    where
-        I: IntoIterator<Item = &'a [u8]>,
-    {
+    where I: IntoIterator<Item = &'a [u8]> {
         for (i, val) in vals.into_iter().enumerate() {
             let pos = start + i.into();
             let id = ID { origin, pos };
@@ -100,9 +91,7 @@ impl FixVec<u8> {
         &mut self,
         events: I,
     ) -> Result<(), FixVecOverflow>
-    where
-        I: IntoIterator<Item = Event<'a>>,
-    {
+    where I: IntoIterator<Item = Event<'a>> {
         for e in events {
             self.append_event(&e)?;
         }
