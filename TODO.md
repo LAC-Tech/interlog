@@ -2,7 +2,11 @@
 
 - reconstruct LocalReplica from logfile
 - implement 'read cache miss', so events on disk can be larger than read cache
-- implement circular buffer for event read cache, with cache miss semantics 
+- re-write event::read in terms of gettable + index
+- impl index for circbuf, taking into account wrap around
+- make a trait for "gettable" collections, make sure FixVec and CircBuf impl it
+- make "event::read", "event::append_event" free-standing functions
+~~- implement circular buffer for event read cache, with cache miss semantics ~~
 ~~- make all example based tests, property tests~~
 ~~- test utils file~~
 ~~- FCVec should have runtime capacity value~~

@@ -71,7 +71,7 @@ impl ReadCache {
 
     fn read<O>(&self, offsets: O) -> impl Iterator<Item = event::Event<'_>>
     where O: Iterator<Item = unit::Byte> {
-        offsets.map(|offset| self.0.read_event(offset)).fuse().flatten()
+        offsets.map(|offset| event::read(&self.0, offset)).fuse().flatten()
     }
 }
 

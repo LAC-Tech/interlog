@@ -99,17 +99,18 @@ impl FixVec<u8> {
         Ok(())
     }
 
-    pub fn read_event(&self, offset: unit::Byte) -> Option<Event<'_>> {
-        let header_range = Header::range(offset);
-        let val_start = header_range.end;
-        let header_bytes = &self.get(header_range)?;
-        let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-        let val_end = val_start + byte_len;
-        let val_range = val_start .. val_end;
-        let val = &self.get(val_range)?;
-        let event = Event { id, val };
-        Some(event)
-    }
+}
+
+pub fn read<O: Into<unit::Byte>>(bytes: &[u8], offset: O) -> Option<Event<'_>> {
+    let header_range = Header::range(offset.into());
+    let val_start = header_range.end;
+    let header_bytes = bytes.get(header_range)?;
+    let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
+    let val_end = val_start + byte_len;
+    let val_range = val_start .. val_end;
+    let val = bytes.get(val_range)?;
+    let event = Event { id, val };
+    Some(event)
 }
 
 pub struct BufIntoIterator<'a> {
@@ -121,7 +122,7 @@ impl<'a> Iterator for BufIntoIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.event_buf.read_event(self.index)?;
+        let result = read(self.event_buf, self.index)?;
         self.index += result.on_disk_size();
         Some(result)
     }
@@ -168,8 +169,7 @@ mod tests {
 
             println!("\nREAD\n");
             // Post conditions
-            let actual = buf.read_event(0.into())
-                .expect("one event to be at 0");
+            let actual = read(&buf, 0).expect("one event to be at 0");
             assert_eq!(actual.val, &e);
         }
 
@@ -183,7 +183,7 @@ mod tests {
 
             // Pre conditions
             assert_eq!(buf.len(), 0, "buf should start empty");
-            assert!(buf.read_event(0.into()).is_none(), "should contain no event");
+            assert!(read(&buf, 0).is_none(), "should contain no event");
 
             let vals = es.iter().map(Deref::deref);
             buf.append_local_events(0.into(), replica_id, vals)
