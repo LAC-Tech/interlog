@@ -5,7 +5,7 @@
 - re-write event::read in terms of gettable + index
 - impl index for circbuf, taking into account wrap around
 - make a trait for "gettable" collections, make sure FixVec and CircBuf impl it
-- make "event::read", "event::append_event" free-standing functions
+~~- make "event::read" as free-standing function~~
 ~~- implement circular buffer for event read cache, with cache miss semantics ~~
 ~~- make all example based tests, property tests~~
 ~~- test utils file~~

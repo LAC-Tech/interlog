@@ -1,6 +1,5 @@
 use crate::replica_id::ReplicaID;
-use crate::utils::{unit, FixVec, FixVecOverflow};
-
+use crate::utils::{unit, Gettable, FixVec, FixVecOverflow, FixVecRes};
 
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
@@ -50,8 +49,7 @@ impl<'a> Event<'a> {
 /// - ends at the end of an event
 /// - aligns events to 8 bytes
 impl FixVec<u8> {
-    // TODO: make private, only public to debug test
-    fn append_event(&mut self, event: &Event) -> Result<(), FixVecOverflow> {
+    fn append_event(&mut self, event: &Event) -> FixVecRes {
         let Event { id, val } = *event;
         let offset = self.len().into();
         let header_range = Header::range(offset);
@@ -75,7 +73,7 @@ impl FixVec<u8> {
         start: unit::Logical,
         origin: ReplicaID,
         vals: I,
-    ) -> Result<(), FixVecOverflow>
+    ) -> FixVecRes
     where I: IntoIterator<Item = &'a [u8]> {
         for (i, val) in vals.into_iter().enumerate() {
             let pos = start + i.into();
@@ -101,7 +99,10 @@ impl FixVec<u8> {
 
 }
 
-pub fn read<O: Into<unit::Byte>>(bytes: &[u8], offset: O) -> Option<Event<'_>> {
+pub fn read<'a, B, O>(bytes: &'a B, offset: O) -> Option<Event<'a>>
+where 
+    B: Gettable<u8>,
+    O: Into<unit::Byte> {
     let header_range = Header::range(offset.into());
     let val_start = header_range.end;
     let header_bytes = bytes.get(header_range)?;

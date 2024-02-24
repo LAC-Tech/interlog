@@ -6,11 +6,17 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
     result.into_boxed_slice()
 }
 
+pub trait Gettable<T> {
+    fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
+    where
+        I: SliceIndex<[T]>;
+}
+
 /// Fixed Capacity Vector
 /// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
     elems: alloc::boxed::Box<[T]>,
-    len: usize,
+    len: usize
 }
 
 #[derive(Debug)]
@@ -41,9 +47,7 @@ impl<T> FixVec<T> {
     }
 
     fn check_capacity(&self, new_len: usize) -> FixVecRes {
-        (self.capacity() >= new_len)
-            .then_some(())
-            .ok_or(FixVecOverflow)
+        (self.capacity() >= new_len).then_some(()).ok_or(FixVecOverflow)
     }
 
     pub fn push(&mut self, value: T) -> FixVecRes {
@@ -60,13 +64,6 @@ impl<T> FixVec<T> {
         }
 
         Ok(())
-    }
-
-    pub fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
-    where
-        I: SliceIndex<[T]>,
-    {
-        self.elems[..self.len].get(index)
     }
 
     fn insert(&mut self, index: usize, element: T) -> FixVecRes {
@@ -111,6 +108,21 @@ impl<T> std::ops::Deref for FixVec<T> {
 impl<T> std::ops::DerefMut for FixVec<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.elems[..self.len]
+    }
+}
+
+
+struct Segment {
+    pos: usize,
+    len: usize
+}
+
+impl<T> Gettable<T> for FixVec<T> {
+    fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
+    where
+        I: SliceIndex<[T]>,
+    {
+        self.elems[..self.len].get(index)
     }
 }
 
