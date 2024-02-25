@@ -1,5 +1,5 @@
 use crate::replica_id::ReplicaID;
-use crate::utils::{unit, Gettable, FixVec, FixVecOverflow, FixVecRes};
+use crate::utils::{unit, Segmentable, FixVec, FixVecOverflow, FixVecRes, Segment};
 
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]
@@ -24,8 +24,9 @@ struct Header {
 
 impl Header {
     const SIZE: usize = std::mem::size_of::<Self>();
-    fn range(start: unit::Byte) -> core::ops::Range<usize> {
-        start.0..start.0 + Self::SIZE
+
+    fn range(start: unit::Byte) -> Segment {
+        Segment::new(start.0, Self::SIZE)
     }
 }
 
@@ -52,18 +53,17 @@ impl FixVec<u8> {
     fn append_event(&mut self, event: &Event) -> FixVecRes {
         let Event { id, val } = *event;
         let offset = self.len().into();
-        let header_range = Header::range(offset);
-        let val_start = header_range.end;
+        let header_segment = Header::range(offset);
         let byte_len = val.len();
-        let val_range = val_start..val_start + byte_len;
-        let new_len = unit::Byte(val_range.end).align();
+        let val_segment = header_segment.next(byte_len);
+        let new_len = unit::Byte(val_segment.end).align();
         self.resize(new_len.into(), 0)?;
 
         let header = Header { byte_len, id };
         let header = bytemuck::bytes_of(&header);
 
-        self[header_range].copy_from_slice(header);
-        self[val_range].copy_from_slice(val);
+        self[header_segment.range()].copy_from_slice(header);
+        self[val_segment.range()].copy_from_slice(val);
 
         Ok(())
     }
@@ -96,20 +96,17 @@ impl FixVec<u8> {
 
         Ok(())
     }
-
 }
 
 pub fn read<'a, B, O>(bytes: &'a B, offset: O) -> Option<Event<'a>>
 where 
-    B: Gettable<u8>,
+    B: Segmentable<u8>,
     O: Into<unit::Byte> {
-    let header_range = Header::range(offset.into());
-    let val_start = header_range.end;
-    let header_bytes = bytes.get(header_range)?;
+    let header_segment = Header::range(offset.into());
+    let header_bytes = bytes.segment(&header_segment)?;
     let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-    let val_end = val_start + byte_len;
-    let val_range = val_start .. val_end;
-    let val = bytes.get(val_range)?;
+    let val_segment = header_segment.next(byte_len);
+    let val = bytes.segment(&val_segment)?;
     let event = Event { id, val };
     Some(event)
 }

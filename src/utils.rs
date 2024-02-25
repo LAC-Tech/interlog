@@ -6,10 +6,8 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
     result.into_boxed_slice()
 }
 
-pub trait Gettable<T> {
-    fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
-    where
-        I: SliceIndex<[T]>;
+pub trait Segmentable<T> {
+    fn segment(&self, index: &Segment) -> Option<&[T]>;
 }
 
 /// Fixed Capacity Vector
@@ -71,6 +69,13 @@ impl<T> FixVec<T> {
         self.elems[index] = element;
         Ok(())
     }
+
+    fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
+    where
+        I: SliceIndex<[T]>,
+    {
+        self.elems[..self.len].get(index)
+    }
 }
 
 impl<T: Clone + core::fmt::Debug> FixVec<T> {
@@ -111,18 +116,29 @@ impl<T> std::ops::DerefMut for FixVec<T> {
     }
 }
 
-
-struct Segment {
-    pos: usize,
-    len: usize
+pub struct Segment {
+    pub pos: usize,
+    pub len: usize,
+    pub end: usize
 }
 
-impl<T> Gettable<T> for FixVec<T> {
-    fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
-    where
-        I: SliceIndex<[T]>,
-    {
-        self.elems[..self.len].get(index)
+impl Segment {
+    pub fn new(pos: usize, len: usize) -> Self {
+        Self { pos, len, end: pos + len }
+    }
+
+    pub fn next(&self, len: usize) -> Self {
+        Self::new(self.pos + self.len, len)
+    }
+
+    pub fn range(&self) -> core::ops::Range<usize> {
+        self.pos..self.end
+    }
+}
+
+impl<T> Segmentable<T> for FixVec<T> {
+    fn segment(&self, index: &Segment) -> Option<&[T]> {
+        self.elems[..self.len].get(index.range())
     }
 }
 

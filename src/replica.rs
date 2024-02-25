@@ -119,7 +119,7 @@ impl Local {
         
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_written =  disk::write(fd, &self.write_cache)
+        let bytes_written = disk::write(fd, &self.write_cache)
             .map_err(WriteErr::Disk)?;
 
         let bytes_written = bytes_written.align();
