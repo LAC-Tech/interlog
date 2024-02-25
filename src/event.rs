@@ -98,7 +98,7 @@ impl FixVec<u8> {
     }
 }
 
-pub fn read<'a, B, O>(bytes: &'a B, offset: O) -> Option<Event<'a>>
+pub fn read<B, O>(bytes: &B, offset: O) -> Option<Event<'_>>
 where 
     B: Segmentable<u8>,
     O: Into<unit::Byte> {
@@ -107,8 +107,7 @@ where
     let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
     let val_segment = header_segment.next(byte_len);
     let val = bytes.segment(&val_segment)?;
-    let event = Event { id, val };
-    Some(event)
+    Some(Event { id, val })
 }
 
 pub struct BufIntoIterator<'a> {

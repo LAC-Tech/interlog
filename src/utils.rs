@@ -2,6 +2,7 @@ use std::slice::SliceIndex;
 
 fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
     let mut result = Vec::with_capacity(size);
+    #[allow(clippy::uninit_vec)]
     unsafe { result.set_len(size) };
     result.into_boxed_slice()
 }
@@ -236,9 +237,7 @@ pub mod unit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
     use pretty_assertions::assert_eq;
-    use crate::test_utils::*;
 
     #[test]
     fn circ_buf() {
