@@ -7,6 +7,26 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
     result.into_boxed_slice()
 }
 
+pub struct Segment {
+    pub pos: usize,
+    pub len: usize,
+    pub end: usize
+}
+
+impl Segment {
+    pub fn new(pos: usize, len: usize) -> Self {
+        Self { pos, len, end: pos + len }
+    }
+
+    pub fn next(&self, len: usize) -> Self {
+        Self::new(self.pos + self.len, len)
+    }
+
+    pub fn range(&self) -> core::ops::Range<usize> {
+        self.pos..self.end
+    }
+}
+
 pub trait Segmentable<T> {
     fn segment(&self, index: &Segment) -> Option<&[T]>;
 }
@@ -117,26 +137,6 @@ impl<T> std::ops::DerefMut for FixVec<T> {
     }
 }
 
-pub struct Segment {
-    pub pos: usize,
-    pub len: usize,
-    pub end: usize
-}
-
-impl Segment {
-    pub fn new(pos: usize, len: usize) -> Self {
-        Self { pos, len, end: pos + len }
-    }
-
-    pub fn next(&self, len: usize) -> Self {
-        Self::new(self.pos + self.len, len)
-    }
-
-    pub fn range(&self) -> core::ops::Range<usize> {
-        self.pos..self.end
-    }
-}
-
 impl<T> Segmentable<T> for FixVec<T> {
     fn segment(&self, index: &Segment) -> Option<&[T]> {
         self.elems[..self.len].get(index.range())
@@ -159,16 +159,21 @@ impl<T> CircBuf<T> {
 
     pub fn push(&mut self, item: T) {
         self.buffer[self.write_idx] = item;
-        self.write_idx = (self.write_idx + 1) % self.buffer.len();
-        if self.len != self.buffer.len() {
-            self.len += 1;
-        }
+        let capacity = self.buffer.len();
+        self.write_idx = (self.write_idx + 1) % capacity;
+        self.len = core::cmp::min(self.len + 1, capacity);
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
         if self.len == 0 { return None }
         let index = (index + self.write_idx).wrapping_rem_euclid(self.len);
         (self.len > index).then(|| &self.buffer[index])
+    }
+}
+
+impl<T> Segmentable<T> for CircBuf<T> {
+    fn segment(&self, index: &Segment) -> Option<&[T]> {
+        None
     }
 }
 

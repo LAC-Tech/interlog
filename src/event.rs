@@ -33,7 +33,7 @@ impl Header {
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
     pub id: ID,
-    pub val: &'a [u8],
+    pub val: &'a [u8]
 }
 
 impl<'a> Event<'a> {
