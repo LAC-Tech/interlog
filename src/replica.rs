@@ -3,7 +3,7 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecOverflow, unit};
+use crate::utils::{FixVec, FixVecOverflow, Segment, unit};
 use crate::{disk, event};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
@@ -36,7 +36,7 @@ struct KeyIndex(FixVec<unit::Byte>);
 impl KeyIndex {
     fn new(capacity: usize) -> Self {
         Self(FixVec::new(capacity))
-    } 
+    }
     
     fn len(&self) -> unit::Logical {
         self.0.len().into()
@@ -58,15 +58,22 @@ impl KeyIndex {
     }
 }
 
-/// The read cache is based around a circular buffer.
-/// At any given point in time it will have two contiguous segments, populated
-/// with events.
+/// ReadCache is a fixed sized structure that caches the latest entries in the
+/// log (LIFO caching). The assumption is that things recently added are
+/// most likely to be read out again.
+///
+/// To do this I'm using a single circular buffer, with two "write pointers".
+/// At any given point in time the buffer will have two contiguous segments,
+/// populated with events.
+///
+/// The reason to keep the two segments contiguous is so they can be easily
+/// memcpy'd. So no event is split by the circular buffer.
 ///
 /// These are the Top Segment, and the Bottom Segment.
 /// 
-/// We start with a top segement. The bottom segement gets created when we 
-/// reach the end of the write buffer and need to wrap around, eating into the
-/// former top segment.
+/// We start with a top segment. The bottom segement gets created when we 
+/// reach the end of the circular buffer and need to wrap around, eating into
+/// the former top segment.
 /// 
 /// Example:
 ///
@@ -74,18 +81,33 @@ impl KeyIndex {
 /// | A | A | B | B | B |   | X | X | X | Y | Z | Z | Z | Z |   |   |
 /// └---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┘
 /// 
-/// The top segment contains events A and B
-/// While the bottom segment contains X, Y and Z
-/// As more events are added, they will be appended onto the end of B,
-/// overwriting the bottom segment, until it wraps around again.
+/// The top segment contains events A and B, while the bottom segment contains
+/// X, Y and Z
+/// As more events are added, they will be appended after B, overwriting the
+/// bottom segment, til it wraps round again.
 struct ReadCache {
-    buf: FixVec<u8>
+    buf: FixVec<u8>,
+    top: ReadCacheWritePtr,
+    bottom: Option<ReadCacheWritePtr>
+}
+
+struct ReadCacheWritePtr {
+    disk_offset: usize,
+    segment: Segment
+}
+
+impl ReadCacheWritePtr {
+    fn new() -> Self {
+        Self { disk_offset: 0, segment: Segment::new(0, 0) }
+    }
 }
 
 impl ReadCache {
     fn new(capacity: unit::Byte) -> Self {
        let buf = FixVec::new(capacity.into());
-       Self {buf}
+       let top = ReadCacheWritePtr::new();
+       let bottom = None;
+       Self {buf, top, bottom}
     }
 
     fn update(&mut self, write_cache: &[u8]) -> Result<(), WriteErr> {
