@@ -157,11 +157,20 @@ impl<T> CircBuf<T> {
         Self { buffer, len, write_idx }
     }
 
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    #[inline]
+    pub fn write_idx(&self) -> usize {
+        self.write_idx
+    }
+
     pub fn push(&mut self, item: T) {
         self.buffer[self.write_idx] = item;
-        let capacity = self.buffer.len();
-        self.write_idx = (self.write_idx + 1) % capacity;
-        self.len = core::cmp::min(self.len + 1, capacity);
+        self.write_idx = (self.write_idx + 1) % self.capacity();
+        self.len = core::cmp::min(self.len + 1, self.capacity());
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {

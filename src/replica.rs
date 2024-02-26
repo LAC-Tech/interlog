@@ -58,20 +58,43 @@ impl KeyIndex {
     }
 }
 
-struct ReadCache(FixVec<u8>);
+/// The read cache is based around a circular buffer.
+/// At any given point in time it will have two contiguous segments, populated
+/// with events.
+///
+/// These are the Top Segment, and the Bottom Segment.
+/// 
+/// We start with a top segement. The bottom segement gets created when we 
+/// reach the end of the write buffer and need to wrap around, eating into the
+/// former top segment.
+/// 
+/// Example:
+///
+/// ┌---┬---┬---┬---┬---┬---┬---┬---┬---┬---┐---┬---┐---┬---┬---┬---┐
+/// | A | A | B | B | B |   | X | X | X | Y | Z | Z | Z | Z |   |   |
+/// └---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┘
+/// 
+/// The top segment contains events A and B
+/// While the bottom segment contains X, Y and Z
+/// As more events are added, they will be appended onto the end of B,
+/// overwriting the bottom segment, until it wraps around again.
+struct ReadCache {
+    buf: FixVec<u8>
+}
 
 impl ReadCache {
     fn new(capacity: unit::Byte) -> Self {
-       Self(FixVec::new(capacity.into())) 
+       let buf = FixVec::new(capacity.into());
+       Self {buf}
     }
 
     fn update(&mut self, write_cache: &[u8]) -> Result<(), WriteErr> {
-        self.0.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)
+        self.buf.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)
     }
 
     fn read<O>(&self, offsets: O) -> impl Iterator<Item = event::Event<'_>>
     where O: Iterator<Item = unit::Byte> {
-        offsets.map(|offset| event::read(&self.0, offset)).fuse().flatten()
+        offsets.map(|offset| event::read(&self.buf, offset)).fuse().flatten()
     }
 }
 
@@ -130,7 +153,7 @@ impl Local {
 
         let mut byte_offset = self.log_len;
 
-        for e in self.read_cache.0.into_iter() {
+        for e in self.read_cache.buf.into_iter() {
             self.key_index.push(byte_offset)?;
             byte_offset += e.on_disk_size();
         }
