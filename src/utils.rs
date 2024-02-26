@@ -143,6 +143,9 @@ impl<T> Segmentable<T> for FixVec<T> {
     }
 }
 
+#[derive(Debug)]
+pub struct CircBufWrapAround;
+
 pub struct CircBuf<T> {
     buffer: Box<[T]>,
     len: usize,
@@ -177,6 +180,22 @@ impl<T> CircBuf<T> {
         if self.len == 0 { return None }
         let index = (index + self.write_idx).wrapping_rem_euclid(self.len);
         (self.len > index).then(|| &self.buffer[index])
+    }
+}
+
+impl<T: Copy> CircBuf<T> {
+    // Will fail if it causes a wrap around
+    // slice should remain contiguous in memory
+    pub fn extend_from_slice(
+        &mut self, 
+        slice: &[T]
+    ) -> Result<(), CircBufWrapAround> {
+        let contiguous_space_left = self.capacity() - self.write_idx;
+        if contiguous_space_left > slice.len() {
+           self.buffer[..self.len].copy_from_slice(slice) ;
+        }
+
+        Err(CircBufWrapAround)
     }
 }
 

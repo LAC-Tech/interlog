@@ -3,7 +3,7 @@ use fs::OFlags;
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
 use crate::replica_id::ReplicaID;
-use crate::utils::{FixVec, FixVecOverflow, Segment, unit};
+use crate::utils::{CircBuf, CircBufWrapAround, FixVec, FixVecOverflow, Segment, unit};
 use crate::{disk, event};
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
@@ -20,7 +20,7 @@ pub struct Config {
 #[derive(Debug)]
 pub enum WriteErr {
     Disk(disk::Err),
-    ReadCache(FixVecOverflow),
+    ReadCache(CircBufWrapAround),
     WriteCache(FixVecOverflow),
     KeyIndex(FixVecOverflow)
 }
@@ -86,7 +86,7 @@ impl KeyIndex {
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
 struct ReadCache {
-    buf: FixVec<u8>,
+    buf: CircBuf<u8>,
     top: ReadCacheWritePtr,
     bottom: Option<ReadCacheWritePtr>
 }
@@ -104,7 +104,7 @@ impl ReadCacheWritePtr {
 
 impl ReadCache {
     fn new(capacity: unit::Byte) -> Self {
-       let buf = FixVec::new(capacity.into());
+       let buf = CircBuf::new(capacity.into());
        let top = ReadCacheWritePtr::new();
        let bottom = None;
        Self {buf, top, bottom}
@@ -175,6 +175,7 @@ impl Local {
 
         let mut byte_offset = self.log_len;
 
+        // TODO: event iterator implemented DIRECTLY on the read cache
         for e in self.read_cache.buf.into_iter() {
             self.key_index.push(byte_offset)?;
             byte_offset += e.on_disk_size();
