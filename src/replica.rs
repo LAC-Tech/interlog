@@ -114,9 +114,9 @@ impl ReadCache {
         self.buf.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)
     }
 
-    fn read<O>(&self, offsets: O) -> impl Iterator<Item = event::Event<'_>>
+    fn read<O>(&self, disk_offsets: O) -> impl Iterator<Item = event::Event<'_>>
     where O: Iterator<Item = unit::Byte> {
-        offsets.map(|offset| event::read(&self.buf, offset)).fuse().flatten()
+        disk_offsets.map(|offset| event::read(&self.buf, offset)).fuse().flatten()
     }
 }
 
