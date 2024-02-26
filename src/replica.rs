@@ -69,7 +69,7 @@ impl KeyIndex {
 /// The reason to keep the two segments contiguous is so they can be easily
 /// memcpy'd. So no event is split by the circular buffer.
 ///
-/// These are the Top Segment, and the Bottom Segment.
+/// There is a Top Segment, and a Bottom Segment.
 /// 
 /// We start with a top segment. The bottom segement gets created when we 
 /// reach the end of the circular buffer and need to wrap around, eating into
@@ -77,7 +77,7 @@ impl KeyIndex {
 /// 
 /// Example:
 ///
-/// ┌---┬---┬---┬---┬---┬---┬---┬---┬---┬---┐---┬---┐---┬---┬---┬---┐
+/// ┌---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┐
 /// | A | A | B | B | B |   | X | X | X | Y | Z | Z | Z | Z |   |   |
 /// └---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┘
 /// 
@@ -85,6 +85,7 @@ impl KeyIndex {
 /// X, Y and Z
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
+
 struct ReadCache {
     buf: CircBuf<u8>,
     top: ReadCacheWritePtr,
