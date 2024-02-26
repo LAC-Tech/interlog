@@ -93,13 +93,13 @@ struct ReadCache {
 }
 
 struct ReadCacheWritePtr {
-    disk_offset: usize,
+    disk_offset: unit::Byte,
     segment: Segment
 }
 
 impl ReadCacheWritePtr {
     fn new() -> Self {
-        Self { disk_offset: 0, segment: Segment::new(0, 0) }
+        Self { disk_offset: 0.into(), segment: Segment::new(0, 0) }
     }
 }
 
