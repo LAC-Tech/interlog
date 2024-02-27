@@ -5,7 +5,7 @@ mod replica;
 mod replica_id;
 mod utils;
 
-    mod test_utils;
+mod test_utils;
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
 
@@ -17,5 +17,5 @@ compile_error!("code assumes little-endian");
 
 pub use replica::*;
 pub use replica_id::*;
-pub use utils::FixVec;
+pub use utils::{FixVec, unit};
 pub use event::*;

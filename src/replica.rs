@@ -113,13 +113,19 @@ impl<'a> ReadCache<'a> {
     fn update(&mut self, write_cache: &[u8]) -> Result<(), WriteErr> {
         // TODO: if this overflows start from the start of the buffer
         // if it overflows twice, bail
-        self.buf.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)
+        
+        self.buf.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)?;
+        self.top.disk_offset += write_cache.len().into();
+        Ok(())
     }
 
     // TODO: read first contiguous slice, then the next one
     fn read<O>(&self, disk_offsets: O) -> impl Iterator<Item = event::Event<'_>>
     where O: Iterator<Item = unit::Byte> {
-        disk_offsets.map(|offset| event::read(&self.buf, offset)).fuse().flatten()
+        disk_offsets
+            .map(|offset| event::read(&self.buf, offset - self.top.disk_offset))
+            .fuse()
+            .flatten()
     }
 }
 
@@ -202,6 +208,7 @@ impl<'a> Local<'a> {
         &mut self, client_buf: &mut FixVec<u8>, pos: P 
     ) -> Result<(), ReadErr> { 
         let byte_offsets = self.key_index.read_since(pos.into());
+        dbg!(byte_offsets);
         let events = self.read_cache.read(byte_offsets);
         client_buf.append_events(events).map_err(ReadErr::ClientBuf)
     }
