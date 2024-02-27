@@ -13,7 +13,7 @@ fn main() {
     let config = Config {
         index_capacity: 16,
         read_cache_capacity: 1024.into(),
-        write_cache_capacity: 1024.into()
+        txn_write_buf_capacity: 1024.into()
     };
 
     let mut replica = Local::new(tmp_dir.path(), &mut rng, config)

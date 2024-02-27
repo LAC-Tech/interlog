@@ -14,13 +14,13 @@ type O = OFlags;
 pub struct Config {
     pub index_capacity: usize,
     pub read_cache_capacity: unit::Byte,
-    pub write_cache_capacity: unit::Byte
+    pub txn_write_buf_capacity: unit::Byte
 }
 
 #[derive(Debug)]
 pub enum WriteErr {
     Disk(disk::Err),
-    ReadCache(CircBufWrapAround),
+    ReadCache(FixVecOverflow),
     WriteCache(FixVecOverflow),
     KeyIndex(FixVecOverflow)
 }
@@ -86,57 +86,64 @@ impl KeyIndex {
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
 
-struct ReadCache {
-    buf: CircBuf<u8>,
-    top: ReadCacheWritePtr,
-    bottom: Option<ReadCacheWritePtr>
+struct ReadCache<'a> {
+    buf: FixVec<u8>,
+    top: ReadCacheWritePtr<'a>,
+    bottom: Option<ReadCacheWritePtr<'a>>
 }
 
-struct ReadCacheWritePtr {
+struct ReadCacheWritePtr<'a> {
     disk_offset: unit::Byte,
-    segment: Segment
+    slice: &'a [u8]
 }
 
-impl ReadCacheWritePtr {
-    fn new() -> Self {
-        Self { disk_offset: 0.into(), segment: Segment::new(0, 0) }
-    }
-}
-
-impl ReadCache {
+impl<'a> ReadCache<'a> {
     fn new(capacity: unit::Byte) -> Self {
-       let buf = CircBuf::new(capacity.into());
-       let top = ReadCacheWritePtr::new();
+       let buf = FixVec::new(capacity.into());
+       let top = ReadCacheWritePtr { disk_offset: 0.into(), slice: &[]};
        let bottom = None;
        Self {buf, top, bottom}
     }
 
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.buf.capacity()
+    }
+
     fn update(&mut self, write_cache: &[u8]) -> Result<(), WriteErr> {
+        // TODO: if this overflows start from the start of the buffer
+        // if it overflows twice, bail
         self.buf.extend_from_slice(write_cache).map_err(WriteErr::ReadCache)
     }
 
+    // TODO: read first contiguous slice, then the next one
     fn read<O>(&self, disk_offsets: O) -> impl Iterator<Item = event::Event<'_>>
     where O: Iterator<Item = unit::Byte> {
         disk_offsets.map(|offset| event::read(&self.buf, offset)).fuse().flatten()
     }
 }
 
-pub struct Local {
+pub struct Local<'a> {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: unit::Byte,
-    write_cache: FixVec<u8>,
-    read_cache: ReadCache,
+    txn_write_buf: FixVec<u8>,
+    read_cache: ReadCache<'a>,
     // The entire index in memory, like bitcask's KeyDir
     key_index: KeyIndex
 }
 
 // TODO: store data larger than read cache
-impl Local {
+impl<'a> Local<'a> {
     pub fn new<R: Rng>(
         dir_path: &std::path::Path, rng: &mut R, config: Config
     ) -> io::Result<Self> {
+        assert!(
+            config.read_cache_capacity >= config.txn_write_buf_capacity,
+            "this would wrap around twice"
+        );
+
         let id = ReplicaID::new(rng);
 
         let path = dir_path.join(id.to_string());
@@ -145,38 +152,39 @@ impl Local {
 		let log_fd = fs::open(&path, flags, mode)?;
 
 		let log_len: unit::Byte = 0.into();
-        let write_cache = FixVec::new(config.write_cache_capacity.into());
-        // TODO: circular buffer
+        let txn_write_buf = FixVec::new(config.txn_write_buf_capacity.into());
         let read_cache = ReadCache::new(config.read_cache_capacity);
-        let key_index = KeyIndex::new(config.index_capacity); 
+        let key_index = KeyIndex::new(config.index_capacity);
 
-		Ok(Self { id, path, log_fd, log_len, write_cache, read_cache, key_index })
+        Ok(Self { id, path, log_fd, log_len, txn_write_buf, read_cache, key_index })
     }
     
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write<'a, I>(&mut self, datums: I) -> Result<(), WriteErr>
-    where I: IntoIterator<Item = &'a[u8]> {
-        self.write_cache.clear();
+    pub fn local_write<'b, I>(&mut self, datums: I) -> Result<(), WriteErr>
+    where I: IntoIterator<Item = &'b[u8]> {
+        self.txn_write_buf.clear();
         let logical_start = self.key_index.len();
         
-        self.write_cache
+        // This only exists so I can make one atomic syscall to write to disk
+        self.txn_write_buf
             .append_local_events(logical_start, self.id, datums)
             .map_err(WriteErr::WriteCache)?;
         
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_written = disk::write(fd, &self.write_cache)
+        let bytes_written = disk::write(fd, &self.txn_write_buf)
             .map_err(WriteErr::Disk)?;
 
         let bytes_written = bytes_written.align();
 
         // TODO: the below operations need to be made atomic w/ each other
 
-        self.read_cache.update(&self.write_cache)?;
+        self.read_cache.update(&self.txn_write_buf)?;
 
         let mut byte_offset = self.log_len;
 
         // TODO: event iterator implemented DIRECTLY on the read cache
+        // TODO: THIS ASSUMES THE READ CACHE STARTED EMPTY
         for e in self.read_cache.buf.into_iter() {
             self.key_index.push(byte_offset)?;
             byte_offset += e.on_disk_size();
@@ -218,7 +226,7 @@ mod tests {
             let config = Config {
                 index_capacity: 16,
                 read_cache_capacity: unit::Byte(1024),
-                write_cache_capacity: unit::Byte(1024)
+                txn_write_buf_capacity: unit::Byte(1024)
             };
 
             let mut replica = Local::new(tmp_dir.path(), &mut rng, config)

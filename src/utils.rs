@@ -51,7 +51,7 @@ impl<T> FixVec<T> {
     }
 
     #[inline]
-    fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.elems.len()
     }
 
@@ -186,13 +186,14 @@ impl<T> CircBuf<T> {
 impl<T: Copy> CircBuf<T> {
     // Will fail if it causes a wrap around
     // slice should remain contiguous in memory
+    // TODO: this should just start writing from the beginning if it wraps around?
     pub fn extend_from_slice(
         &mut self, 
         slice: &[T]
     ) -> Result<(), CircBufWrapAround> {
         let contiguous_space_left = self.capacity() - self.write_idx;
         if contiguous_space_left > slice.len() {
-           self.buffer[..self.len].copy_from_slice(slice) ;
+           self.buffer[..self.len].copy_from_slice(slice);
         }
 
         Err(CircBufWrapAround)
@@ -240,7 +241,7 @@ pub mod unit {
 
     /// Represents a byte address, divisible by 8, where an Event starts
     #[repr(transparent)]
-    #[derive(Add, AddAssign, Clone, Copy, Debug, From, Into, PartialEq, Sub)]
+    #[derive(Add, AddAssign, Clone, Copy, Debug, From, Into, PartialEq, PartialOrd, Sub)]
     pub struct Byte(pub usize);
 
     impl Byte {
