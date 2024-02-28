@@ -2,7 +2,7 @@ use fs::OFlags;
 
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::utils::{CircBuf, CircBufWrapAround, FixVec, FixVecOverflow, Segment};
+use crate::util::{CircBuf, CircBufWrapAround, FixVec, FixVecOverflow, Segment};
 use crate::{disk, event};
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};
@@ -15,7 +15,6 @@ type O = OFlags;
 pub struct Config {
     pub index_capacity: usize,
     pub read_cache_capacity: unit::Byte,
-    pub txn_write_buf_capacity: unit::Byte,
 }
 
 #[derive(Debug)]
@@ -139,12 +138,38 @@ impl ReadCache {
     }
 }
 
+mod client {
+    use crate::unit;
+    use crate::util::FixVec;
+
+    pub struct Config {
+        pub txn_write_buf_capacity: unit::Byte,
+        pub read_buf_capacity: unit::Byte,
+    }
+
+    // TODO: encapsulate this properly, maybe "local_write" should be here.
+    pub struct Client {
+        pub txn_write_buf: FixVec<u8>,
+        pub read_buf: FixVec<u8>
+    }
+
+    impl Client {
+        pub fn new(config: &Config) -> Self {
+            Self {
+                txn_write_buf: FixVec::new(config.txn_write_buf_capacity.into()),
+                read_buf: FixVec::new(config.read_buf_capacity.into())
+            }
+        }
+    }
+}
+
+// ASSUMPTIONS:
+// single writer, multiple readers
 pub struct Local {
     pub id: ReplicaID,
     pub path: std::path::PathBuf,
     log_fd: fd::OwnedFd,
     log_len: unit::Byte,
-    txn_write_buf: FixVec<u8>,
     read_cache: ReadCache,
     // The entire index in memory, like bitcask's KeyDir
     key_index: KeyIndex,
@@ -157,11 +182,6 @@ impl Local {
         rng: &mut R,
         config: Config,
     ) -> io::Result<Self> {
-        assert!(
-            config.read_cache_capacity >= config.txn_write_buf_capacity,
-            "this would wrap around twice"
-        );
-
         let id = ReplicaID::new(rng);
 
         let path = dir_path.join(id.to_string());
@@ -170,7 +190,6 @@ impl Local {
         let log_fd = fs::open(&path, flags, mode)?;
 
         let log_len: unit::Byte = 0.into();
-        let txn_write_buf = FixVec::new(config.txn_write_buf_capacity.into());
         let read_cache = ReadCache::new(config.read_cache_capacity);
         let key_index = KeyIndex::new(config.index_capacity);
 
@@ -179,32 +198,35 @@ impl Local {
             path,
             log_fd,
             log_len,
-            txn_write_buf,
             read_cache,
             key_index,
         })
     }
 
     // Event local to the replica, that don't yet have an ID
-    pub fn local_write<'b, I>(&mut self, datums: I) -> Result<(), WriteErr>
+    pub fn local_write<'b, I>(
+        &mut self, 
+        client: &mut client::Client,
+        datums: I
+    ) -> Result<(), WriteErr>
     where
         I: IntoIterator<Item = &'b [u8]>,
     {
-        self.txn_write_buf.clear();
+        client.txn_write_buf.clear();
 
         // This only exists so I can make one atomic syscall to write to disk
-        self.txn_write_buf
+        client.txn_write_buf
             .append_local_events(self.key_index.len(), self.id, datums)
             .map_err(WriteErr::WriteCache)?;
 
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_flushed = disk::write(fd, &self.txn_write_buf)
+        let bytes_flushed = disk::write(fd, &client.txn_write_buf)
             .map(unit::Byte::align)
             .map_err(WriteErr::Disk)?;
 
         // TODO: the below operations need to be made atomic w/ each other
-        self.read_cache.update(&self.txn_write_buf)?;
+        self.read_cache.update(&client.txn_write_buf)?;
         let mut byte_offset = self.log_len;
 
         // TODO: event iterator implemented DIRECTLY on the read cache
@@ -227,12 +249,12 @@ impl Local {
     // TODO: assumes cache is 1:1 with disk
     pub fn read<P: Into<unit::Logical>>(
         &mut self,
-        client_buf: &mut FixVec<u8>,
+        client: &mut client::Client,
         pos: P,
     ) -> Result<(), ReadErr> {
         let byte_offsets = self.key_index.read_since(pos.into());
         let events = self.read_cache.read(byte_offsets);
-        client_buf.append_events(events).map_err(ReadErr::ClientBuf)
+        client.read_buf.append_events(events).map_err(ReadErr::ClientBuf)
     }
 }
 
@@ -256,22 +278,26 @@ mod tests {
             let config = Config {
                 index_capacity: 128,
                 read_cache_capacity: unit::Byte(1024),
-                txn_write_buf_capacity: unit::Byte(1024)
             };
 
             let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
                 .expect("failed to open file");
 
+            let mut client = client::Client::new(&client::Config {
+                txn_write_buf_capacity: unit::Byte(0x400),
+                read_buf_capacity: unit::Byte(0x400)
+            });
+
             for es in ess {
                 let vals = es.iter().map(Deref::deref);
-                replica.local_write(vals)
+                replica.local_write(&mut client, vals)
                     .expect("failed to write to replica");
 
-                let mut read_buf = FixVec::new(0x400);
-                replica.read(&mut read_buf, 0).expect("failed to read to file");
+                replica.read(&mut client, 0).expect("failed to read to file");
 
-                let events: Vec<_> =
-                    read_buf.into_iter().map(|e| e.val.to_vec()).collect();
+                let events: Vec<_> = client.read_buf.into_iter()
+                    .map(|e| e.val.to_vec())
+                    .collect();
 
                 assert_eq!(events, es);
             }

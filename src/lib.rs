@@ -6,7 +6,7 @@ mod test_utils;
 pub mod event;
 pub mod replica;
 pub mod replica_id;
-pub mod utils;
+pub mod util;
 pub mod unit;
 
 #[cfg(not(target_pointer_width = "64"))]
