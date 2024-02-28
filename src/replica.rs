@@ -52,7 +52,10 @@ impl KeyIndex {
         self.0.get(i).cloned().ok_or(ReadErr::KeyIndex)
     }
 
-    fn read_since(&self, pos: unit::Logical) -> impl Iterator<Item = unit::Byte> + '_ {
+    fn read_since(
+        &self, 
+        pos: unit::Logical
+    ) -> impl Iterator<Item = unit::Byte> + '_ {
         self.0.iter().skip(pos.into()).copied()
     }
 }
@@ -88,7 +91,7 @@ impl KeyIndex {
 struct ReadCache {
     buf: FixVec<u8>,
     head: ReadCacheWritePtr,
-    tail: Option<ReadCacheWritePtr>,
+    tail: Option<ReadCacheWritePtr>
 }
 
 struct ReadCacheWritePtr {
@@ -129,7 +132,6 @@ impl ReadCache {
     where
         O: Iterator<Item = unit::Byte>,
     {
-        dbg!(self.head.disk_offset);
         disk_offsets
             .map(|offset| event::read(&self.buf, offset - self.head.disk_offset))
             .fuse()
@@ -189,19 +191,17 @@ impl Local {
         I: IntoIterator<Item = &'b [u8]>,
     {
         self.txn_write_buf.clear();
-        let logical_start = self.key_index.len();
 
         // This only exists so I can make one atomic syscall to write to disk
         self.txn_write_buf
-            .append_local_events(logical_start, self.id, datums)
+            .append_local_events(self.key_index.len(), self.id, datums)
             .map_err(WriteErr::WriteCache)?;
 
         // persist
         let fd = self.log_fd.as_fd();
-        let bytes_written = disk::write(fd, &self.txn_write_buf)
+        let bytes_flushed = disk::write(fd, &self.txn_write_buf)
+            .map(unit::Byte::align)
             .map_err(WriteErr::Disk)?;
-
-        let bytes_written = bytes_written.align();
 
         // TODO: the below operations need to be made atomic w/ each other
         self.read_cache.update(&self.txn_write_buf)?;
@@ -216,8 +216,8 @@ impl Local {
 
         dbg!(byte_offset);
         dbg!(self.log_len);
-        dbg!(bytes_written);
-        assert_eq!(byte_offset - self.log_len, bytes_written);
+        dbg!(bytes_flushed);
+        assert_eq!(byte_offset - self.log_len, bytes_flushed);
 
         self.log_len += byte_offset;
 
