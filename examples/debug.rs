@@ -12,8 +12,8 @@ fn main() {
     let mut rng = rand::thread_rng();
     let config = Config {
         index_capacity: 16,
-        read_cache_capacity: unit::Byte(256),
-        txn_write_buf_capacity: unit::Byte(256)
+        read_cache_capacity: interlog::unit::Byte(256),
+        txn_write_buf_capacity: interlog::unit::Byte(256)
     };
 
     let mut replica = Local::new(tmp_dir.path(), &mut rng, config)

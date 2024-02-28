@@ -1,7 +1,8 @@
 use fs::OFlags;
 
 use crate::replica_id::ReplicaID;
-use crate::utils::{unit, CircBuf, CircBufWrapAround, FixVec, FixVecOverflow, Segment};
+use crate::unit;
+use crate::utils::{CircBuf, CircBufWrapAround, FixVec, FixVecOverflow, Segment};
 use crate::{disk, event};
 use rand::prelude::*;
 use rustix::{fd, fd::AsFd, fs, io};

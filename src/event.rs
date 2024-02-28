@@ -1,5 +1,6 @@
 use crate::replica_id::ReplicaID;
-use crate::utils::{unit, Segmentable, FixVec, FixVecOverflow, FixVecRes, Segment};
+use crate::utils::{Segmentable, FixVec, FixVecOverflow, FixVecRes, Segment};
+use crate::unit;
 
 // TODO: do I need to construct this oustide of this module?
 #[repr(C)]

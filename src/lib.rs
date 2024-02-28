@@ -3,6 +3,7 @@ mod disk;
 mod event;
 mod replica;
 mod replica_id;
+pub mod unit;
 mod utils;
 
 mod test_utils;
@@ -17,5 +18,5 @@ compile_error!("code assumes little-endian");
 
 pub use replica::*;
 pub use replica_id::*;
-pub use utils::{FixVec, unit};
+pub use utils::FixVec;
 pub use event::*;
