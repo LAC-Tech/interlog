@@ -171,7 +171,7 @@ mod tests {
         }
 
         #[test]
-        fn rw_many_events(es in arb_byte_list(16)) {
+        fn rw_many_events(es in arb_local_events(16, 16)) {
             // Setup
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);
@@ -192,7 +192,10 @@ mod tests {
         }
 
         #[test]
-        fn combine_buffers(es1 in arb_byte_list(16), es2 in arb_byte_list(16)) {
+        fn combine_buffers(
+            es1 in arb_local_events(16, 16), 
+            es2 in arb_local_events(16, 16)
+        ) {
             // Setup
             let mut rng = rand::thread_rng();
             let replica_id = ReplicaID::new(&mut rng);

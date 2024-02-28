@@ -241,12 +241,24 @@ pub mod unit {
 
     /// Represents a byte address, divisible by 8, where an Event starts
     #[repr(transparent)]
-    #[derive(Add, AddAssign, Clone, Copy, Debug, From, Into, PartialEq, PartialOrd, Sub)]
+    #[derive(Add, AddAssign, Clone, Copy, From, Into, PartialEq, PartialOrd, Sub)]
     pub struct Byte(pub usize);
 
     impl Byte {
         pub fn align(self) -> Byte {
             Self((self.0 + 7) & !7)
+        }
+    }
+
+    impl fmt::Display for Byte {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "{} <byte>", self.0)
+        }
+    }
+
+    impl fmt::Debug for Byte {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{:?}", self.0)
         }
     }
 
@@ -257,7 +269,7 @@ pub mod unit {
 
     impl fmt::Display for Logical {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Logical({})", self.0)
+            write!(f, "{} <logical>", self.0)
         }
     }
 
