@@ -1,3 +1,4 @@
+//! Useful random generators.
 #[cfg(test)]
 use proptest::prelude::*;
 

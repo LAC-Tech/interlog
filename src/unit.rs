@@ -1,7 +1,8 @@
+//! "Domain integers" - an attempt to bring something like F#s unit of measure.
 use core::fmt;
 use derive_more::*;
 
-/// Represents a byte address, divisible by 8, where an Event starts
+/// Represents a byte address, divisible by 8, where an Event starts.
 #[repr(transparent)]
 #[derive(
 	Add, AddAssign, Clone, Copy, From, Into, PartialEq, PartialOrd, Sub,
@@ -26,6 +27,7 @@ impl fmt::Debug for Byte {
 	}
 }
 
+/// The sequence number or position on the log of an event.
 #[repr(transparent)]
 #[derive(
 	Add, AddAssign, Clone, Copy, From, Into, bytemuck::Pod, bytemuck::Zeroable,

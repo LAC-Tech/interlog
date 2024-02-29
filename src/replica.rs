@@ -1,11 +1,11 @@
+//! User facing functions for readidng and writing to interlog replicas.
+//! This can be considered the "top level" of the library.
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{
-	CircBuf, CircBufWrapAround, FixVec, FixVecOverflow, Segment,
-};
+use crate::util::{FixVec, FixVecOverflow, Segment};
 use crate::{disk, event};
 use rand::prelude::*;
-use rustix::{fd, fd::AsFd, fs, io};
+use rustix::io; // TODO make OpenErr in disk, and return that, remove this
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -37,6 +37,7 @@ trait StatsReporter {
 
 struct KeyIndex(FixVec<unit::Byte>);
 
+/// Maps logical indices to disk offsets
 impl KeyIndex {
 	fn new(capacity: usize) -> Self {
 		Self(FixVec::new(capacity))
@@ -81,10 +82,11 @@ impl KeyIndex {
 /// the former top segment.
 ///
 /// Example:
-///
+/// ```text
 /// ┌---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┬---┐
 /// | A | A | B | B | B |   | X | X | X | Y | Z | Z | Z | Z |   |   |
 /// └---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┴---┘
+/// ```
 ///
 /// The top segment contains events A and B, while the bottom segment contains
 /// X, Y and Z
@@ -121,7 +123,7 @@ impl ReadCache {
 	fn update(&mut self, write_cache: &[u8]) -> WriteRes {
 		// TODO: if this overflows start from the start of the buffer
 		// if it overflows twice, bail
-		if let Err(_) = self.buf.extend_from_slice(write_cache) {
+		if let Err(FixVecOverflow) = self.buf.extend_from_slice(write_cache) {
 			self.head.disk_offset += self.head.slice.len.into();
 			self.head.slice = Segment::new(0, write_cache.len());
 		}
@@ -147,6 +149,12 @@ impl ReadCache {
 /// Read and write data bus for data going into and out of the replica
 /// These buffers are written to independently, but the idea of putting them
 /// together is a scenario where there are many IO buses to one Log
+///
+/// Both buffers represent 1..N events, with the following invariants:
+/// INVARIANTS
+/// - starts at the start of an event
+/// - ends at the end of an event
+/// - aligns events to 8 bytes
 mod io_bus {
 	use super::{ReadErr, ReadRes, StatsReporter, WriteErr, WriteRes};
 	use crate::event;
@@ -187,7 +195,7 @@ mod io_bus {
 			for (i, val) in new_events.into_iter().enumerate() {
 				let pos = from + i.into();
 				let id = event::ID { origin: replica_id, pos };
-				let e = event::Event { id, val };
+				let e = event::Event { id, payload: val };
 				self.txn_write_buf
 					.append_event(&e)
 					.map_err(WriteErr::WriteCache)?;
@@ -219,10 +227,35 @@ mod io_bus {
 	pub struct Stats {
 		txn_write_buf_len: unit::Byte,
 	}
+
 	impl StatsReporter for IOBus {
 		type Stats = Stats;
 		fn stats(&self) -> Stats {
 			Stats { txn_write_buf_len: self.txn_write_buf.len().into() }
+		}
+	}
+
+	pub struct BufIntoIterator<'a> {
+		event_buf: &'a FixVec<u8>,
+		index: unit::Byte,
+	}
+
+	impl<'a> Iterator for BufIntoIterator<'a> {
+		type Item = event::Event<'a>;
+
+		fn next(&mut self) -> Option<Self::Item> {
+			let result = event::read(self.event_buf, self.index)?;
+			self.index += result.on_disk_size();
+			Some(result)
+		}
+	}
+
+	impl<'a> IntoIterator for &'a FixVec<u8> {
+		type Item = event::Event<'a>;
+		type IntoIter = BufIntoIterator<'a>;
+
+		fn into_iter(self) -> Self::IntoIter {
+			BufIntoIterator { event_buf: self, index: 0.into() }
 		}
 	}
 
@@ -289,7 +322,7 @@ mod io_bus {
 
 				// Post conditions
 				let actual: Vec<_> = bus.txn_write_buf.into_iter()
-					.map(|e| e.val)
+					.map(|e| e.payload)
 					.collect();
 				assert_eq!(&actual, &es);
 			}
@@ -302,8 +335,7 @@ pub struct Config {
 	pub read_cache_capacity: unit::Byte,
 }
 
-// ASSUMPTIONS:
-// single writer, multiple readers
+/// A replica on the same machine as user code
 pub struct Local {
 	pub id: ReplicaID,
 	pub path: std::path::PathBuf,
@@ -422,7 +454,7 @@ mod tests {
 				replica.read(&mut client, 0).expect("failed to read to file");
 
 				let events: Vec<_> = client.read_out()
-					.map(|e| e.val.to_vec())
+					.map(|e| e.payload.to_vec())
 					.collect();
 
 				assert_eq!(events, es);

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["uninit_boxed_slice"],"struct":["CircBuf","CircBufIterator","CircBufWrapAround","FixVec","FixVecOverflow","Segment"],"trait":["Segmentable"],"type":["FixVecRes"]};

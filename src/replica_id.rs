@@ -1,3 +1,4 @@
+//! Module exists purely to prevent circular dependency.
 use core::fmt;
 use rand::prelude::*;
 

@@ -1,24 +1,32 @@
+//! Structs for reading and writing events from contiguous bytes.
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{FixVec, FixVecOverflow, FixVecRes, Segment, Segmentable};
+use crate::util::{FixVec, FixVecRes, Segment, Segmentable};
 
-// TODO: do I need to construct this oustide of this module?
+/// This ID is globally unique.
+/// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
+/// 48 bit logical position.
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 pub struct ID {
+	/// Replica the event was first recorded at.
 	pub origin: ReplicaID,
+	/// This can be thought of as a lamport clock, or the sequence number of
+	/// the log.
 	pub pos: unit::Logical,
 }
 
 impl ID {
-	pub fn new<P: Into<unit::Logical>>(origin: ReplicaID, disk_pos: P) -> Self {
+	fn new<P: Into<unit::Logical>>(origin: ReplicaID, disk_pos: P) -> Self {
 		ID { origin, pos: disk_pos.into() }
 	}
 }
 
+/// This is written before every event in the log, and allows reading out
+/// payloads which are of variable length.
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
-pub struct Header {
+struct Header {
 	byte_len: usize,
 	id: ID,
 }
@@ -26,37 +34,32 @@ pub struct Header {
 impl Header {
 	const SIZE: usize = std::mem::size_of::<Self>();
 
-	pub fn range(start: unit::Byte) -> Segment {
+	fn range(start: unit::Byte) -> Segment {
 		Segment::new(start.0, Self::SIZE)
-	}
-
-	pub fn new(byte_len: usize, id: ID) -> Self {
-		Self { byte_len, id }
 	}
 }
 
+/// An immutable record of some event. The core data structure of interlog.
+/// The term "event" comes from event sourcing, but this couldd also be thought
+/// of as a record or entry.
+/// TODO: Enforce that Payload is 2MiB or less?
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
 	pub id: ID,
-	pub val: &'a [u8],
+	pub payload: &'a [u8],
 }
 
 impl<'a> Event<'a> {
+	/// Number of bytes the event will take up, including the header
 	pub fn on_disk_size(&self) -> unit::Byte {
-		let size: unit::Byte = (Header::SIZE + self.val.len()).into();
+		let size: unit::Byte = (Header::SIZE + self.payload.len()).into();
 		size.align()
 	}
 }
 
-/// 1..N events backed by a fixed capacity byte buffer
-///
-/// INVARIANTS
-/// - starts at the start of an event
-/// - ends at the end of an event
-/// - aligns events to 8 bytes
 impl FixVec<u8> {
 	pub fn append_event(&mut self, event: &Event) -> FixVecRes {
-		let Event { id, val } = *event;
+		let Event { id, payload: val } = *event;
 		let offset = self.len().into();
 		let header_segment = Header::range(offset);
 		let byte_len = val.len();
@@ -72,41 +75,6 @@ impl FixVec<u8> {
 
 		Ok(())
 	}
-
-	/*
-	pub fn append_local_events<'a, I>(
-		&mut self,
-		start: unit::Logical,
-		origin: ReplicaID,
-		vals: I,
-	) -> FixVecRes
-	where
-		I: IntoIterator<Item = &'a [u8]>,
-	{
-		for (i, val) in vals.into_iter().enumerate() {
-			let pos = start + i.into();
-			let id = ID { origin, pos };
-			let e = Event { id, val };
-			self.append_event(&e)?;
-		}
-
-		Ok(())
-	}
-
-	pub fn append_events<'a, I>(
-		&mut self,
-		events: I,
-	) -> Result<(), FixVecOverflow>
-	where
-		I: IntoIterator<Item = Event<'a>>,
-	{
-		for e in events {
-			self.append_event(&e)?;
-		}
-
-		Ok(())
-	}
-	*/
 }
 
 pub fn read<B, O>(bytes: &B, offset: O) -> Option<Event<'_>>
@@ -119,9 +87,10 @@ where
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let val_segment = header_segment.next(byte_len);
 	let val = bytes.segment(&val_segment)?;
-	Some(Event { id, val })
+	Some(Event { id, payload: val })
 }
 
+/*
 pub struct BufIntoIterator<'a> {
 	event_buf: &'a FixVec<u8>,
 	index: unit::Byte,
@@ -145,12 +114,11 @@ impl<'a> IntoIterator for &'a FixVec<u8> {
 		BufIntoIterator { event_buf: self, index: 0.into() }
 	}
 }
+*/
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_utils::*;
-	use core::ops::Deref;
 	use pretty_assertions::assert_eq;
 	use proptest::prelude::*;
 
@@ -163,11 +131,11 @@ mod tests {
 			let mut rng = rand::thread_rng();
 			let mut buf = FixVec::new(256);
 			let replica_id = ReplicaID::new(&mut rng);
-			let event = Event {id: ID::new(replica_id, 0), val: &e};
+			let event = Event {id: ID::new(replica_id, 0), payload: &e};
 
 			// Pre conditions
 			assert_eq!(buf.len(), 0, "buf should start empty");
-			assert!(buf.get(0).is_none(), "should contain no event");
+			assert!(read(&buf, 0).is_none(), "should contain no event");
 
 			println!("\nAPPEND\n");
 			// Modifying
@@ -176,7 +144,7 @@ mod tests {
 			println!("\nREAD\n");
 			// Post conditions
 			let actual = read(&buf, 0).expect("one event to be at 0");
-			assert_eq!(actual.val, &e);
+			assert_eq!(actual.payload, &e);
 		}
 	}
 }

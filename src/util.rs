@@ -1,3 +1,4 @@
+//! Fixed capacity data structures, that do not allocate when modified.
 use std::slice::SliceIndex;
 
 fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
@@ -201,12 +202,6 @@ impl<T: Copy> CircBuf<T> {
 		}
 
 		Err(CircBufWrapAround)
-	}
-}
-
-impl<T> Segmentable<T> for CircBuf<T> {
-	fn segment(&self, index: &Segment) -> Option<&[T]> {
-		None
 	}
 }
 
