@@ -1,5 +1,3 @@
-use fs::OFlags;
-
 use crate::replica_id::ReplicaID;
 use crate::unit;
 use crate::util::{
@@ -12,11 +10,9 @@ use rustix::{fd, fd::AsFd, fs, io};
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
 
-type O = OFlags;
-
 #[derive(Debug)]
 pub enum WriteErr {
-	Disk(disk::Err),
+	Disk(disk::AppendErr),
 	ReadCache(FixVecOverflow),
 	WriteCache(FixVecOverflow),
 	KeyIndex(FixVecOverflow),
@@ -311,7 +307,7 @@ pub struct Config {
 pub struct Local {
 	pub id: ReplicaID,
 	pub path: std::path::PathBuf,
-	log_fd: fd::OwnedFd,
+	disk_log: disk::Log,
 	log_len: unit::Byte,
 	read_cache: ReadCache,
 	// The entire index in memory, like bitcask's KeyDir
@@ -328,20 +324,19 @@ impl Local {
 		let id = ReplicaID::new(rng);
 
 		let path = dir_path.join(id.to_string());
-		let flags = O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC;
-		let mode = fs::Mode::RUSR | fs::Mode::WUSR;
-		let log_fd = fs::open(&path, flags, mode)?;
+		let disk_log = disk::Log::open(&path)?;
 
 		let log_len: unit::Byte = 0.into();
 		let read_cache = ReadCache::new(config.read_cache_capacity);
 		let key_index = KeyIndex::new(config.index_capacity);
 
-		Ok(Self { id, path, log_fd, log_len, read_cache, key_index })
+		Ok(Self { id, path, disk_log, log_len, read_cache, key_index })
 	}
 
 	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<(), WriteErr> {
-		let fd = self.log_fd.as_fd();
-		let bytes_flushed = disk::write(fd, txn_write_buf)
+		let bytes_flushed = self
+			.disk_log
+			.append(txn_write_buf)
 			.map(unit::Byte::align)
 			.map_err(WriteErr::Disk)?;
 
