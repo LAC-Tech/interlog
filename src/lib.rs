@@ -6,8 +6,8 @@ mod test_utils;
 pub mod event;
 pub mod replica;
 pub mod replica_id;
-pub mod util;
 pub mod unit;
+pub mod util;
 
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");

@@ -4,5 +4,4 @@ use core::ops::Deref;
 use interlog::*;
 use tempfile::TempDir;
 
-fn main() {
-}
+fn main() {}

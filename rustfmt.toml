@@ -1,0 +1,3 @@
+max_width = 80
+hard_tabs = true
+use_small_heuristics = "Max"

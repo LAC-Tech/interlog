@@ -3,40 +3,43 @@ use derive_more::*;
 
 /// Represents a byte address, divisible by 8, where an Event starts
 #[repr(transparent)]
-#[derive(Add, AddAssign, Clone, Copy, From, Into, PartialEq, PartialOrd, Sub)]
+#[derive(
+	Add, AddAssign, Clone, Copy, From, Into, PartialEq, PartialOrd, Sub,
+)]
 pub struct Byte(pub usize);
 
 impl Byte {
-    pub fn align(self) -> Byte {
-        Self((self.0 + 7) & !7)
-    }
+	pub fn align(self) -> Byte {
+		Self((self.0 + 7) & !7)
+	}
 }
 
 impl fmt::Display for Byte {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} <byte>", self.0)
-    }
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{} <byte>", self.0)
+	}
 }
 
 impl fmt::Debug for Byte {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{:?}", self.0)
+	}
 }
 
 #[repr(transparent)]
-#[derive(Add, AddAssign, Clone, Copy, From, Into)] 
-#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(
+	Add, AddAssign, Clone, Copy, From, Into, bytemuck::Pod, bytemuck::Zeroable,
+)]
 pub struct Logical(pub usize);
 
 impl fmt::Display for Logical {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} <logical>", self.0)
-    }
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{} <logical>", self.0)
+	}
 }
 
 impl fmt::Debug for Logical {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{:?}", self.0)
+	}
 }
