@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_SIZE"],"enum":["ReadErr","WriteErr"],"mod":["io_bus"],"struct":["Config","KeyIndex","Local","ReadCache","ReadCacheWritePtr"],"trait":["StatsReporter"],"type":["ReadRes","WriteRes"]};

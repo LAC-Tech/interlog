@@ -18,7 +18,7 @@ Planned Featurs (see [TODO file](TODO.md) for progress):
 
 ## Implementation Docs
 
-[See here](target/doc/interlog/index.html).
+Each source file is documented, start at lib.rs, and then probably replica.rs
 
 ## Sync Strategy
 
