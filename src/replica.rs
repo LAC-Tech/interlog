@@ -35,6 +35,8 @@ pub enum ReadErr {
 	ClientBuf(FixVecOverflow),
 }
 
+type ReadRes = Result<(), ReadErr>;
+
 struct KeyIndex(FixVec<unit::Byte>);
 
 impl KeyIndex {
@@ -146,7 +148,9 @@ impl ReadCache {
 
 /// Read and write data bus for data going into and out of the replica
 mod io_bus {
-	use super::{ReplicaID, WriteErr, WriteRes};
+	use super::{
+		event::Event, ReadErr, ReadRes, ReplicaID, WriteErr, WriteRes,
+	};
 	use crate::unit;
 	use crate::util::FixVec;
 
@@ -159,8 +163,8 @@ mod io_bus {
 	pub struct IOBus {
 		/// This stores all the events w/headers, contigously, which means only
 		/// one syscall is required to write to disk.
-		pub txn_write_buf: FixVec<u8>,
-		pub read_buf: FixVec<u8>,
+		txn_write_buf: FixVec<u8>,
+		read_buf: FixVec<u8>,
 	}
 
 	impl IOBus {
@@ -188,6 +192,21 @@ mod io_bus {
 			self.txn_write_buf
 				.append_local_events(from, replica_id, datums)
 				.map_err(WriteErr::WriteCache)
+		}
+
+		pub fn txn_write_buf(&self) -> &[u8] {
+			&self.txn_write_buf
+		}
+
+		pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
+		where
+			I: IntoIterator<Item = Event<'a>>,
+		{
+			self.read_buf.append_events(events).map_err(ReadErr::ClientBuf)
+		}
+
+		pub fn read_out(&self) -> impl Iterator<Item = Event<'_>> {
+			self.read_buf.into_iter()
 		}
 	}
 }
@@ -262,18 +281,18 @@ impl Local {
 		I: IntoIterator<Item = &'b [u8]>,
 	{
 		io_bus.write(self.key_index.len(), self.id, datums)?;
-		self.persist(&io_bus.txn_write_buf)
+		self.persist(io_bus.txn_write_buf())
 	}
 
 	// TODO: assumes cache is 1:1 with disk
 	pub fn read<P: Into<unit::Logical>>(
 		&mut self,
-		client: &mut io_bus::IOBus,
+		io_bus: &mut io_bus::IOBus,
 		pos: P,
 	) -> Result<(), ReadErr> {
 		let byte_offsets = self.key_index.read_since(pos.into());
 		let events = self.read_cache.read(byte_offsets);
-		client.read_buf.append_events(events).map_err(ReadErr::ClientBuf)
+		io_bus.read_in(events)
 	}
 }
 
@@ -314,7 +333,7 @@ mod tests {
 
 				replica.read(&mut client, 0).expect("failed to read to file");
 
-				let events: Vec<_> = client.read_buf.into_iter()
+				let events: Vec<_> = client.read_out()
 					.map(|e| e.val.to_vec())
 					.collect();
 
