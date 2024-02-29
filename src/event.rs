@@ -18,7 +18,7 @@ impl ID {
 
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
-struct Header {
+pub struct Header {
 	byte_len: usize,
 	id: ID,
 }
@@ -26,8 +26,12 @@ struct Header {
 impl Header {
 	const SIZE: usize = std::mem::size_of::<Self>();
 
-	fn range(start: unit::Byte) -> Segment {
+	pub fn range(start: unit::Byte) -> Segment {
 		Segment::new(start.0, Self::SIZE)
+	}
+
+	pub fn new(byte_len: usize, id: ID) -> Self {
+		Self { byte_len, id }
 	}
 }
 
@@ -51,7 +55,7 @@ impl<'a> Event<'a> {
 /// - ends at the end of an event
 /// - aligns events to 8 bytes
 impl FixVec<u8> {
-	fn append_event(&mut self, event: &Event) -> FixVecRes {
+	pub fn append_event(&mut self, event: &Event) -> FixVecRes {
 		let Event { id, val } = *event;
 		let offset = self.len().into();
 		let header_segment = Header::range(offset);
@@ -69,6 +73,7 @@ impl FixVec<u8> {
 		Ok(())
 	}
 
+	/*
 	pub fn append_local_events<'a, I>(
 		&mut self,
 		start: unit::Logical,
@@ -101,6 +106,7 @@ impl FixVec<u8> {
 
 		Ok(())
 	}
+	*/
 }
 
 pub fn read<B, O>(bytes: &B, offset: O) -> Option<Event<'_>>
@@ -171,58 +177,6 @@ mod tests {
 			// Post conditions
 			let actual = read(&buf, 0).expect("one event to be at 0");
 			assert_eq!(actual.val, &e);
-		}
-
-		#[test]
-		fn rw_many_events(es in arb_local_events(16, 16)) {
-			// Setup
-			let mut rng = rand::thread_rng();
-			let replica_id = ReplicaID::new(&mut rng);
-
-			let mut buf = FixVec::new(0x400);
-
-			// Pre conditions
-			assert_eq!(buf.len(), 0, "buf should start empty");
-			assert!(read(&buf, 0).is_none(), "should contain no event");
-
-			let vals = es.iter().map(Deref::deref);
-			buf.append_local_events(0.into(), replica_id, vals)
-				.expect("buf should have enough");
-
-			// Post conditions
-			let actual: Vec<_> = buf.into_iter().map(|e| e.val).collect();
-			assert_eq!(&actual, &es);
-		}
-
-		#[test]
-		fn combine_buffers(
-			es1 in arb_local_events(16, 16),
-			es2 in arb_local_events(16, 16)
-		) {
-			// Setup
-			let mut rng = rand::thread_rng();
-			let replica_id = ReplicaID::new(&mut rng);
-
-			let mut buf1 = FixVec::new(0x800);
-			let mut buf2 = FixVec::new(0x800);
-
-			let start: unit::Logical = 0.into();
-
-			buf1.append_local_events(start, replica_id, es1.iter().map(Deref::deref))
-				.expect("buf should have enough");
-
-			buf2.append_local_events(start, replica_id, es2.iter().map(Deref::deref))
-				.expect("buf should have enough");
-
-			buf1.extend_from_slice(&buf2).expect("buf should have enough");
-
-			let actual: Vec<_> = buf1.into_iter().map(|e| e.val).collect();
-
-			let mut expected = Vec::new();
-			expected.extend(&es1);
-			expected.extend(&es2);
-
-			assert_eq!(&actual, &expected);
 		}
 	}
 }

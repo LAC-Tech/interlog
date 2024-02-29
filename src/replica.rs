@@ -14,11 +14,6 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 
 type O = OFlags;
 
-pub struct Config {
-	pub index_capacity: usize,
-	pub read_cache_capacity: unit::Byte,
-}
-
 #[derive(Debug)]
 pub enum WriteErr {
 	Disk(disk::Err),
@@ -36,6 +31,13 @@ pub enum ReadErr {
 }
 
 type ReadRes = Result<(), ReadErr>;
+
+/// For various reasons (monitoring, performance, debugging) it will be helpful
+/// to report some statistics. How much of a buffer is being used, lengths, etc
+trait StatsReporter {
+	type Stats;
+	fn stats(&self) -> Self::Stats;
+}
 
 struct KeyIndex(FixVec<unit::Byte>);
 
@@ -147,19 +149,15 @@ impl ReadCache {
 }
 
 /// Read and write data bus for data going into and out of the replica
+/// These buffers are written to independently, but the idea of putting them
+/// together is a scenario where there are many IO buses to one Log
 mod io_bus {
-	use super::{
-		event::Event, ReadErr, ReadRes, ReplicaID, WriteErr, WriteRes,
-	};
+	use super::{ReadErr, ReadRes, StatsReporter, WriteErr, WriteRes};
+	use crate::event;
+	use crate::replica_id::ReplicaID;
 	use crate::unit;
 	use crate::util::FixVec;
 
-	pub struct Config {
-		pub txn_write_buf_capacity: unit::Byte,
-		pub read_buf_capacity: unit::Byte,
-	}
-
-	// TODO: encapsulate this properly, maybe "local_write" should be here.
 	pub struct IOBus {
 		/// This stores all the events w/headers, contigously, which means only
 		/// one syscall is required to write to disk.
@@ -168,12 +166,13 @@ mod io_bus {
 	}
 
 	impl IOBus {
-		pub fn new(config: &Config) -> Self {
+		pub fn new(
+			txn_write_buf_capacity: unit::Byte,
+			read_buf_capacity: unit::Byte,
+		) -> Self {
 			Self {
-				txn_write_buf: FixVec::new(
-					config.txn_write_buf_capacity.into(),
-				),
-				read_buf: FixVec::new(config.read_buf_capacity.into()),
+				txn_write_buf: FixVec::new(txn_write_buf_capacity.into()),
+				read_buf: FixVec::new(read_buf_capacity.into()),
 			}
 		}
 
@@ -181,17 +180,24 @@ mod io_bus {
 			&mut self,
 			from: unit::Logical,
 			replica_id: ReplicaID,
-			datums: I,
+			new_events: I,
 		) -> WriteRes
 		where
 			I: IntoIterator<Item = &'a [u8]>,
 		{
 			self.txn_write_buf.clear();
 
-			// This only exists so I can make one atomic syscall to write to disk
-			self.txn_write_buf
-				.append_local_events(from, replica_id, datums)
-				.map_err(WriteErr::WriteCache)
+			// Write Events with their headers
+			for (i, val) in new_events.into_iter().enumerate() {
+				let pos = from + i.into();
+				let id = event::ID { origin: replica_id, pos };
+				let e = event::Event { id, val };
+				self.txn_write_buf
+					.append_event(&e)
+					.map_err(WriteErr::WriteCache)?;
+			}
+
+			Ok(())
 		}
 
 		pub fn txn_write_buf(&self) -> &[u8] {
@@ -200,15 +206,104 @@ mod io_bus {
 
 		pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
 		where
-			I: IntoIterator<Item = Event<'a>>,
+			I: IntoIterator<Item = event::Event<'a>>,
 		{
-			self.read_buf.append_events(events).map_err(ReadErr::ClientBuf)
+			for e in events {
+				self.read_buf.append_event(&e).map_err(ReadErr::ClientBuf)?;
+			}
+
+			Ok(())
 		}
 
-		pub fn read_out(&self) -> impl Iterator<Item = Event<'_>> {
+		pub fn read_out(&self) -> impl Iterator<Item = event::Event<'_>> {
 			self.read_buf.into_iter()
 		}
 	}
+
+	pub struct Stats {
+		txn_write_buf_len: unit::Byte,
+	}
+	impl StatsReporter for IOBus {
+		type Stats = Stats;
+		fn stats(&self) -> Stats {
+			Stats { txn_write_buf_len: self.txn_write_buf.len().into() }
+		}
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+		use crate::test_utils::*;
+		use core::ops::Deref;
+		use pretty_assertions::assert_eq;
+		use proptest::prelude::*;
+
+		proptest! {
+			/*
+			#[test]
+			fn combine_buffers(
+				es1 in arb_local_events(16, 16),
+				es2 in arb_local_events(16, 16)
+			) {
+				// Setup
+				let mut rng = rand::thread_rng();
+				let replica_id = ReplicaID::new(&mut rng);
+
+				let mut buf1 = FixVec::new(0x800);
+				let mut buf2 = FixVec::new(0x800);
+
+				let start: unit::Logical = 0.into();
+
+				buf1.append_local_events(start, replica_id, es1.iter().map(Deref::deref))
+					.expect("buf should have enough");
+
+				buf2.append_local_events(start, replica_id, es2.iter().map(Deref::deref))
+					.expect("buf should have enough");
+
+				buf1.extend_from_slice(&buf2).expect("buf should have enough");
+
+				let actual: Vec<_> = buf1.into_iter().map(|e| e.val).collect();
+
+				let mut expected = Vec::new();
+				expected.extend(&es1);
+				expected.extend(&es2);
+
+				assert_eq!(&actual, &expected);
+			}
+			*/
+			#[test]
+			fn w_many_events(es in arb_local_events(16, 16)) {
+				// Setup
+				let mut rng = rand::thread_rng();
+				let replica_id = ReplicaID::new(&mut rng);
+
+				let mut bus = IOBus::new(0x400.into(), 0x400.into());
+
+				// Pre conditions
+				assert_eq!(
+					bus.stats().txn_write_buf_len,
+					0.into(), "buf should start empty");
+				assert!(
+					event::read(&bus.txn_write_buf, 0).is_none(),
+					"should contain no event");
+
+				let vals = es.iter().map(Deref::deref);
+				bus.write(0.into(), replica_id, vals)
+					.expect("buf should have enough");
+
+				// Post conditions
+				let actual: Vec<_> = bus.txn_write_buf.into_iter()
+					.map(|e| e.val)
+					.collect();
+				assert_eq!(&actual, &es);
+			}
+		}
+	}
+}
+
+pub struct Config {
+	pub index_capacity: usize,
+	pub read_cache_capacity: unit::Byte,
 }
 
 // ASSUMPTIONS:
@@ -321,10 +416,8 @@ mod tests {
 			let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
 				.expect("failed to open file");
 
-			let mut client = io_bus::IOBus::new(&io_bus::Config {
-				txn_write_buf_capacity: unit::Byte(0x400),
-				read_buf_capacity: unit::Byte(0x400)
-			});
+			let mut client =
+				io_bus::IOBus::new(unit::Byte(0x400), unit::Byte(0x400));
 
 			for es in ess {
 				let vals = es.iter().map(Deref::deref);
