@@ -93,7 +93,7 @@ impl KeyIndex {
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
 mod read_cache {
-	use super::WriteRes;
+	use super::{WriteErr, WriteRes};
 	use crate::event;
 	use crate::unit;
 	use crate::util::Segment;
@@ -122,7 +122,7 @@ mod read_cache {
 		}
 
 		pub fn update(&mut self, write_cache: &event::Buf) -> WriteRes {
-			Ok(())
+			self.buf.extend(write_cache).map_err(WriteErr::ReadCache)
 		}
 
 		// TODO: read first contiguous slice, then the next one

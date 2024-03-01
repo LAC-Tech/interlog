@@ -82,6 +82,10 @@ impl Buf {
 		Ok(())
 	}
 
+	pub fn extend(&mut self, other: &Buf) -> FixVecRes {
+		self.0.extend_from_slice(other.as_bytes())
+	}
+
 	pub fn read<O>(&self, offset: O) -> Option<Event<'_>>
 	where
 		O: Into<unit::Byte>
