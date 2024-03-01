@@ -2,7 +2,7 @@
 //! This can be considered the "top level" of the library.
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{FixVec, FixVecOverflow, Segment};
+use crate::util::{FixVec, FixVecOverflow};
 use crate::{disk, event};
 use rand::prelude::*;
 use rustix::io; // TODO make OpenErr in disk, and return that, remove this
@@ -96,7 +96,7 @@ mod read_cache {
 	use super::WriteRes;
 	use crate::event;
 	use crate::unit;
-	use crate::util::{FixVec, Segment};
+	use crate::util::Segment;
 
 	struct WritePtr {
 		disk_offset: unit::Byte,
@@ -104,35 +104,24 @@ mod read_cache {
 	}
 
 	pub struct ReadCache {
-		pub buf: FixVec<u8>, // TODO: should be private
+		pub buf: event::Buf,
 		head: WritePtr,
 		tail: Option<WritePtr>
 	}
 
 	impl ReadCache {
-		pub fn new(capacity: unit::Byte) -> Self {
-			let buf = FixVec::new(capacity.into());
+		pub fn new<B>(capacity: B) -> Self
+		where
+			B: Into<unit::Byte>
+		{
+			let buf = event::Buf::new(capacity.into());
 			let head =
 				WritePtr { disk_offset: 0.into(), slice: Segment::new(0, 0) };
 			let tail = None;
 			Self { buf, head, tail }
 		}
 
-		#[inline]
-		fn capacity(&self) -> usize {
-			self.buf.capacity()
-		}
-
-		pub fn update(&mut self, write_cache: &[u8]) -> WriteRes {
-			// TODO: if this overflows start from the start of the buffer
-			// if it overflows twice, bail
-			if let Err(FixVecOverflow) = self.buf.extend_from_slice(write_cache)
-			{
-				self.head.disk_offset += self.head.slice.len.into();
-				self.head.slice = Segment::new(0, write_cache.len());
-			}
-
-			//self.top.disk_offset += write_cache.len().into();
+		pub fn update(&mut self, write_cache: &event::Buf) -> WriteRes {
 			Ok(())
 		}
 
@@ -145,11 +134,21 @@ mod read_cache {
 			O: Iterator<Item = unit::Byte>
 		{
 			disk_offsets
-				.map(|offset| {
-					event::read(&self.buf, offset - self.head.disk_offset)
-				})
+				.map(|offset| self.buf.read(offset - self.head.disk_offset))
 				.fuse()
 				.flatten()
+		}
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+		use pretty_assertions::assert_eq;
+		use proptest::prelude::*;
+
+		#[test]
+		fn elektrobank() {
+			let rc = ReadCache::new(16);
 		}
 	}
 }
@@ -168,13 +167,12 @@ pub mod io_bus {
 	use crate::event;
 	use crate::replica_id::ReplicaID;
 	use crate::unit;
-	use crate::util::FixVec;
 
 	pub struct IOBus {
 		/// This stores all the events w/headers, contigously, which means only
 		/// one syscall is required to write to disk.
-		txn_write_buf: FixVec<u8>,
-		read_buf: FixVec<u8>
+		txn_write_buf: event::Buf,
+		read_buf: event::Buf
 	}
 
 	impl IOBus {
@@ -183,8 +181,8 @@ pub mod io_bus {
 			read_buf_capacity: unit::Byte
 		) -> Self {
 			Self {
-				txn_write_buf: FixVec::new(txn_write_buf_capacity.into()),
-				read_buf: FixVec::new(read_buf_capacity.into())
+				txn_write_buf: event::Buf::new(txn_write_buf_capacity),
+				read_buf: event::Buf::new(read_buf_capacity)
 			}
 		}
 
@@ -204,15 +202,13 @@ pub mod io_bus {
 				let pos = from + i.into();
 				let id = event::ID { origin: replica_id, pos };
 				let e = event::Event { id, payload: val };
-				self.txn_write_buf
-					.append_event(&e)
-					.map_err(WriteErr::WriteCache)?;
+				self.txn_write_buf.append(&e).map_err(WriteErr::WriteCache)?;
 			}
 
 			Ok(())
 		}
 
-		pub fn txn_write_buf(&self) -> &[u8] {
+		pub fn txn_write_buf(&self) -> &event::Buf {
 			&self.txn_write_buf
 		}
 
@@ -221,7 +217,7 @@ pub mod io_bus {
 			I: IntoIterator<Item = event::Event<'a>>
 		{
 			for e in events {
-				self.read_buf.append_event(&e).map_err(ReadErr::ClientBuf)?;
+				self.read_buf.append(&e).map_err(ReadErr::ClientBuf)?;
 			}
 
 			Ok(())
@@ -239,31 +235,7 @@ pub mod io_bus {
 	impl StatsReporter for IOBus {
 		type Stats = Stats;
 		fn stats(&self) -> Stats {
-			Stats { txn_write_buf_len: self.txn_write_buf.len().into() }
-		}
-	}
-
-	pub struct BufIntoIterator<'a> {
-		event_buf: &'a FixVec<u8>,
-		index: unit::Byte
-	}
-
-	impl<'a> Iterator for BufIntoIterator<'a> {
-		type Item = event::Event<'a>;
-
-		fn next(&mut self) -> Option<Self::Item> {
-			let result = event::read(self.event_buf, self.index)?;
-			self.index += result.on_disk_size();
-			Some(result)
-		}
-	}
-
-	impl<'a> IntoIterator for &'a FixVec<u8> {
-		type Item = event::Event<'a>;
-		type IntoIter = BufIntoIterator<'a>;
-
-		fn into_iter(self) -> Self::IntoIter {
-			BufIntoIterator { event_buf: self, index: 0.into() }
+			Stats { txn_write_buf_len: self.txn_write_buf.byte_len() }
 		}
 	}
 
@@ -321,7 +293,7 @@ pub mod io_bus {
 					bus.stats().txn_write_buf_len,
 					0.into(), "buf should start empty");
 				assert!(
-					event::read(&bus.txn_write_buf, 0).is_none(),
+					&bus.txn_write_buf.read(0).is_none(),
 					"should contain no event");
 
 				let vals = es.iter().map(Deref::deref);
@@ -347,10 +319,10 @@ struct Log {
 }
 
 impl Log {
-	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<(), WriteErr> {
+	fn persist(&mut self, txn_write_buf: &event::Buf) -> Result<(), WriteErr> {
 		let bytes_flushed = self
 			.disk
-			.append(txn_write_buf)
+			.append(txn_write_buf.as_bytes())
 			.map(unit::Byte::align)
 			.map_err(WriteErr::Disk)?;
 

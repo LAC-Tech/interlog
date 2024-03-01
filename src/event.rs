@@ -57,26 +57,85 @@ impl<'a> Event<'a> {
 	}
 }
 
-impl FixVec<u8> {
-	pub fn append_event(&mut self, event: &Event) -> FixVecRes {
+pub struct Buf(FixVec<u8>);
+
+impl Buf {
+	pub fn new(capacity: unit::Byte) -> Self {
+		Self(FixVec::new(capacity.into()))
+	}
+
+	pub fn append(&mut self, event: &Event) -> FixVecRes {
 		let Event { id, payload: val } = *event;
-		let offset = self.len().into();
+		let offset = self.0.len().into();
 		let header_segment = Header::range(offset);
 		let byte_len = val.len();
 		let val_segment = header_segment.next(byte_len);
 		let new_len = unit::Byte(val_segment.end).align();
-		self.resize(new_len.into(), 0)?;
+		self.0.resize(new_len.into(), 0)?;
 
 		let header = Header { byte_len, id };
 		let header = bytemuck::bytes_of(&header);
 
-		self[header_segment.range()].copy_from_slice(header);
-		self[val_segment.range()].copy_from_slice(val);
+		self.0[header_segment.range()].copy_from_slice(header);
+		self.0[val_segment.range()].copy_from_slice(val);
 
 		Ok(())
 	}
+
+	pub fn read<O>(&self, offset: O) -> Option<Event<'_>>
+	where
+		O: Into<unit::Byte>
+	{
+		let header_segment = Header::range(offset.into());
+		let header_bytes = self.0.segment(&header_segment)?;
+		let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
+		let val_segment = header_segment.next(byte_len);
+		let val = self.0.segment(&val_segment)?;
+		Some(Event { id, payload: val })
+	}
+
+	pub fn clear(&mut self) {
+		self.0.clear()
+	}
+
+	pub fn as_bytes(&self) -> &[u8] {
+		&self.0
+	}
+
+	pub fn byte_len(&self) -> unit::Byte {
+		self.0.len().into()
+	}
+
+	pub fn byte_capacity(&self) -> unit::Byte {
+		self.0.capacity().into()
+	}
 }
 
+pub struct BufIntoIterator<'a> {
+	event_buf: &'a Buf,
+	index: unit::Byte
+}
+
+impl<'a> Iterator for BufIntoIterator<'a> {
+	type Item = Event<'a>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		let result = self.event_buf.read(self.index)?;
+		self.index += result.on_disk_size();
+		Some(result)
+	}
+}
+
+impl<'a> IntoIterator for &'a Buf {
+	type Item = Event<'a>;
+	type IntoIter = BufIntoIterator<'a>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		BufIntoIterator { event_buf: self, index: 0.into() }
+	}
+}
+
+/*
 pub fn read<B, O>(bytes: &B, offset: O) -> Option<Event<'_>>
 where
 	B: Segmentable<u8>,
@@ -88,31 +147,6 @@ where
 	let val_segment = header_segment.next(byte_len);
 	let val = bytes.segment(&val_segment)?;
 	Some(Event { id, payload: val })
-}
-
-/*
-pub struct BufIntoIterator<'a> {
-	event_buf: &'a FixVec<u8>,
-	index: unit::Byte,
-}
-
-impl<'a> Iterator for BufIntoIterator<'a> {
-	type Item = Event<'a>;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		let result = read(self.event_buf, self.index)?;
-		self.index += result.on_disk_size();
-		Some(result)
-	}
-}
-
-impl<'a> IntoIterator for &'a FixVec<u8> {
-	type Item = Event<'a>;
-	type IntoIter = BufIntoIterator<'a>;
-
-	fn into_iter(self) -> Self::IntoIter {
-		BufIntoIterator { event_buf: self, index: 0.into() }
-	}
 }
 */
 
@@ -129,21 +163,21 @@ mod tests {
 		) {
 			// Setup
 			let mut rng = rand::thread_rng();
-			let mut buf = FixVec::new(256);
+			let mut buf = Buf::new(256.into());
 			let replica_id = ReplicaID::new(&mut rng);
 			let event = Event {id: ID::new(replica_id, 0), payload: &e};
 
 			// Pre conditions
-			assert_eq!(buf.len(), 0, "buf should start empty");
-			assert!(read(&buf, 0).is_none(), "should contain no event");
+			assert_eq!(buf.byte_len(), 0.into(), "buf should start empty");
+			assert!(&buf.read(0).is_none(), "should contain no event");
 
 			println!("\nAPPEND\n");
 			// Modifying
-			buf.append_event(&event).expect("buf should have enough");
+			buf.append(&event).expect("buf should have enough");
 
 			println!("\nREAD\n");
 			// Post conditions
-			let actual = read(&buf, 0).expect("one event to be at 0");
+			let actual = &buf.read(0).expect("one event to be at 0");
 			assert_eq!(actual.payload, &e);
 		}
 	}
