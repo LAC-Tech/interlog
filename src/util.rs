@@ -150,7 +150,7 @@ impl<T> Segmentable<T> for FixVec<T> {
 pub struct CircBufWrapAround;
 
 pub struct CircBuf<T> {
-	buffer: Box<[T]>,
+	buf: Box<[T]>,
 	len: usize,
 	write_idx: usize,
 }
@@ -160,12 +160,12 @@ impl<T> CircBuf<T> {
 		let buffer = uninit_boxed_slice(capacity);
 		let len = 0;
 		let write_idx = 0;
-		Self { buffer, len, write_idx }
+		Self { buf: buffer, len, write_idx }
 	}
 
 	#[inline]
 	pub fn capacity(&self) -> usize {
-		self.buffer.len()
+		self.buf.len()
 	}
 
 	#[inline]
@@ -174,7 +174,7 @@ impl<T> CircBuf<T> {
 	}
 
 	pub fn push(&mut self, item: T) {
-		self.buffer[self.write_idx] = item;
+		self.buf[self.write_idx] = item;
 		self.write_idx = (self.write_idx + 1) % self.capacity();
 		self.len = core::cmp::min(self.len + 1, self.capacity());
 	}
@@ -184,7 +184,7 @@ impl<T> CircBuf<T> {
 			return None;
 		}
 		let index = (index + self.write_idx).wrapping_rem_euclid(self.len);
-		(self.len > index).then(|| &self.buffer[index])
+		(self.len > index).then(|| &self.buf[index])
 	}
 }
 
@@ -198,7 +198,7 @@ impl<T: Copy> CircBuf<T> {
 	) -> Result<(), CircBufWrapAround> {
 		let contiguous_space_left = self.capacity() - self.write_idx;
 		if contiguous_space_left > slice.len() {
-			self.buffer[..self.len].copy_from_slice(slice);
+			self.buf[..self.len].copy_from_slice(slice);
 		}
 
 		Err(CircBufWrapAround)
@@ -230,6 +230,19 @@ impl<'a, T> Iterator for CircBufIterator<'a, T> {
 		}
 	}
 }
+
+/// Implementation of Simon Cookess bi-partite circular buffer
+struct BipBuf<T> {
+	buf: Box<[T]>,
+	a_start: usize,
+	a_end: usize,
+	b_start: usize,
+	b_end: usize,
+	reserve_start: usize,
+	reserve_end: usize,
+}
+
+impl<T> BipBuf<T> {}
 
 #[cfg(test)]
 mod tests {
