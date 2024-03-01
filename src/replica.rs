@@ -15,7 +15,7 @@ pub enum WriteErr {
 	Disk(disk::AppendErr),
 	ReadCache(FixVecOverflow),
 	WriteCache(FixVecOverflow),
-	KeyIndex(FixVecOverflow),
+	KeyIndex(FixVecOverflow)
 }
 
 type WriteRes = Result<(), WriteErr>;
@@ -23,7 +23,7 @@ type WriteRes = Result<(), WriteErr>;
 #[derive(Debug)]
 pub enum ReadErr {
 	KeyIndex,
-	ClientBuf(FixVecOverflow),
+	ClientBuf(FixVecOverflow)
 }
 
 type ReadRes = Result<(), ReadErr>;
@@ -58,7 +58,7 @@ impl KeyIndex {
 
 	fn read_since(
 		&self,
-		pos: unit::Logical,
+		pos: unit::Logical
 	) -> impl Iterator<Item = unit::Byte> + '_ {
 		self.0.iter().skip(pos.into()).copied()
 	}
@@ -100,13 +100,13 @@ mod read_cache {
 
 	struct WritePtr {
 		disk_offset: unit::Byte,
-		slice: Segment,
+		slice: Segment
 	}
 
 	pub struct ReadCache {
 		pub buf: FixVec<u8>, // TODO: should be private
 		head: WritePtr,
-		tail: Option<WritePtr>,
+		tail: Option<WritePtr>
 	}
 
 	impl ReadCache {
@@ -139,10 +139,10 @@ mod read_cache {
 		// TODO: read first contiguous slice, then the next one
 		pub fn read<O>(
 			&self,
-			disk_offsets: O,
+			disk_offsets: O
 		) -> impl Iterator<Item = event::Event<'_>>
 		where
-			O: Iterator<Item = unit::Byte>,
+			O: Iterator<Item = unit::Byte>
 		{
 			disk_offsets
 				.map(|offset| {
@@ -174,17 +174,17 @@ pub mod io_bus {
 		/// This stores all the events w/headers, contigously, which means only
 		/// one syscall is required to write to disk.
 		txn_write_buf: FixVec<u8>,
-		read_buf: FixVec<u8>,
+		read_buf: FixVec<u8>
 	}
 
 	impl IOBus {
 		pub fn new(
 			txn_write_buf_capacity: unit::Byte,
-			read_buf_capacity: unit::Byte,
+			read_buf_capacity: unit::Byte
 		) -> Self {
 			Self {
 				txn_write_buf: FixVec::new(txn_write_buf_capacity.into()),
-				read_buf: FixVec::new(read_buf_capacity.into()),
+				read_buf: FixVec::new(read_buf_capacity.into())
 			}
 		}
 
@@ -192,10 +192,10 @@ pub mod io_bus {
 			&mut self,
 			from: unit::Logical,
 			replica_id: ReplicaID,
-			new_events: I,
+			new_events: I
 		) -> WriteRes
 		where
-			I: IntoIterator<Item = &'a [u8]>,
+			I: IntoIterator<Item = &'a [u8]>
 		{
 			self.txn_write_buf.clear();
 
@@ -218,7 +218,7 @@ pub mod io_bus {
 
 		pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
 		where
-			I: IntoIterator<Item = event::Event<'a>>,
+			I: IntoIterator<Item = event::Event<'a>>
 		{
 			for e in events {
 				self.read_buf.append_event(&e).map_err(ReadErr::ClientBuf)?;
@@ -233,7 +233,7 @@ pub mod io_bus {
 	}
 
 	pub struct Stats {
-		txn_write_buf_len: unit::Byte,
+		txn_write_buf_len: unit::Byte
 	}
 
 	impl StatsReporter for IOBus {
@@ -245,7 +245,7 @@ pub mod io_bus {
 
 	pub struct BufIntoIterator<'a> {
 		event_buf: &'a FixVec<u8>,
-		index: unit::Byte,
+		index: unit::Byte
 	}
 
 	impl<'a> Iterator for BufIntoIterator<'a> {
@@ -343,7 +343,7 @@ struct Log {
 	byte_len: unit::Byte,
 	read_cache: read_cache::ReadCache,
 	/// The entire index in memory, like bitcask's KeyDir
-	key_index: KeyIndex,
+	key_index: KeyIndex
 }
 
 impl Log {
@@ -380,7 +380,7 @@ impl Log {
 
 	fn events_since(
 		&self,
-		pos: unit::Logical,
+		pos: unit::Logical
 	) -> impl Iterator<Item = event::Event<'_>> {
 		let byte_offsets = self.key_index.read_since(pos);
 		self.read_cache.read(byte_offsets)
@@ -389,14 +389,14 @@ impl Log {
 
 pub struct Config {
 	pub index_capacity: usize,
-	pub read_cache_capacity: unit::Byte,
+	pub read_cache_capacity: unit::Byte
 }
 
 /// A replica on the same machine as user code
 pub struct Local {
 	pub id: ReplicaID,
 	pub path: std::path::PathBuf,
-	log: Log,
+	log: Log
 }
 
 // TODO: store data larger than read cache
@@ -404,7 +404,7 @@ impl Local {
 	pub fn new<R: Rng>(
 		dir_path: &std::path::Path,
 		rng: &mut R,
-		config: Config,
+		config: Config
 	) -> io::Result<Self> {
 		let id = ReplicaID::new(rng);
 
@@ -415,7 +415,7 @@ impl Local {
 			// TODO: this assumes the log is empty
 			byte_len: 0.into(),
 			read_cache: read_cache::ReadCache::new(config.read_cache_capacity),
-			key_index: KeyIndex::new(config.index_capacity),
+			key_index: KeyIndex::new(config.index_capacity)
 		};
 
 		Ok(Self { id, path, log })
@@ -425,10 +425,10 @@ impl Local {
 	pub fn local_write<'b, I>(
 		&mut self,
 		io_bus: &mut io_bus::IOBus,
-		datums: I,
+		datums: I
 	) -> Result<(), WriteErr>
 	where
-		I: IntoIterator<Item = &'b [u8]>,
+		I: IntoIterator<Item = &'b [u8]>
 	{
 		io_bus.write(self.log.logical_len(), self.id, datums)?;
 		self.log.persist(io_bus.txn_write_buf())
@@ -438,7 +438,7 @@ impl Local {
 	pub fn read<P: Into<unit::Logical>>(
 		&mut self,
 		io_bus: &mut io_bus::IOBus,
-		pos: P,
+		pos: P
 	) -> Result<(), ReadErr> {
 		let events = self.log.events_since(pos.into());
 		io_bus.read_in(events)

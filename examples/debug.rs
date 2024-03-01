@@ -12,7 +12,7 @@ fn main() {
 	let mut rng = rand::thread_rng();
 	let config = replica::Config {
 		index_capacity: 128,
-		read_cache_capacity: unit::Byte(1024),
+		read_cache_capacity: unit::Byte(1024)
 	};
 
 	let mut replica = replica::Local::new(tmp_dir.path(), &mut rng, config)

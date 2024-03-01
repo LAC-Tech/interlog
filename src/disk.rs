@@ -28,7 +28,7 @@ pub fn read_from_file(
 #[derive(Debug, PartialEq)]
 pub enum AppendErr {
 	OS(rustix::io::Errno),
-	NonAtomic { bytes_expected: unit::Byte, bytes_written: unit::Byte },
+	NonAtomic { bytes_expected: unit::Byte, bytes_written: unit::Byte }
 }
 
 pub struct Log(fd::OwnedFd);

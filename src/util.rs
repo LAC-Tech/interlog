@@ -13,7 +13,7 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
 pub struct Segment {
 	pub pos: usize,
 	pub len: usize,
-	pub end: usize,
+	pub end: usize
 }
 
 impl Segment {
@@ -38,7 +38,7 @@ pub trait Segmentable<T> {
 /// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
 	elems: alloc::boxed::Box<[T]>,
-	len: usize,
+	len: usize
 }
 
 #[derive(Debug)]
@@ -96,7 +96,7 @@ impl<T> FixVec<T> {
 
 	fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
 	where
-		I: SliceIndex<[T]>,
+		I: SliceIndex<[T]>
 	{
 		self.elems[..self.len].get(index)
 	}
@@ -152,7 +152,7 @@ pub struct CircBufWrapAround;
 pub struct CircBuf<T> {
 	buf: Box<[T]>,
 	len: usize,
-	write_idx: usize,
+	write_idx: usize
 }
 
 impl<T> CircBuf<T> {
@@ -194,7 +194,7 @@ impl<T: Copy> CircBuf<T> {
 	// TODO: this should just start writing from the beginning if it wraps around?
 	pub fn extend_from_slice(
 		&mut self,
-		slice: &[T],
+		slice: &[T]
 	) -> Result<(), CircBufWrapAround> {
 		let contiguous_space_left = self.capacity() - self.write_idx;
 		if contiguous_space_left > slice.len() {
@@ -213,7 +213,7 @@ impl<T> CircBuf<T> {
 
 struct CircBufIterator<'a, T> {
 	circ_buf: &'a CircBuf<T>,
-	index: usize,
+	index: usize
 }
 
 impl<'a, T> Iterator for CircBufIterator<'a, T> {
@@ -239,7 +239,7 @@ struct BipBuf<T> {
 	b_start: usize,
 	b_end: usize,
 	reserve_start: usize,
-	reserve_end: usize,
+	reserve_end: usize
 }
 
 impl<T> BipBuf<T> {}

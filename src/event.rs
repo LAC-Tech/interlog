@@ -13,7 +13,7 @@ pub struct ID {
 	pub origin: ReplicaID,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
-	pub pos: unit::Logical,
+	pub pos: unit::Logical
 }
 
 impl ID {
@@ -28,7 +28,7 @@ impl ID {
 #[repr(C)]
 struct Header {
 	byte_len: usize,
-	id: ID,
+	id: ID
 }
 
 impl Header {
@@ -46,7 +46,7 @@ impl Header {
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
 	pub id: ID,
-	pub payload: &'a [u8],
+	pub payload: &'a [u8]
 }
 
 impl<'a> Event<'a> {
@@ -80,7 +80,7 @@ impl FixVec<u8> {
 pub fn read<B, O>(bytes: &B, offset: O) -> Option<Event<'_>>
 where
 	B: Segmentable<u8>,
-	O: Into<unit::Byte>,
+	O: Into<unit::Byte>
 {
 	let header_segment = Header::range(offset.into());
 	let header_bytes = bytes.segment(&header_segment)?;
