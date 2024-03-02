@@ -13,47 +13,57 @@ impl Buf {
 	fn new(capacity: usize) -> Self {
 		let mem = vec![0; capacity].into_boxed_slice();
 		let a = Segment::ZERO;
-		// by definition B always starts at 0
-		let b_end = 0;
+		let b_end = 0; // by definition B always starts at 0
 		Self { mem, a, b_end }
 	}
 
 	fn extend(&mut self, s: &[u8]) {
-		if self.a.end + s.len() > self.mem.len() || self.b_end > 0 {
-			let new_b_end = self.b_end + s.len();
+		let a_would_overflow = self.a.end + s.len() > self.mem.len();
 
-			// No overwriting of a will occur
-			if self.a.pos > new_b_end {
-				self.write_b(s);
-				return;
-			}
-
-			// Part of A will be overwritten. We need to truncate it to find
-			// the first point that is the beginning of a new world
-			let new_a_pos: Option<usize> =
-				self.read_a().into_iter().skip(new_b_end).enumerate().find_map(
-					|(i, &c)| is_upper_ascii(c).then(|| i + new_b_end)
-				);
-
-			match new_a_pos {
-				// Truncate A and write to B
-				Some(new_a_pos) => {
-					self.a.change_pos(new_a_pos);
-					self.write_b(s);
-				}
-				// We've searched past the end of A and found nothing.
-				// B is now A
-				None => {
-					self.a = Segment::new(0, self.b_end);
-					self.b_end = 0;
-					self.extend(s);
-				}
-			}
-
+		if !a_would_overflow && self.b_end == 0 {
+			self.write_a(s);
 			return;
 		}
 
-		self.write_a(s);
+		let a_will_be_modified = self.b_end + s.len() >= self.a.pos;
+
+		if !a_will_be_modified {
+			self.write_b(s);
+			return;
+		}
+
+		let b_would_overflow = self.b_end + s.len() > self.mem.len();
+
+		if b_would_overflow {
+			self.a = Segment::new(0, self.b_end);
+			self.b_end = 0;
+		}
+
+		let new_b_end = self.b_end + s.len();
+
+		// EITHER part of A will be overwritten by extending B,
+		// OR extending B would overflow, so instead we start a new A
+		let new_a_pos: Option<usize> = self
+			.read_a()
+			.into_iter()
+			.skip(new_b_end)
+			.enumerate()
+			.find_map(|(i, &c)| is_upper_ascii(c).then(|| i + new_b_end));
+
+		match new_a_pos {
+			// Truncate A and write to B
+			Some(new_a_pos) => {
+				self.a.change_pos(new_a_pos);
+				self.write_b(s);
+			}
+			// We've searched past the end of A and found nothing.
+			// B is now A
+			None => {
+				self.a = Segment::new(0, self.b_end);
+				self.b_end = 0;
+				self.write_a(s);
+			}
+		}
 	}
 
 	fn write_a(&mut self, s: &[u8]) {
