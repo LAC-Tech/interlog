@@ -39,6 +39,13 @@ impl Header {
 	}
 }
 
+pub struct WriteInfo {
+	header_segment: Segment,
+	header: Header,
+	payload_segment: Segment,
+	next_offset: unit::Byte
+}
+
 /// An immutable record of some event. The core data structure of interlog.
 /// The term "event" comes from event sourcing, but this couldd also be thought
 /// of as a record or entry.
@@ -55,6 +62,19 @@ impl<'a> Event<'a> {
 		let size: unit::Byte = (Header::SIZE + self.payload.len()).into();
 		size.align()
 	}
+
+	fn write_info(&self, offset: unit::Byte) -> WriteInfo {
+		let Event { id, payload } = *self;
+		let byte_len = payload.len();
+		let header_segment = Header::range(offset);
+
+		WriteInfo {
+			header: Header { byte_len, id },
+			header_segment,
+			payload_segment: header_segment.next(payload.len()),
+			next_offset: offset + self.on_disk_size()
+		}
+	}
 }
 
 pub struct Buf(FixVec<u8>);
@@ -65,19 +85,15 @@ impl Buf {
 	}
 
 	pub fn append(&mut self, event: &Event) -> FixVecRes {
-		let Event { id, payload: val } = *event;
 		let offset = self.0.len().into();
-		let header_segment = Header::range(offset);
-		let byte_len = val.len();
-		let val_segment = header_segment.next(byte_len);
-		let new_len = unit::Byte(val_segment.end).align();
-		self.0.resize(new_len.into(), 0)?;
 
-		let header = Header { byte_len, id };
-		let header = bytemuck::bytes_of(&header);
+		let WriteInfo { header_segment, header, payload_segment, next_offset } =
+			event.write_info(offset);
 
-		self.0[header_segment.range()].copy_from_slice(header);
-		self.0[val_segment.range()].copy_from_slice(val);
+		self.0.resize(next_offset.into(), 0)?;
+		let header_bytes = bytemuck::bytes_of(&header);
+		self.0[header_segment.range()].copy_from_slice(header_bytes);
+		self.0[payload_segment.range()].copy_from_slice(event.payload);
 
 		Ok(())
 	}
@@ -93,9 +109,9 @@ impl Buf {
 		let header_segment = Header::range(offset.into());
 		let header_bytes = self.0.segment(&header_segment)?;
 		let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-		let val_segment = header_segment.next(byte_len);
-		let val = self.0.segment(&val_segment)?;
-		Some(Event { id, payload: val })
+		let payload_segment = header_segment.next(byte_len);
+		let payload = self.0.segment(&payload_segment)?;
+		Some(Event { id, payload })
 	}
 
 	pub fn clear(&mut self) {

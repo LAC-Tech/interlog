@@ -245,40 +245,6 @@ impl<'a, T> Iterator for CircBufIterator<'a, T> {
 	}
 }
 
-/// Implementation of Simon Cookess bi-partite circular buffer
-pub struct BipBuf<T> {
-	buf: Box<[T]>,
-	a_start: usize,
-	a_end: usize,
-	b_start: usize,
-	b_end: usize,
-	reserve_start: usize,
-	reserve_end: usize
-}
-
-impl<T> BipBuf<T> {
-	pub fn new(capacity: usize) -> Self {
-		Self {
-			buf: uninit_boxed_slice(capacity),
-			a_start: 0,
-			a_end: 0,
-			b_start: 0,
-			b_end: 0,
-			reserve_start: 0,
-			reserve_end: 0
-		}
-	}
-
-	pub fn clear(&mut self) {
-		self.a_start = 0;
-		self.a_end = 0;
-		self.b_start = 0;
-		self.b_end = 0;
-		self.reserve_start = 0;
-		self.reserve_end = 0;
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
