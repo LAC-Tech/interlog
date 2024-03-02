@@ -2,7 +2,7 @@
 //! This can be considered the "top level" of the library.
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{FixVec, FixVecOverflow};
+use crate::util::{FixVec, FixVecOverflow, Segment};
 use crate::{disk, event};
 use rand::prelude::*;
 use rustix::io; // TODO make OpenErr in disk, and return that, remove this
@@ -92,64 +92,92 @@ impl KeyIndex {
 /// X, Y and Z
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
-mod read_cache {
-	use super::{WriteErr, WriteRes};
-	use crate::event;
-	use crate::unit;
-	use crate::util::Segment;
+pub struct ReadCache {
+	mem: Box<[u8]>,
+	a: Segment,
+	b_end: usize,
+	disk_offset: unit::Byte
+}
 
-	struct WritePtr {
-		disk_offset: unit::Byte,
-		slice: Segment
+impl ReadCache {
+	pub fn new<B>(capacity: B, disk_offset: B) -> Self
+	where
+		B: Into<unit::Byte> + Into<usize>
+	{
+		let mem = vec![0; capacity.into()].into_boxed_slice();
+		let a = Segment::new(0, 0);
+		let b_end = 0;
+		let disk_offset: unit::Byte = disk_offset.into();
+		Self { mem, a, b_end, disk_offset }
 	}
 
-	pub struct ReadCache {
-		pub buf: event::Buf,
-		head: WritePtr,
-		tail: Option<WritePtr>
+	pub fn update(&mut self, es: &event::Buf) {
+		let len: usize = es.byte_len().into();
+
+		let a_would_overflow = self.a.end + len > self.mem.len();
+
+		if !a_would_overflow && self.b_end == 0 {
+			self.write_a(es);
+			return;
+		}
+
+		let a_will_be_modified = self.b_end + len >= self.a.pos;
+
+		if !a_will_be_modified {
+			self.write_b(es);
+			return;
+		}
+
+		let b_would_overflow = self.b_end + len > self.mem.len();
+
+		if b_would_overflow {
+			self.a = Segment::new(0, self.b_end);
+			self.b_end = 0;
+		}
+
+		let new_b_end = self.b_end + len;
+
+		let new_a_pos = event::EventIntoIterator::new(self.read_a())
+			.scan(unit::Byte(0), |offset, e| {
+				*offset += e.on_disk_size();
+				Some(*offset)
+			})
+			.find(|&offset| offset > new_b_end.into());
+
+		match new_a_pos {
+			// Truncate A and write to B
+			Some(new_a_pos) => {
+				self.a.change_pos(new_a_pos.into());
+				self.write_b(es);
+			}
+			// We've searched past the end of A and found nothing.
+			// B is now A
+			None => {
+				self.a = Segment::new(0, self.b_end);
+				self.b_end = 0;
+				self.write_a(es);
+			}
+		}
 	}
 
-	impl ReadCache {
-		pub fn new<B>(capacity: B) -> Self
-		where
-			B: Into<unit::Byte>
-		{
-			let buf = event::Buf::new(capacity.into());
-			let head =
-				WritePtr { disk_offset: 0.into(), slice: Segment::new(0, 0) };
-			let tail = None;
-			Self { buf, head, tail }
-		}
-
-		pub fn update(&mut self, write_cache: &event::Buf) -> WriteRes {
-			self.buf.extend(write_cache).map_err(WriteErr::ReadCache)
-		}
-
-		// TODO: read first contiguous slice, then the next one
-		pub fn read<O>(
-			&self,
-			disk_offsets: O
-		) -> impl Iterator<Item = event::Event<'_>>
-		where
-			O: Iterator<Item = unit::Byte>
-		{
-			disk_offsets
-				.map(|offset| self.buf.read(offset - self.head.disk_offset))
-				.fuse()
-				.flatten()
-		}
+	fn write_a(&mut self, es: &event::Buf) {
+		let diff: usize = es.byte_len().into();
+		self.mem[self.a.len..self.a.len + diff].copy_from_slice(es.as_bytes());
+		self.a.lengthen(diff);
 	}
 
-	#[cfg(test)]
-	mod tests {
-		use super::*;
-		use pretty_assertions::assert_eq;
-		use proptest::prelude::*;
+	fn write_b(&mut self, es: &event::Buf) {
+		let diff: usize = es.byte_len().into();
+		self.mem[self.b_end..self.b_end + diff].copy_from_slice(es.as_bytes());
+		self.b_end += diff;
+	}
 
-		#[test]
-		fn elektrobank() {
-			let rc = ReadCache::new(16);
-		}
+	fn read_a(&self) -> &[u8] {
+		&self.mem[self.a.range()]
+	}
+
+	fn read_b(&self) -> &[u8] {
+		&self.mem[0..self.b_end]
 	}
 }
 
@@ -248,38 +276,6 @@ pub mod io_bus {
 		use proptest::prelude::*;
 
 		proptest! {
-			/*
-			#[test]
-			fn combine_buffers(
-				es1 in arb_local_events(16, 16),
-				es2 in arb_local_events(16, 16)
-			) {
-				// Setup
-				let mut rng = rand::thread_rng();
-				let replica_id = ReplicaID::new(&mut rng);
-
-				let mut buf1 = FixVec::new(0x800);
-				let mut buf2 = FixVec::new(0x800);
-
-				let start: unit::Logical = 0.into();
-
-				buf1.append_local_events(start, replica_id, es1.iter().map(Deref::deref))
-					.expect("buf should have enough");
-
-				buf2.append_local_events(start, replica_id, es2.iter().map(Deref::deref))
-					.expect("buf should have enough");
-
-				buf1.extend_from_slice(&buf2).expect("buf should have enough");
-
-				let actual: Vec<_> = buf1.into_iter().map(|e| e.val).collect();
-
-				let mut expected = Vec::new();
-				expected.extend(&es1);
-				expected.extend(&es2);
-
-				assert_eq!(&actual, &expected);
-			}
-			*/
 			#[test]
 			fn w_many_events(es in arb_local_events(16, 16)) {
 				// Setup
@@ -313,7 +309,7 @@ pub mod io_bus {
 struct Log {
 	disk: disk::Log,
 	byte_len: unit::Byte,
-	read_cache: read_cache::ReadCache,
+	read_cache: ReadCache,
 	/// The entire index in memory, like bitcask's KeyDir
 	key_index: KeyIndex
 }
@@ -332,7 +328,7 @@ impl Log {
 		// Disk offsets recored in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 
-		for e in self.read_cache.buf.into_iter() {
+		for e in self.read_cache.into_iter() {
 			self.key_index.push(disk_offset)?;
 			disk_offset += e.on_disk_size();
 		}
@@ -386,7 +382,7 @@ impl Local {
 			disk: disk::Log::open(&path)?,
 			// TODO: this assumes the log is empty
 			byte_len: 0.into(),
-			read_cache: read_cache::ReadCache::new(config.read_cache_capacity),
+			read_cache: ReadCache::new(config.read_cache_capacity),
 			key_index: KeyIndex::new(config.index_capacity)
 		};
 

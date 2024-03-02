@@ -77,6 +77,19 @@ impl<'a> Event<'a> {
 	}
 }
 
+pub fn read<'a, S, O>(bytes: S, offset: O) -> Option<Event<'a>>
+where
+	S: Segmentable<u8>,
+	O: Into<unit::Byte>
+{
+	let header_segment = Header::range(offset.into());
+	let header_bytes = bytes.segment(&header_segment)?;
+	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
+	let payload_segment = header_segment.next(byte_len);
+	let payload = bytes.segment(&payload_segment)?;
+	Some(Event { id, payload })
+}
+
 pub struct Buf(FixVec<u8>);
 
 impl Buf {
@@ -106,12 +119,7 @@ impl Buf {
 	where
 		O: Into<unit::Byte>
 	{
-		let header_segment = Header::range(offset.into());
-		let header_bytes = self.0.segment(&header_segment)?;
-		let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-		let payload_segment = header_segment.next(byte_len);
-		let payload = self.0.segment(&payload_segment)?;
-		Some(Event { id, payload })
+		read(self.0, offset)
 	}
 
 	pub fn clear(&mut self) {
@@ -129,46 +137,32 @@ impl Buf {
 	pub fn byte_capacity(&self) -> unit::Byte {
 		self.0.capacity().into()
 	}
+
+	pub fn into_iter(&self) -> EventIntoIterator<'_> {
+		EventIntoIterator { bytes: &self.0, index: unit::Byte(0) }
+	}
 }
 
-pub struct BufIntoIterator<'a> {
-	event_buf: &'a Buf,
+pub struct EventIntoIterator<'a> {
+	bytes: &'a [u8],
 	index: unit::Byte
 }
 
-impl<'a> Iterator for BufIntoIterator<'a> {
+impl<'a> EventIntoIterator<'a> {
+	pub fn new(bytes: &'a [u8]) -> Self {
+		Self { bytes, index: 0.into() }
+	}
+}
+
+impl<'a> Iterator for EventIntoIterator<'a> {
 	type Item = Event<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		let result = self.event_buf.read(self.index)?;
+		let result = read(self.bytes, self.index)?;
 		self.index += result.on_disk_size();
 		Some(result)
 	}
 }
-
-impl<'a> IntoIterator for &'a Buf {
-	type Item = Event<'a>;
-	type IntoIter = BufIntoIterator<'a>;
-
-	fn into_iter(self) -> Self::IntoIter {
-		BufIntoIterator { event_buf: self, index: 0.into() }
-	}
-}
-
-/*
-pub fn read<B, O>(bytes: &B, offset: O) -> Option<Event<'_>>
-where
-	B: Segmentable<u8>,
-	O: Into<unit::Byte>
-{
-	let header_segment = Header::range(offset.into());
-	let header_bytes = bytes.segment(&header_segment)?;
-	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-	let val_segment = header_segment.next(byte_len);
-	let val = bytes.segment(&val_segment)?;
-	Some(Event { id, payload: val })
-}
-*/
 
 #[cfg(test)]
 mod tests {

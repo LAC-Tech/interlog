@@ -160,6 +160,12 @@ impl<T> Segmentable<T> for FixVec<T> {
 	}
 }
 
+impl<T> Segmentable<T> for &[T] {
+	fn segment(&self, index: &Segment) -> Option<&[T]> {
+		self[..self.len()].get(index.range())
+	}
+}
+
 #[derive(Debug)]
 pub struct CircBufWrapAround;
 
