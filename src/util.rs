@@ -10,6 +10,7 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
 	result.into_boxed_slice()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
 	pub pos: usize,
 	pub len: usize,
@@ -17,8 +18,21 @@ pub struct Segment {
 }
 
 impl Segment {
-	pub fn new(pos: usize, len: usize) -> Self {
+	pub const fn new(pos: usize, len: usize) -> Self {
 		Self { pos, len, end: pos + len }
+	}
+
+	pub const ZERO: Self = Self::new(0, 0);
+
+	pub fn lengthen(&mut self, n: usize) {
+		self.len += n;
+		self.end = self.pos + self.len;
+	}
+
+	/// Set pos to new_pos, while leaving the end the same
+	pub fn change_pos(&mut self, new_pos: usize) {
+		self.pos = new_pos;
+		self.len = self.end - new_pos;
 	}
 
 	pub fn next(&self, len: usize) -> Self {
