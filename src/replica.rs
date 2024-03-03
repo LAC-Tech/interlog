@@ -35,6 +35,7 @@ trait StatsReporter {
 	fn stats(&self) -> Self::Stats;
 }
 
+/*
 struct KeyIndex(FixVec<unit::Byte>);
 
 /// Maps logical indices to disk offsets
@@ -63,6 +64,7 @@ impl KeyIndex {
 		self.0.iter().skip(pos.into()).copied()
 	}
 }
+*/
 
 /// ReadCache is a fixed sized structure that caches the latest entries in the
 /// log (LIFO caching). The assumption is that things recently added are
@@ -93,22 +95,23 @@ impl KeyIndex {
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
 pub struct ReadCache {
+	/// The entire index in memory, like bitcask's KeyDir
+	key_index: FixVec<unit::Byte>,
+	cache_start: unit::Logical,
 	mem: Box<[u8]>,
 	a: Segment,
-	b_end: usize,
-	disk_offset: unit::Byte
+	b_end: usize
 }
 
 impl ReadCache {
-	pub fn new<B>(capacity: B, disk_offset: B) -> Self
-	where
-		B: Into<unit::Byte> + Into<usize>
-	{
-		let mem = vec![0; capacity.into()].into_boxed_slice();
-		let a = Segment::new(0, 0);
-		let b_end = 0;
-		let disk_offset: unit::Byte = disk_offset.into();
-		Self { mem, a, b_end, disk_offset }
+	pub fn new(config: ReadCacheConfig) -> Self {
+		Self {
+			key_index: FixVec::new(config.key_index_capacity.into()),
+			cache_start: unit::Logical(0),
+			mem: vec![0; config.mem_capacity.into()].into_boxed_slice(),
+			a: Segment::new(0, 0),
+			b_end: 0
+		}
 	}
 
 	pub fn update(&mut self, es: &event::Buf) {
@@ -309,9 +312,7 @@ pub mod io_bus {
 struct Log {
 	disk: disk::Log,
 	byte_len: unit::Byte,
-	read_cache: ReadCache,
-	/// The entire index in memory, like bitcask's KeyDir
-	key_index: KeyIndex
+	read_cache: ReadCache
 }
 
 impl Log {
@@ -355,9 +356,9 @@ impl Log {
 	}
 }
 
-pub struct Config {
-	pub index_capacity: usize,
-	pub read_cache_capacity: unit::Byte
+struct ReadCacheConfig {
+	key_index_capacity: unit::Logical,
+	mem_capacity: unit::Byte
 }
 
 /// A replica on the same machine as user code
@@ -372,7 +373,7 @@ impl Local {
 	pub fn new<R: Rng>(
 		dir_path: &std::path::Path,
 		rng: &mut R,
-		config: Config
+		config: ReadCacheConfig
 	) -> io::Result<Self> {
 		let id = ReplicaID::new(rng);
 
@@ -382,8 +383,7 @@ impl Local {
 			disk: disk::Log::open(&path)?,
 			// TODO: this assumes the log is empty
 			byte_len: 0.into(),
-			read_cache: ReadCache::new(config.read_cache_capacity),
-			key_index: KeyIndex::new(config.index_capacity)
+			read_cache: ReadCache::new(config)
 		};
 
 		Ok(Self { id, path, log })
@@ -430,9 +430,9 @@ mod tests {
 				.expect("failed to open temp file");
 
 			let mut rng = rand::thread_rng();
-			let config = Config {
-				index_capacity: 128,
-				read_cache_capacity: unit::Byte(1024),
+			let config = ReadCacheConfig {
+				key_index_capacity: unit::Logical(128),
+				mem_capacity: unit::Byte(1024),
 			};
 
 			let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
