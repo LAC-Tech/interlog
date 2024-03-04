@@ -167,15 +167,13 @@ impl ReadCache {
 	}
 
 	fn write_a(&mut self, es: &event::Buf) {
-		let diff: usize = es.byte_len().into();
-		self.mem[self.a.len..self.a.len + diff].copy_from_slice(es.as_bytes());
-		self.a.lengthen(diff);
+		self.a.lengthen(es.byte_len());
+		self.mem[self.a.range()].copy_from_slice(es.as_bytes());
 	}
 
 	fn write_b(&mut self, es: &event::Buf) {
-		let diff: usize = es.byte_len().into();
+		self.b_end += es.byte_len();
 		self.mem[self.b_end..self.b_end + diff].copy_from_slice(es.as_bytes());
-		self.b_end += diff;
 	}
 
 	fn read_a(&self) -> &[u8] {

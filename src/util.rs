@@ -52,8 +52,9 @@ impl Region {
 	}
 }
 
-pub trait Segmentable<T> {
-	fn segment(&self, r: &Region) -> Option<&[T]>;
+pub trait Contiguous<T> {
+	fn read_region(&self, r: &Region) -> Option<&[T]>;
+	fn write_region(&mut self, r: &Region, data: &[T]);
 }
 
 /// Fixed Capacity Vector
@@ -162,15 +163,13 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 	}
 }
 
-impl<T> Segmentable<T> for FixVec<T> {
-	fn segment(&self, index: &Region) -> Option<&[T]> {
-		self.elems[..self.len].get(index.range())
+impl<T> Contiguous<T> for &[T] {
+	fn read_region(&self, index: &Region) -> Option<&[T]> {
+		self.get(index.range())
 	}
-}
 
-impl<T> Segmentable<T> for &[T] {
-	fn segment(&self, index: &Region) -> Option<&[T]> {
-		self[..self.len()].get(index.range())
+	fn write_region(&mut self, r: &Region, data: &[T]) {
+		self[r.range()].copy_from_slice(data)
 	}
 }
 
