@@ -1,6 +1,8 @@
 //! Fixed capacity data structures, that do not allocate when modified.
 use std::slice::SliceIndex;
 
+use crate::unit;
+
 fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
 	let mut result = Vec::with_capacity(size);
 	#[allow(clippy::uninit_vec)]
@@ -11,41 +13,47 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Segment {
-	pub pos: usize,
-	pub len: usize,
-	pub end: usize
+pub struct Region {
+	pub pos: unit::Byte,
+	pub len: unit::Byte,
+	pub end: unit::Byte
 }
 
-impl Segment {
-	pub const fn new(pos: usize, len: usize) -> Self {
+impl Region {
+	pub const fn new<B: Into<unit::Byte>>(pos: B, len: B) -> Self {
+		let pos = pos.into();
+		let len = len.into();
 		Self { pos, len, end: pos + len }
+	}
+
+	pub fn from_zero(len: unit::Byte) -> Self {
+		Self::new(0.into(), len)
 	}
 
 	pub const ZERO: Self = Self::new(0, 0);
 
-	pub fn lengthen(&mut self, n: usize) {
+	pub fn lengthen(&mut self, n: unit::Byte) {
 		self.len += n;
 		self.end = self.pos + self.len;
 	}
 
 	/// Set pos to new_pos, while leaving the end the same
-	pub fn change_pos(&mut self, new_pos: usize) {
+	pub fn change_pos(&mut self, new_pos: unit::Byte) {
 		self.pos = new_pos;
 		self.len = self.end - new_pos;
 	}
 
-	pub fn next(&self, len: usize) -> Self {
+	pub fn next(&self, len: unit::Byte) -> Self {
 		Self::new(self.pos + self.len, len)
 	}
 
 	pub fn range(&self) -> core::ops::Range<usize> {
-		self.pos..self.end
+		self.pos.into()..self.end.into()
 	}
 }
 
 pub trait Segmentable<T> {
-	fn segment(&self, index: &Segment) -> Option<&[T]>;
+	fn segment(&self, r: &Region) -> Option<&[T]>;
 }
 
 /// Fixed Capacity Vector
@@ -155,13 +163,13 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 }
 
 impl<T> Segmentable<T> for FixVec<T> {
-	fn segment(&self, index: &Segment) -> Option<&[T]> {
+	fn segment(&self, index: &Region) -> Option<&[T]> {
 		self.elems[..self.len].get(index.range())
 	}
 }
 
 impl<T> Segmentable<T> for &[T] {
-	fn segment(&self, index: &Segment) -> Option<&[T]> {
+	fn segment(&self, index: &Region) -> Option<&[T]> {
 		self[..self.len()].get(index.range())
 	}
 }

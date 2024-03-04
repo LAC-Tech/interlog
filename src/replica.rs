@@ -2,7 +2,7 @@
 //! This can be considered the "top level" of the library.
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{FixVec, FixVecOverflow, Segment};
+use crate::util::{FixVec, FixVecOverflow, Region};
 use crate::{disk, event};
 use rand::prelude::*;
 use rustix::io; // TODO make OpenErr in disk, and return that, remove this
@@ -99,8 +99,8 @@ pub struct ReadCache {
 	key_index: FixVec<unit::Byte>,
 	cache_start: unit::Logical,
 	mem: Box<[u8]>,
-	a: Segment,
-	b_end: usize
+	a: Region,
+	b_end: unit::Byte
 }
 
 impl ReadCache {
@@ -109,36 +109,39 @@ impl ReadCache {
 			key_index: FixVec::new(config.key_index_capacity.into()),
 			cache_start: unit::Logical(0),
 			mem: vec![0; config.mem_capacity.into()].into_boxed_slice(),
-			a: Segment::new(0, 0),
-			b_end: 0
+			a: Region::new(0, 0),
+			b_end: 0.into()
 		}
 	}
 
-	pub fn update(&mut self, es: &event::Buf) {
-		let len: usize = es.byte_len().into();
+	#[inline]
+	fn capacity(&self) -> unit::Byte {
+		self.mem.len().into()
+	}
 
-		let a_would_overflow = self.a.end + len > self.mem.len();
+	pub fn update(&mut self, es: &event::Buf) {
+		let a_would_overflow = self.a.end + es.byte_len() > self.capacity();
 
 		if !a_would_overflow && self.b_end == 0 {
 			self.write_a(es);
 			return;
 		}
 
-		let a_will_be_modified = self.b_end + len >= self.a.pos;
+		let a_will_be_modified = self.b_end + es.byte_len() >= self.a.pos;
 
 		if !a_will_be_modified {
 			self.write_b(es);
 			return;
 		}
 
-		let b_would_overflow = self.b_end + len > self.mem.len();
+		let b_would_overflow = self.b_end + es.byte_len() > self.capacity();
 
 		if b_would_overflow {
-			self.a = Segment::new(0, self.b_end);
-			self.b_end = 0;
+			self.a = Region::from_zero(self.b_end);
+			self.b_end = 0.into();
 		}
 
-		let new_b_end = self.b_end + len;
+		let new_b_end = self.b_end + es.byte_len();
 
 		let new_a_pos = event::EventIntoIterator::new(self.read_a())
 			.scan(unit::Byte(0), |offset, e| {
@@ -156,8 +159,8 @@ impl ReadCache {
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = Segment::new(0, self.b_end);
-				self.b_end = 0;
+				self.a = Region::from_zero(self.b_end);
+				self.b_end = 0.into();
 				self.write_a(es);
 			}
 		}

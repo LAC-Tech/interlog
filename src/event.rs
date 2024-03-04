@@ -1,7 +1,7 @@
 //! Structs for reading and writing events from contiguous bytes.
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{FixVec, FixVecRes, Segment, Segmentable};
+use crate::util::{FixVec, FixVecRes, Region, Segmentable};
 
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
@@ -27,22 +27,22 @@ impl ID {
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
 struct Header {
-	byte_len: usize,
+	byte_len: unit::Byte,
 	id: ID
 }
 
 impl Header {
-	const SIZE: usize = std::mem::size_of::<Self>();
+	const SIZE: unit::Byte = std::mem::size_of::<Self>().into();
 
-	fn range(start: unit::Byte) -> Segment {
-		Segment::new(start.0, Self::SIZE)
+	fn range(start: unit::Byte) -> Region {
+		Region::new(start, Self::SIZE)
 	}
 }
 
 pub struct WriteInfo {
-	header_segment: Segment,
+	header_segment: Region,
 	header: Header,
-	payload_segment: Segment,
+	payload_segment: Region,
 	next_offset: unit::Byte
 }
 
@@ -59,19 +59,22 @@ pub struct Event<'a> {
 impl<'a> Event<'a> {
 	/// Number of bytes the event will take up, including the header
 	pub fn on_disk_size(&self) -> unit::Byte {
-		let size: unit::Byte = (Header::SIZE + self.payload.len()).into();
+		let size: unit::Byte = (Header::SIZE + self.payload_len()).into();
 		size.align()
 	}
 
+	#[inline]
+	fn payload_len(&self) -> unit::Byte {
+		self.payload.len().into()
+	}
+
 	fn write_info(&self, offset: unit::Byte) -> WriteInfo {
-		let Event { id, payload } = *self;
-		let byte_len = payload.len();
 		let header_segment = Header::range(offset);
 
 		WriteInfo {
-			header: Header { byte_len, id },
+			header: Header { byte_len: self.payload_len(), id: self.id },
 			header_segment,
-			payload_segment: header_segment.next(payload.len()),
+			payload_segment: header_segment.next(self.payload_len()),
 			next_offset: offset + self.on_disk_size()
 		}
 	}

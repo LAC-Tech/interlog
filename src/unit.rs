@@ -5,7 +5,17 @@ use derive_more::*;
 /// Represents a byte address, divisible by 8, where an Event starts.
 #[repr(transparent)]
 #[derive(
-	Add, AddAssign, Clone, Copy, From, Into, PartialEq, PartialOrd, Sub,
+	Add,
+	AddAssign,
+	Clone,
+	Copy,
+	From,
+	Into,
+	PartialEq,
+	PartialOrd,
+	Sub,
+	bytemuck::Pod,
+	bytemuck::Zeroable,
 )]
 pub struct Byte(pub usize);
 
