@@ -16,6 +16,7 @@ mod disk;
 mod test_utils;
 
 pub mod event;
+pub mod mem;
 pub mod replica;
 pub mod replica_id;
 pub mod unit;

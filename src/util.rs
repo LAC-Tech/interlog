@@ -1,7 +1,7 @@
 //! Fixed capacity data structures, that do not allocate when modified.
 use std::slice::SliceIndex;
 
-use crate::unit;
+//use crate::unit;
 
 fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
 	let mut result = Vec::with_capacity(size);
@@ -10,51 +10,6 @@ fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
 		result.set_len(size)
 	};
 	result.into_boxed_slice()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Region {
-	pub pos: unit::Byte,
-	pub len: unit::Byte,
-	pub end: unit::Byte
-}
-
-impl Region {
-	pub const fn new<B: Into<unit::Byte>>(pos: B, len: B) -> Self {
-		let pos = pos.into();
-		let len = len.into();
-		Self { pos, len, end: pos + len }
-	}
-
-	pub fn from_zero(len: unit::Byte) -> Self {
-		Self::new(0.into(), len)
-	}
-
-	pub const ZERO: Self = Self::new(0, 0);
-
-	pub fn lengthen(&mut self, n: unit::Byte) {
-		self.len += n;
-		self.end = self.pos + self.len;
-	}
-
-	/// Set pos to new_pos, while leaving the end the same
-	pub fn change_pos(&mut self, new_pos: unit::Byte) {
-		self.pos = new_pos;
-		self.len = self.end - new_pos;
-	}
-
-	pub fn next(&self, len: unit::Byte) -> Self {
-		Self::new(self.pos + self.len, len)
-	}
-
-	pub fn range(&self) -> core::ops::Range<usize> {
-		self.pos.into()..self.end.into()
-	}
-}
-
-pub trait Contiguous<T> {
-	fn read_region(&self, r: &Region) -> Option<&[T]>;
-	fn write_region(&mut self, r: &Region, data: &[T]);
 }
 
 /// Fixed Capacity Vector
@@ -160,16 +115,6 @@ impl<T> std::ops::Deref for FixVec<T> {
 impl<T> std::ops::DerefMut for FixVec<T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.elems[..self.len]
-	}
-}
-
-impl<T> Contiguous<T> for &[T] {
-	fn read_region(&self, index: &Region) -> Option<&[T]> {
-		self.get(index.range())
-	}
-
-	fn write_region(&mut self, r: &Region, data: &[T]) {
-		self[r.range()].copy_from_slice(data)
 	}
 }
 

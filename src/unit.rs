@@ -2,6 +2,8 @@
 use core::fmt;
 use derive_more::*;
 
+use crate::util;
+
 /// Represents a byte address, divisible by 8, where an Event starts.
 #[repr(transparent)]
 #[derive(
@@ -22,6 +24,10 @@ pub struct Byte(pub usize);
 impl Byte {
 	pub fn align(self) -> Byte {
 		Self((self.0 + 7) & !7)
+	}
+
+	pub fn region(self, len: Self) -> util::Region {
+		util::Region::new(self, len)
 	}
 }
 

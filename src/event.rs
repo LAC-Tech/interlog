@@ -1,7 +1,9 @@
 //! Structs for reading and writing events from contiguous bytes.
+use crate::mem;
+use crate::mem::Readable;
 use crate::replica_id::ReplicaID;
 use crate::unit;
-use crate::util::{FixVec, FixVecRes, Region, Segmentable};
+use crate::util::{FixVec, FixVecRes};
 
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
@@ -34,15 +36,15 @@ struct Header {
 impl Header {
 	const SIZE: unit::Byte = std::mem::size_of::<Self>().into();
 
-	fn range(start: unit::Byte) -> Region {
-		Region::new(start, Self::SIZE)
-	}
+	// fn region(start: unit::Byte) -> Region {
+	// 	Region::new(start, Self::SIZE)
+	// }
 }
 
 pub struct WriteInfo {
-	header_segment: Region,
+	header_region: mem::Region,
 	header: Header,
-	payload_segment: Region,
+	payload_segment: mem::Region,
 	next_offset: unit::Byte
 }
 
@@ -59,8 +61,7 @@ pub struct Event<'a> {
 impl<'a> Event<'a> {
 	/// Number of bytes the event will take up, including the header
 	pub fn on_disk_size(&self) -> unit::Byte {
-		let size: unit::Byte = (Header::SIZE + self.payload_len()).into();
-		size.align()
+		(Header::SIZE + self.payload_len()).align()
 	}
 
 	#[inline]
@@ -69,81 +70,43 @@ impl<'a> Event<'a> {
 	}
 
 	fn write_info(&self, offset: unit::Byte) -> WriteInfo {
-		let header_segment = Header::range(offset);
+		let header_region = mem::Region::new(offset, Header::SIZE);
 
 		WriteInfo {
 			header: Header { byte_len: self.payload_len(), id: self.id },
-			header_segment,
-			payload_segment: header_segment.next(self.payload_len()),
+			header_region,
+			payload_segment: header_region.next(self.payload_len()),
 			next_offset: offset + self.on_disk_size()
 		}
 	}
 }
 
-pub fn read<'a, S, O>(bytes: S, offset: O) -> Option<Event<'a>>
+pub fn read<'a, B, O>(bytes: B, offset: O) -> Option<Event<'a>>
 where
-	S: Segmentable<u8>,
+	B: mem::Readable,
 	O: Into<unit::Byte>
 {
-	let header_segment = Header::range(offset.into());
-	let header_bytes = bytes.segment(&header_segment)?;
+	let header_region = mem::Region::new(offset.into(), Header::SIZE);
+	let header_bytes = mem::read(bytes, &header_region)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
-	let payload_segment = header_segment.next(byte_len);
-	let payload = bytes.segment(&payload_segment)?;
+	let payload_region = header_region.next(byte_len);
+	let payload = mem::read(bytes, &payload_region)?;
 	Some(Event { id, payload })
 }
 
-pub struct Buf(FixVec<u8>);
+pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
+	let offset = buf.len().into();
 
-impl Buf {
-	pub fn new(capacity: unit::Byte) -> Self {
-		Self(FixVec::new(capacity.into()))
-	}
+	let header_region = mem::Region::new(offset, Header::SIZE);
+	let header = Header { byte_len: event.payload_len(), id: event.id };
+	let payload_segment = header_region.next(event.payload_len());
+	let next_offset = offset + event.on_disk_size();
+	buf.resize(next_offset.into(), 0)?;
+	let header_bytes = bytemuck::bytes_of(&header);
+	buf[header_region.range()].copy_from_slice(header_bytes);
+	buf[payload_segment.range()].copy_from_slice(event.payload);
 
-	pub fn append(&mut self, event: &Event) -> FixVecRes {
-		let offset = self.0.len().into();
-
-		let WriteInfo { header_segment, header, payload_segment, next_offset } =
-			event.write_info(offset);
-
-		self.0.resize(next_offset.into(), 0)?;
-		let header_bytes = bytemuck::bytes_of(&header);
-		self.0[header_segment.range()].copy_from_slice(header_bytes);
-		self.0[payload_segment.range()].copy_from_slice(event.payload);
-
-		Ok(())
-	}
-
-	pub fn extend(&mut self, other: &Buf) -> FixVecRes {
-		self.0.extend_from_slice(other.as_bytes())
-	}
-
-	pub fn read<O>(&self, offset: O) -> Option<Event<'_>>
-	where
-		O: Into<unit::Byte>
-	{
-		read(self.0, offset)
-	}
-
-	pub fn clear(&mut self) {
-		self.0.clear()
-	}
-
-	pub fn as_bytes(&self) -> &[u8] {
-		&self.0
-	}
-
-	pub fn byte_len(&self) -> unit::Byte {
-		self.0.len().into()
-	}
-
-	pub fn byte_capacity(&self) -> unit::Byte {
-		self.0.capacity().into()
-	}
-
-	pub fn into_iter(&self) -> EventIntoIterator<'_> {
-		EventIntoIterator { bytes: &self.0, index: unit::Byte(0) }
-	}
+	Ok(())
 }
 
 pub struct EventIntoIterator<'a> {
@@ -170,6 +133,7 @@ impl<'a> Iterator for EventIntoIterator<'a> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	//use crate::mem::Readable;
 	use pretty_assertions::assert_eq;
 	use proptest::prelude::*;
 
@@ -185,7 +149,7 @@ mod tests {
 			let event = Event {id: ID::new(replica_id, 0), payload: &e};
 
 			// Pre conditions
-			assert_eq!(buf.byte_len(), 0.into(), "buf should start empty");
+			assert_eq!(&buf.byte_len(), 0.into(), "buf should start empty");
 			assert!(&buf.read(0).is_none(), "should contain no event");
 
 			println!("\nAPPEND\n");
