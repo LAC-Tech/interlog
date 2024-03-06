@@ -1,6 +1,5 @@
 //! Structs for reading and writing events from contiguous bytes.
 use crate::mem;
-use crate::mem::Readable;
 use crate::replica_id::ReplicaID;
 use crate::unit;
 use crate::util::{FixVec, FixVecRes};
@@ -35,10 +34,6 @@ struct Header {
 
 impl Header {
 	const SIZE: unit::Byte = std::mem::size_of::<Self>().into();
-
-	// fn region(start: unit::Byte) -> Region {
-	// 	Region::new(start, Self::SIZE)
-	// }
 }
 
 pub struct WriteInfo {
@@ -95,16 +90,17 @@ where
 }
 
 pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
+	let byte_len = event.payload_len();
 	let offset = buf.len().into();
-
 	let header_region = mem::Region::new(offset, Header::SIZE);
-	let header = Header { byte_len: event.payload_len(), id: event.id };
-	let payload_segment = header_region.next(event.payload_len());
+	let header = Header { byte_len, id: event.id };
+	let payload_segment = header_region.next(byte_len);
 	let next_offset = offset + event.on_disk_size();
 	buf.resize(next_offset.into(), 0)?;
 	let header_bytes = bytemuck::bytes_of(&header);
-	buf[header_region.range()].copy_from_slice(header_bytes);
-	buf[payload_segment.range()].copy_from_slice(event.payload);
+
+	mem::write(buf, &header_region, header_bytes);
+	mem::write(buf, &payload_segment, event.payload);
 
 	Ok(())
 }
@@ -144,21 +140,21 @@ mod tests {
 		) {
 			// Setup
 			let mut rng = rand::thread_rng();
-			let mut buf = Buf::new(256.into());
+			let mut buf = FixVec::new(256);
 			let replica_id = ReplicaID::new(&mut rng);
 			let event = Event {id: ID::new(replica_id, 0), payload: &e};
 
 			// Pre conditions
-			assert_eq!(&buf.byte_len(), 0.into(), "buf should start empty");
-			assert!(&buf.read(0).is_none(), "should contain no event");
+			assert_eq!(mem::size(buf), 0.into(), "buf should start empty");
+			assert!(read(buf, 0).is_none(), "should contain no event");
 
 			println!("\nAPPEND\n");
 			// Modifying
-			buf.append(&event).expect("buf should have enough");
+			append(&mut buf, &event).expect("buf should have enough");
 
 			println!("\nREAD\n");
 			// Post conditions
-			let actual = &buf.read(0).expect("one event to be at 0");
+			let actual = read(buf, 0).expect("one event to be at 0");
 			assert_eq!(actual.payload, &e);
 		}
 	}

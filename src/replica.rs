@@ -30,13 +30,6 @@ pub enum ReadErr {
 
 type ReadRes = Result<(), ReadErr>;
 
-/// For various reasons (monitoring, performance, debugging) it will be helpful
-/// to report some statistics. How much of a buffer is being used, lengths, etc
-trait StatsReporter {
-	type Stats;
-	fn stats(&self) -> Self::Stats;
-}
-
 /// ReadCache is a fixed sized structure that caches the latest entries in the
 /// log (LIFO caching). The assumption is that things recently added are
 /// most likely to be read out again.
@@ -140,29 +133,28 @@ impl ReadCache {
 
 	fn write_a(&mut self, es: &TxnWriteBuf) {
 		mem::write(
-			self.mem.as_ref(),
-			&self.a.len.region(es.byte_len()),
+			&mut self.mem,
+			&self.a.len.region(mem::size(es)),
 			es.as_bytes()
 		);
-		self.a.lengthen(es.byte_len());
+		self.a.lengthen(mem::size(es));
 	}
 
 	fn write_b(&mut self, es: &TxnWriteBuf) {
 		mem::write(
 			&mut self.mem,
-			&self.b.end.region(es.byte_len()),
+			&self.b.end.region(mem::size(es)),
 			es.as_bytes()
 		);
-		self.b_end += es.byte_len();
+		self.b.end += mem::size(es);
 	}
 
 	fn read_a(&self) -> &[u8] {
-		&self.mem[self.a.range()]
+		mem::read(self.mem, &self.a).expect("a range to be correct")
 	}
 
 	fn read_b(&self) -> &[u8] {
-		mem::read(self.mem.as_ref(), &mem::Region::from_zero(self.b.end))
-			.expect("0 to b_end to be a valid region of memory")
+		mem::read(self.mem, &self.b).expect("b range to be correct")
 	}
 }
 
@@ -189,7 +181,7 @@ impl TxnWriteBuf {
 			let pos = from + i.into();
 			let id = event::ID { origin: replica_id, pos };
 			let e = event::Event { id, payload: val };
-			event::append(&mut self.0, e).map_err(WriteErr::WriteCache)?;
+			event::append(&mut self.0, &e).map_err(WriteErr::WriteCache)?;
 		}
 
 		Ok(())
@@ -212,11 +204,8 @@ impl mem::Readable for &TxnWriteBuf {
 /// - ends at the end of an event
 /// - aligns events to 8 bytes
 pub mod io_bus {
-	use super::{
-		ReadErr, ReadRes, StatsReporter, TxnWriteBuf, WriteErr, WriteRes
-	};
+	use super::{ReadErr, ReadRes, TxnWriteBuf};
 	use crate::event;
-	use crate::replica_id::ReplicaID;
 	use crate::unit;
 	use crate::util::FixVec;
 
@@ -243,7 +232,8 @@ pub mod io_bus {
 			I: IntoIterator<Item = event::Event<'a>>
 		{
 			for e in events {
-				self.read_buf.append(&e).map_err(ReadErr::ClientBuf)?;
+				event::append(&mut self.read_buf, &e)
+					.map_err(ReadErr::ClientBuf)?;
 			}
 
 			Ok(())
@@ -254,20 +244,10 @@ pub mod io_bus {
 		}
 	}
 
-	pub struct Stats {
-		txn_write_buf_len: unit::Byte
-	}
-
-	impl StatsReporter for IOBus {
-		type Stats = Stats;
-		fn stats(&self) -> Stats {
-			Stats { txn_write_buf_len: self.txn_write_buf.byte_len() }
-		}
-	}
-
 	#[cfg(test)]
 	mod tests {
 		use super::*;
+		use crate::replica_id::ReplicaID;
 		use crate::test_utils::*;
 		use core::ops::Deref;
 		use pretty_assertions::assert_eq;
@@ -287,11 +267,11 @@ pub mod io_bus {
 					bus.stats().txn_write_buf_len,
 					0.into(), "buf should start empty");
 				assert!(
-					&bus.txn_write_buf.read(0).is_none(),
+					event::read(&bus.txn_write_buf, 0).is_none(),
 					"should contain no event");
 
 				let vals = es.iter().map(Deref::deref);
-				bus.write(0.into(), replica_id, vals)
+				bus.txn_write_buf.write(0.into(), replica_id, vals)
 					.expect("buf should have enough");
 
 				// Post conditions
@@ -311,7 +291,7 @@ struct Log {
 }
 
 impl Log {
-	fn persist(&mut self, txn_write_buf: &event::Buf) -> Result<(), WriteErr> {
+	fn persist(&mut self, txn_write_buf: &TxnWriteBuf) -> Result<(), WriteErr> {
 		let bytes_flushed = self
 			.disk
 			.append(txn_write_buf.as_bytes())
@@ -393,8 +373,8 @@ impl Local {
 	where
 		I: IntoIterator<Item = &'b [u8]>
 	{
-		io_bus.write(self.log.logical_len(), self.id, datums)?;
-		self.log.persist(io_bus.txn_write_buf())
+		io_bus.txn_write_buf.write(self.log.logical_len(), self.id, datums)?;
+		self.log.persist(&io_bus.txn_write_buf)
 	}
 
 	// TODO: assumes cache is 1:1 with disk

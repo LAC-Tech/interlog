@@ -2,7 +2,7 @@
 use core::fmt;
 use derive_more::*;
 
-use crate::util;
+use crate::mem;
 
 /// Represents a byte address, divisible by 8, where an Event starts.
 #[repr(transparent)]
@@ -26,8 +26,8 @@ impl Byte {
 		Self((self.0 + 7) & !7)
 	}
 
-	pub fn region(self, len: Self) -> util::Region {
-		util::Region::new(self, len)
+	pub fn region(self, len: Self) -> mem::Region {
+		mem::Region::new(self, len)
 	}
 }
 

@@ -44,12 +44,14 @@ pub trait Readable {
 	fn as_bytes(&self) -> &[u8];
 }
 
-pub trait Writeable {
-	fn as_mut_bytes(&self) -> &mut [u8];
+impl Readable for &[u8] {
+	fn as_bytes(&self) -> &[u8] {
+		self
+	}
 }
 
-impl Readable for &[u8] {
-	fn as_bytes(&self) -> Self {
+impl Readable for Box<[u8]> {
+	fn as_bytes(&self) -> &[u8] {
 		self
 	}
 }
@@ -57,6 +59,22 @@ impl Readable for &[u8] {
 impl Readable for FixVec<u8> {
 	fn as_bytes(&self) -> &[u8] {
 		&self
+	}
+}
+
+pub trait Writeable {
+	fn as_mut_bytes(&mut self) -> &mut [u8];
+}
+
+impl Writeable for FixVec<u8> {
+	fn as_mut_bytes(&mut self) -> &mut [u8] {
+		self
+	}
+}
+
+impl Writeable for Box<[u8]> {
+	fn as_mut_bytes(&mut self) -> &mut [u8] {
+		self
 	}
 }
 
@@ -68,6 +86,6 @@ pub fn read<R: Readable>(mem: R, r: &Region) -> Option<&[u8]> {
 	mem.as_bytes().get(r.range())
 }
 
-pub fn write<W: Writeable>(mem: W, r: &Region, data: &[u8]) {
+pub fn write<W: Writeable>(mem: &mut W, r: &Region, data: &[u8]) {
 	mem.as_mut_bytes()[r.range()].copy_from_slice(data)
 }
