@@ -98,7 +98,6 @@ impl KeyIndex {
 pub struct ReadCache {
 	/// The entire index in memory, like bitcask's KeyDir
 	key_index: FixVec<unit::Byte>,
-	cache_start: unit::Logical,
 	mem: Box<[u8]>,
 	a: mem::Region,
 	b: mem::Region // pos is always 0 but it's just easier
@@ -108,7 +107,6 @@ impl ReadCache {
 	pub fn new(config: ReadCacheConfig) -> Self {
 		Self {
 			key_index: FixVec::new(config.key_index_capacity.into()),
-			cache_start: unit::Logical(0),
 			mem: vec![0; config.mem_capacity.into()].into_boxed_slice(),
 			a: mem::Region::ZERO,
 			b: mem::Region::ZERO
