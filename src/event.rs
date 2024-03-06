@@ -105,18 +105,18 @@ pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
 	Ok(())
 }
 
-pub struct EventIntoIterator<'a> {
+pub struct View<'a> {
 	bytes: &'a [u8],
 	index: unit::Byte
 }
 
-impl<'a> EventIntoIterator<'a> {
-	pub fn new(bytes: &'a [u8]) -> Self {
-		Self { bytes, index: 0.into() }
+impl<'a> View<'a> {
+	pub fn new<R: mem::Readable>(mem: R) -> Self {
+		Self { bytes: mem.as_bytes(), index: 0.into() }
 	}
 }
 
-impl<'a> Iterator for EventIntoIterator<'a> {
+impl<'a> Iterator for View<'a> {
 	type Item = Event<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {

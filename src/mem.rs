@@ -56,7 +56,7 @@ impl Readable for Box<[u8]> {
 	}
 }
 
-impl Readable for FixVec<u8> {
+impl Readable for &FixVec<u8> {
 	fn as_bytes(&self) -> &[u8] {
 		&self
 	}

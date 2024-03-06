@@ -30,6 +30,43 @@ pub enum ReadErr {
 
 type ReadRes = Result<(), ReadErr>;
 
+enum KeyIndexHit {
+	Disk(unit::Byte),
+	Cache(unit::Byte)
+}
+
+struct KeyIndex {
+	cache_start: unit::Logical,
+	fix_vec: FixVec<unit::Byte>
+}
+
+/// Maps logical indices to disk offsets
+impl KeyIndex {
+	fn new(capacity: usize) -> Self {
+		Self { cache_start: unit::Logical(0), fix_vec: FixVec::new(capacity) }
+	}
+
+	fn len(&self) -> unit::Logical {
+		self.fix_vec.len().into()
+	}
+
+	fn push(&mut self, byte_offset: unit::Byte) -> WriteRes {
+		self.fix_vec.push(byte_offset).map_err(WriteErr::KeyIndex)
+	}
+
+	fn get(&self, logical_pos: unit::Logical) -> Result<unit::Byte, ReadErr> {
+		let i: usize = logical_pos.into();
+		self.fix_vec.get(i).cloned().ok_or(ReadErr::KeyIndex)
+	}
+
+	fn read_since(
+		&self,
+		pos: unit::Logical
+	) -> impl Iterator<Item = unit::Byte> + '_ {
+		self.fix_vec.iter().skip(pos.into()).copied()
+	}
+}
+
 /// ReadCache is a fixed sized structure that caches the latest entries in the
 /// log (LIFO caching). The assumption is that things recently added are
 /// most likely to be read out again.
@@ -107,13 +144,12 @@ impl ReadCache {
 
 		let new_b_end = self.b.end + mem::size(es);
 
-		let new_a_pos: Option<unit::Byte> =
-			event::EventIntoIterator::new(self.read_a())
-				.scan(unit::Byte(0), |offset, e| {
-					*offset += e.on_disk_size();
-					Some(*offset)
-				})
-				.find(|&offset| offset > new_b_end.into());
+		let new_a_pos: Option<unit::Byte> = event::View::new(self.read_a())
+			.scan(unit::Byte(0), |offset, e| {
+				*offset += e.on_disk_size();
+				Some(*offset)
+			})
+			.find(|&offset| offset > new_b_end.into());
 
 		match new_a_pos {
 			// Truncate A and write to B
@@ -168,7 +204,7 @@ impl TxnWriteBuf {
 	fn write<'a, I>(
 		&mut self,
 		from: unit::Logical,
-		replica_id: ReplicaID,
+		origin: ReplicaID,
 		new_events: I
 	) -> WriteRes
 	where
@@ -177,10 +213,10 @@ impl TxnWriteBuf {
 		self.0.clear();
 
 		// Write Events with their headers
-		for (i, val) in new_events.into_iter().enumerate() {
+		for (i, payload) in new_events.into_iter().enumerate() {
 			let pos = from + i.into();
-			let id = event::ID { origin: replica_id, pos };
-			let e = event::Event { id, payload: val };
+			let id = event::ID { origin, pos };
+			let e = event::Event { id, payload };
 			event::append(&mut self.0, &e).map_err(WriteErr::WriteCache)?;
 		}
 
@@ -190,7 +226,30 @@ impl TxnWriteBuf {
 
 impl mem::Readable for &TxnWriteBuf {
 	fn as_bytes(&self) -> &[u8] {
-		self.0.as_bytes()
+		&self.0
+	}
+}
+
+struct ReadBuf(FixVec<u8>);
+
+impl ReadBuf {
+	fn new(capacity: unit::Byte) -> Self {
+		Self(FixVec::new(capacity.into()))
+	}
+
+	pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
+	where
+		I: IntoIterator<Item = event::Event<'a>>
+	{
+		for e in events {
+			event::append(&mut self.0, &e).map_err(ReadErr::ClientBuf)?;
+		}
+
+		Ok(())
+	}
+
+	pub fn read_out(&self) -> impl Iterator<Item = event::Event<'_>> {
+		event::View::new(&self.0)
 	}
 }
 
@@ -204,8 +263,7 @@ impl mem::Readable for &TxnWriteBuf {
 /// - ends at the end of an event
 /// - aligns events to 8 bytes
 pub mod io_bus {
-	use super::{ReadErr, ReadRes, TxnWriteBuf};
-	use crate::event;
+	use super::*;
 	use crate::unit;
 	use crate::util::FixVec;
 
@@ -213,7 +271,7 @@ pub mod io_bus {
 		/// This stores all the events w/headers, contigously, which means only
 		/// one syscall is required to write to disk.
 		pub txn_write_buf: TxnWriteBuf,
-		read_buf: FixVec<u8>
+		pub read_buf: FixVec<u8>
 	}
 
 	impl IOBus {
@@ -225,22 +283,6 @@ pub mod io_bus {
 				txn_write_buf: TxnWriteBuf::new(txn_write_buf_capacity),
 				read_buf: FixVec::new(read_buf_capacity.into())
 			}
-		}
-
-		pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
-		where
-			I: IntoIterator<Item = event::Event<'a>>
-		{
-			for e in events {
-				event::append(&mut self.read_buf, &e)
-					.map_err(ReadErr::ClientBuf)?;
-			}
-
-			Ok(())
-		}
-
-		pub fn read_out(&self) -> impl Iterator<Item = event::Event<'_>> {
-			self.read_buf.into_iter()
 		}
 	}
 
@@ -384,7 +426,7 @@ impl Local {
 		pos: P
 	) -> Result<(), ReadErr> {
 		let events = self.log.events_since(pos.into());
-		io_bus.read_in(events)
+		io_bus.read_buf.read_in(events)
 	}
 }
 
