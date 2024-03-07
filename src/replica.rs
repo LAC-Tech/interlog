@@ -42,8 +42,11 @@ struct KeyIndex {
 
 /// Maps logical indices to disk offsets
 impl KeyIndex {
-	fn new(capacity: usize) -> Self {
-		Self { cache_start: unit::Logical(0), fix_vec: FixVec::new(capacity) }
+	fn new(capacity: unit::Logical) -> Self {
+		Self {
+			cache_start: unit::Logical(0),
+			fix_vec: FixVec::new(capacity.into())
+		}
 	}
 
 	fn len(&self) -> unit::Logical {
@@ -380,6 +383,7 @@ struct ReadCacheConfig {
 pub struct Local {
 	pub id: ReplicaID,
 	pub path: std::path::PathBuf,
+	key_index: KeyIndex,
 	log: Log
 }
 
@@ -393,6 +397,8 @@ impl Local {
 		let id = ReplicaID::new(rng);
 
 		let path = dir_path.join(id.to_string());
+
+		let key_index = KeyIndex::new(config.key_index_capacity);
 
 		let log = Log {
 			disk: disk::Log::open(&path)?,
