@@ -36,13 +36,6 @@ impl Header {
 	const SIZE: unit::Byte = unit::Byte(std::mem::size_of::<Self>());
 }
 
-pub struct WriteInfo {
-	header_region: mem::Region,
-	header: Header,
-	payload_segment: mem::Region,
-	next_offset: unit::Byte
-}
-
 /// An immutable record of some event. The core data structure of interlog.
 /// The term "event" comes from event sourcing, but this couldd also be thought
 /// of as a record or entry.
@@ -62,17 +55,6 @@ impl<'a> Event<'a> {
 	#[inline]
 	fn payload_len(&self) -> unit::Byte {
 		self.payload.len().into()
-	}
-
-	fn write_info(&self, offset: unit::Byte) -> WriteInfo {
-		let header_region = mem::Region::new(offset, Header::SIZE);
-
-		WriteInfo {
-			header: Header { byte_len: self.payload_len(), id: self.id },
-			header_region,
-			payload_segment: header_region.next(self.payload_len()),
-			next_offset: offset + self.on_disk_size()
-		}
 	}
 }
 
