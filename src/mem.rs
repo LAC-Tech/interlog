@@ -44,7 +44,7 @@ impl Region {
 		bytes.get(self.pos.into()..self.end.into())
 	}
 
-	pub fn write<B: AsRef<[u8]>>(&self, dest: &mut [u8], src: B) {
+	pub fn write(&self, dest: &mut [u8], src: &[u8]) {
 		dest[self.pos.into()..self.end.into()].copy_from_slice(src.as_ref())
 	}
 

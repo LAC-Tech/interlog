@@ -170,12 +170,14 @@ impl ReadCache {
 	}
 
 	fn write_a(&mut self, es: &TxnWriteBuf) {
-		mem::Region::new(self.a.len, mem::size(es)).write(&mut self.mem, es);
+		mem::Region::new(self.a.len, mem::size(es))
+			.write(&mut self.mem, es.as_ref());
 		self.a.lengthen(mem::size(es));
 	}
 
 	fn write_b(&mut self, es: &TxnWriteBuf) {
-		mem::Region::new(self.b.len, mem::size(es)).write(&mut self.mem, es);
+		mem::Region::new(self.b.len, mem::size(es))
+			.write(&mut self.mem, es.as_ref());
 		self.b.lengthen(mem::size(es));
 	}
 
