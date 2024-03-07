@@ -63,10 +63,10 @@ where
 	O: Into<unit::Byte>
 {
 	let header_region = mem::Region::new(offset.into(), Header::SIZE);
-	let header_bytes = header_region.read(&bytes)?;
+	let header_bytes = header_region.read(bytes)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
-	let payload = payload_region.read(&bytes)?;
+	let payload = payload_region.read(bytes)?;
 	Some(Event { id, payload })
 }
 
@@ -92,8 +92,8 @@ pub struct View<'a> {
 }
 
 impl<'a> View<'a> {
-	pub fn new<R: AsRef<[u8]>>(mem: &'a R) -> Self {
-		Self { bytes: mem.as_ref(), index: 0.into() }
+	pub fn new(bytes: &'a [u8]) -> Self {
+		Self { bytes, index: 0.into() }
 	}
 }
 
@@ -101,7 +101,7 @@ impl<'a> Iterator for View<'a> {
 	type Item = Event<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		let result = read(self.bytes, self.index)?;
+		let result = read(&self.bytes, self.index)?;
 		self.index += result.on_disk_size();
 		Some(result)
 	}

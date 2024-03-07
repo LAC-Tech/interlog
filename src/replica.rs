@@ -1,7 +1,6 @@
 //! User facing functions for readidng and writing to interlog replicas.
 //! This can be considered the "top level" of the library.
 use crate::mem;
-use crate::mem::Readable;
 use crate::replica_id::ReplicaID;
 use crate::unit;
 use crate::util::{FixVec, FixVecOverflow};
@@ -103,6 +102,11 @@ pub struct ReadCache {
 	b: mem::Region // pos is always 0 but it's just easier
 }
 
+struct ReadCacheConfig {
+	key_index_capacity: unit::Logical,
+	mem_capacity: unit::Byte
+}
+
 impl ReadCache {
 	pub fn new(config: ReadCacheConfig) -> Self {
 		Self {
@@ -142,7 +146,7 @@ impl ReadCache {
 
 		let new_b_end = self.b.end + mem::size(es);
 
-		let new_a_pos: Option<unit::Byte> = event::View::new(self.read_a())
+		let new_a_pos: Option<unit::Byte> = event::View::new(&self.read_a())
 			.scan(unit::Byte(0), |offset, e| {
 				*offset += e.on_disk_size();
 				Some(*offset)
@@ -166,29 +170,21 @@ impl ReadCache {
 	}
 
 	fn write_a(&mut self, es: &TxnWriteBuf) {
-		mem::write(
-			&mut self.mem,
-			&self.a.len.region(mem::size(es)),
-			es.as_bytes()
-		);
+		mem::Region::new(self.a.len, mem::size(es)).write(&mut self.mem, es);
 		self.a.lengthen(mem::size(es));
 	}
 
 	fn write_b(&mut self, es: &TxnWriteBuf) {
-		mem::write(
-			&mut self.mem,
-			&self.b.end.region(mem::size(es)),
-			es.as_bytes()
-		);
-		self.b.end += mem::size(es);
+		mem::Region::new(self.b.len, mem::size(es)).write(&mut self.mem, es);
+		self.b.lengthen(mem::size(es));
 	}
 
 	fn read_a(&self) -> &[u8] {
-		mem::read(self.mem, &self.a).expect("a range to be correct")
+		self.a.read(&self.mem).expect("a range to be correct")
 	}
 
 	fn read_b(&self) -> &[u8] {
-		mem::read(self.mem, &self.b).expect("b range to be correct")
+		self.b.read(&self.mem).expect("b range to be correct")
 	}
 }
 
@@ -222,9 +218,15 @@ impl TxnWriteBuf {
 	}
 }
 
-impl mem::Readable for &TxnWriteBuf {
-	fn as_bytes(&self) -> &[u8] {
+impl AsRef<[u8]> for TxnWriteBuf {
+	fn as_ref(&self) -> &[u8] {
 		&self.0
+	}
+}
+
+impl AsMut<[u8]> for TxnWriteBuf {
+	fn as_mut(&mut self) -> &mut [u8] {
+		&mut self.0
 	}
 }
 
@@ -251,6 +253,7 @@ impl ReadBuf {
 	}
 }
 
+/*
 /// Read and write data bus for data going into and out of the replica
 /// These buffers are written to independently, but the idea of putting them
 /// together is a scenario where there are many IO buses to one Log
@@ -334,7 +337,7 @@ impl Log {
 	fn persist(&mut self, txn_write_buf: &TxnWriteBuf) -> Result<(), WriteErr> {
 		let bytes_flushed = self
 			.disk
-			.append(txn_write_buf.as_bytes())
+			.append(txn_write_buf)
 			.map(unit::Byte::align)
 			.map_err(WriteErr::Disk)?;
 
@@ -369,11 +372,6 @@ impl Log {
 		let byte_offsets = self.key_index.read_since(pos);
 		self.read_cache.read(byte_offsets)
 	}
-}
-
-struct ReadCacheConfig {
-	key_index_capacity: unit::Logical,
-	mem_capacity: unit::Byte
 }
 
 /// A replica on the same machine as user code
@@ -472,3 +470,4 @@ mod tests {
 		}
 	}
 }
+*/

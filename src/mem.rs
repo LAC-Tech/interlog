@@ -44,11 +44,15 @@ impl Region {
 		bytes.get(self.pos.into()..self.end.into())
 	}
 
-	pub fn write(&self, dest: &mut [u8], src: &[u8]) {
-		dest[self.pos.into()..self.end.into()].copy_from_slice(src)
+	pub fn write<B: AsRef<[u8]>>(&self, dest: &mut [u8], src: B) {
+		dest[self.pos.into()..self.end.into()].copy_from_slice(src.as_ref())
 	}
 
 	pub fn empty(&self) -> bool {
 		self.len == 0.into()
 	}
+}
+
+pub fn size<T: AsRef<[u8]>>(bytes: T) -> unit::Byte {
+	bytes.as_ref().len().into()
 }
