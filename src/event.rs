@@ -33,7 +33,7 @@ struct Header {
 }
 
 impl Header {
-	const SIZE: unit::Byte = std::mem::size_of::<Self>().into();
+	const SIZE: unit::Byte = unit::Byte(std::mem::size_of::<Self>());
 }
 
 pub struct WriteInfo {
@@ -78,14 +78,14 @@ impl<'a> Event<'a> {
 
 pub fn read<'a, B, O>(bytes: B, offset: O) -> Option<Event<'a>>
 where
-	B: mem::Readable,
+	B: AsRef<[u8]>,
 	O: Into<unit::Byte>
 {
 	let header_region = mem::Region::new(offset.into(), Header::SIZE);
-	let header_bytes = mem::read(bytes, &header_region)?;
+	let header_bytes = mem::read(&bytes, header_region)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
-	let payload = mem::read(bytes, &payload_region)?;
+	let payload = mem::read(&bytes, payload_region)?;
 	Some(Event { id, payload })
 }
 
@@ -111,8 +111,8 @@ pub struct View<'a> {
 }
 
 impl<'a> View<'a> {
-	pub fn new<R: mem::Readable>(mem: R) -> Self {
-		Self { bytes: mem.as_bytes(), index: 0.into() }
+	pub fn new<R: AsRef<[u8]>>(mem: &'a R) -> Self {
+		Self { bytes: mem.as_ref(), index: 0.into() }
 	}
 }
 
@@ -146,7 +146,7 @@ mod tests {
 
 			// Pre conditions
 			assert_eq!(mem::size(buf), 0.into(), "buf should start empty");
-			assert!(read(buf, 0).is_none(), "should contain no event");
+			assert!(read(&buf, 0).is_none(), "should contain no event");
 
 			println!("\nAPPEND\n");
 			// Modifying
@@ -154,7 +154,7 @@ mod tests {
 
 			println!("\nREAD\n");
 			// Post conditions
-			let actual = read(buf, 0).expect("one event to be at 0");
+			let actual = read(&buf, 0).expect("one event to be at 0");
 			assert_eq!(actual.payload, &e);
 		}
 	}

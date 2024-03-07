@@ -8,9 +8,9 @@ pub struct Region {
 }
 
 impl Region {
-	pub const fn new<B: Into<unit::Byte>>(pos: B, len: B) -> Self {
-		let pos = pos.into();
-		let len = len.into();
+	pub fn new<B: Into<unit::Byte>>(pos: B, len: B) -> Self {
+		let pos: unit::Byte = pos.into();
+		let len: unit::Byte = len.into();
 		Self { pos, len, end: pos + len }
 	}
 
@@ -18,7 +18,8 @@ impl Region {
 		Self::new(0.into(), len)
 	}
 
-	pub const ZERO: Self = Self::new(0, 0);
+	pub const ZERO: Self =
+		Self { pos: unit::Byte(0), len: unit::Byte(0), end: unit::Byte(0) };
 
 	pub fn lengthen(&mut self, n: unit::Byte) {
 		self.len += n;
@@ -38,26 +39,30 @@ impl Region {
 	pub fn range(&self) -> core::ops::Range<usize> {
 		self.pos.into()..self.end.into()
 	}
+
+	pub fn empty(&self) -> bool {
+		self == &Self::ZERO
+	}
 }
 
-pub trait Readable {
-	fn as_bytes(&self) -> &[u8];
+pub trait Readable<'a> {
+	fn as_bytes(self) -> &'a [u8];
 }
 
-impl Readable for &[u8] {
-	fn as_bytes(&self) -> &[u8] {
+impl<'a> Readable<'a> for &'a [u8] {
+	fn as_bytes(self) -> &'a [u8] {
 		self
 	}
 }
 
-impl Readable for Box<[u8]> {
-	fn as_bytes(&self) -> &[u8] {
+impl<'a> Readable<'a> for &'a Box<[u8]> {
+	fn as_bytes(self) -> &'a [u8] {
 		self
 	}
 }
 
-impl Readable for &FixVec<u8> {
-	fn as_bytes(&self) -> &[u8] {
+impl<'a> Readable<'a> for &'a FixVec<u8> {
+	fn as_bytes(self) -> &'a [u8] {
 		&self
 	}
 }
@@ -78,12 +83,12 @@ impl Writeable for Box<[u8]> {
 	}
 }
 
-pub fn size<R: Readable>(mem: R) -> unit::Byte {
-	mem.as_bytes().len().into()
+pub fn size<R: AsRef<[u8]>>(mem: R) -> unit::Byte {
+	mem.as_ref().len().into()
 }
 
-pub fn read<R: Readable>(mem: R, r: &Region) -> Option<&[u8]> {
-	mem.as_bytes().get(r.range())
+pub fn read<R: AsRef<[u8]>>(mem: R, r: Region) -> Option<&[u8]> {
+	mem.as_ref().get(r.range())
 }
 
 pub fn write<W: Writeable>(mem: &mut W, r: &Region, data: &[u8]) {
