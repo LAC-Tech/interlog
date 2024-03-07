@@ -1,4 +1,4 @@
-use crate::{unit, util::FixVec};
+use crate::unit;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Region {
@@ -16,6 +16,10 @@ impl Region {
 
 	pub fn from_zero(len: unit::Byte) -> Self {
 		Self::new(0.into(), len)
+	}
+
+	pub fn zero() -> Self {
+		Self::from_zero(0.into())
 	}
 
 	pub const ZERO: Self =
@@ -36,61 +40,15 @@ impl Region {
 		Self::new(self.end, len)
 	}
 
-	pub fn range(&self) -> core::ops::Range<usize> {
-		self.pos.into()..self.end.into()
+	pub fn read<'a>(&self, bytes: &'a [u8]) -> Option<&'a [u8]> {
+		bytes.get(self.pos.into()..self.end.into())
+	}
+
+	pub fn write(&self, dest: &mut [u8], src: &[u8]) {
+		dest[self.pos.into()..self.end.into()].copy_from_slice(src)
 	}
 
 	pub fn empty(&self) -> bool {
-		self == &Self::ZERO
+		self.len == 0.into()
 	}
-}
-
-pub trait Readable<'a> {
-	fn as_bytes(self) -> &'a [u8];
-}
-
-impl<'a> Readable<'a> for &'a [u8] {
-	fn as_bytes(self) -> &'a [u8] {
-		self
-	}
-}
-
-impl<'a> Readable<'a> for &'a Box<[u8]> {
-	fn as_bytes(self) -> &'a [u8] {
-		self
-	}
-}
-
-impl<'a> Readable<'a> for &'a FixVec<u8> {
-	fn as_bytes(self) -> &'a [u8] {
-		&self
-	}
-}
-
-pub trait Writeable {
-	fn as_mut_bytes(&mut self) -> &mut [u8];
-}
-
-impl Writeable for FixVec<u8> {
-	fn as_mut_bytes(&mut self) -> &mut [u8] {
-		self
-	}
-}
-
-impl Writeable for Box<[u8]> {
-	fn as_mut_bytes(&mut self) -> &mut [u8] {
-		self
-	}
-}
-
-pub fn size<R: AsRef<[u8]>>(mem: R) -> unit::Byte {
-	mem.as_ref().len().into()
-}
-
-pub fn read<R: AsRef<[u8]>>(mem: R, r: Region) -> Option<&[u8]> {
-	mem.as_ref().get(r.range())
-}
-
-pub fn write<W: Writeable>(mem: &mut W, r: &Region, data: &[u8]) {
-	mem.as_mut_bytes()[r.range()].copy_from_slice(data)
 }

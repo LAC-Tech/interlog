@@ -76,16 +76,15 @@ impl<'a> Event<'a> {
 	}
 }
 
-pub fn read<'a, B, O>(bytes: B, offset: O) -> Option<Event<'a>>
+pub fn read<'a, O>(bytes: &'a [u8], offset: O) -> Option<Event<'a>>
 where
-	B: AsRef<[u8]>,
 	O: Into<unit::Byte>
 {
 	let header_region = mem::Region::new(offset.into(), Header::SIZE);
-	let header_bytes = mem::read(&bytes, header_region)?;
+	let header_bytes = header_region.read(&bytes)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
-	let payload = mem::read(&bytes, payload_region)?;
+	let payload = payload_region.read(&bytes)?;
 	Some(Event { id, payload })
 }
 
@@ -94,13 +93,13 @@ pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
 	let offset = buf.len().into();
 	let header_region = mem::Region::new(offset, Header::SIZE);
 	let header = Header { byte_len, id: event.id };
-	let payload_segment = header_region.next(byte_len);
+	let payload_region = header_region.next(byte_len);
 	let next_offset = offset + event.on_disk_size();
 	buf.resize(next_offset.into(), 0)?;
 	let header_bytes = bytemuck::bytes_of(&header);
 
-	mem::write(buf, &header_region, header_bytes);
-	mem::write(buf, &payload_segment, event.payload);
+	header_region.write(buf, header_bytes);
+	payload_region.write(buf, event.payload);
 
 	Ok(())
 }
