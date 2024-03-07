@@ -108,7 +108,7 @@ struct ReadCacheConfig {
 }
 
 impl ReadCache {
-	pub fn new(config: ReadCacheConfig) -> Self {
+	fn new(config: ReadCacheConfig) -> Self {
 		Self {
 			key_index: FixVec::new(config.key_index_capacity.into()),
 			mem: vec![0; config.mem_capacity.into()].into_boxed_slice(),
@@ -122,7 +122,7 @@ impl ReadCache {
 		self.mem.len().into()
 	}
 
-	pub fn update(&mut self, es: &TxnWriteBuf) {
+	fn update(&mut self, es: &TxnWriteBuf) {
 		let a_would_overflow = self.a.end + mem::size(es) > self.capacity();
 
 		if !a_would_overflow && self.b.end == 0.into() {
@@ -146,17 +146,17 @@ impl ReadCache {
 
 		let new_b_end = self.b.end + mem::size(es);
 
-		let new_a_pos: Option<unit::Byte> = event::View::new(&self.read_a())
+		let new_a_pos: Option<unit::Byte> = event::View::new(self.read_a())
 			.scan(unit::Byte(0), |offset, e| {
 				*offset += e.on_disk_size();
 				Some(*offset)
 			})
-			.find(|&offset| offset > new_b_end.into());
+			.find(|&offset| offset > new_b_end);
 
 		match new_a_pos {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
-				self.a.change_pos(new_a_pos.into());
+				self.a.change_pos(new_a_pos);
 				self.write_b(es);
 			}
 			// We've searched past the end of A and found nothing.

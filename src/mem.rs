@@ -53,6 +53,7 @@ impl Region {
 	}
 }
 
+// Looks a bit siller but easier than intermediate vars and into everywhere
 pub fn size<T: AsRef<[u8]>>(bytes: T) -> unit::Byte {
 	bytes.as_ref().len().into()
 }

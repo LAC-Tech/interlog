@@ -58,7 +58,7 @@ impl<'a> Event<'a> {
 	}
 }
 
-pub fn read<'a, O>(bytes: &'a [u8], offset: O) -> Option<Event<'a>>
+pub fn read<O>(bytes: &[u8], offset: O) -> Option<Event<'_>>
 where
 	O: Into<unit::Byte>
 {
@@ -101,7 +101,7 @@ impl<'a> Iterator for View<'a> {
 	type Item = Event<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		let result = read(&self.bytes, self.index)?;
+		let result = read(self.bytes, self.index)?;
 		self.index += result.on_disk_size();
 		Some(result)
 	}
