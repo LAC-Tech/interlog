@@ -97,6 +97,8 @@ impl KeyIndex {
 /// bottom segment, til it wraps round again.
 pub struct ReadCache {
 	mem: Box<[u8]>,
+	/// Everything above this is in this cache
+	logical_start: unit::Logical,
 	a: mem::Region,
 	b: mem::Region // pos is always 0 but it's just easier
 }
@@ -104,25 +106,33 @@ pub struct ReadCache {
 impl ReadCache {
 	pub fn new(capacity: usize) -> Self {
 		let mem = vec![0; capacity].into_boxed_slice();
+		let logical_start = unit::Logical(0);
 		let a = mem::Region::ZERO;
 		let b = mem::Region::ZERO; // by definition B always starts at 0
-		Self { mem, a, b }
+		Self { mem, logical_start, a, b }
 	}
 
 	pub fn update(&mut self, es: &[u8]) -> WriteRes {
 		let result = match (self.a.empty(), self.b.empty()) {
-			(true, true) => self.a.extend(&mut self.mem, es),
+			(true, true) => {
+				self.set_logical_start(es);
+				self.a.extend(&mut self.mem, es)
+			}
 			(false, true) => match self.a.extend(&mut self.mem, es) {
 				Ok(()) => Ok(()),
-				Err(mem::ExtendOverflow) => self.wraparound(es)
+				Err(mem::ExtendOverflow) => self.wrap_around(es)
 			},
-			(_, false) => self.wraparound(es)
+			(_, false) => self.wrap_around(es)
 		};
 
 		result.map_err(WriteErr::ReadCache)
 	}
 
-	fn wraparound(&mut self, es: &[u8]) -> Result<(), mem::ExtendOverflow> {
+	fn set_logical_start(&mut self, es: &[u8]) {
+		self.logical_start = event::read(es, 0).expect("event at 0").id.pos;
+	}
+
+	fn wrap_around(&mut self, es: &[u8]) -> Result<(), mem::ExtendOverflow> {
 		match self.new_a_pos(es) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
@@ -140,6 +150,7 @@ impl ReadCache {
 					// would not occur with buf size 2x or more max event size
 					Err(mem::ExtendOverflow) => {
 						self.a = mem::Region::ZERO;
+						self.set_logical_start(es);
 						self.a.extend(&mut self.mem, es)
 					}
 				}

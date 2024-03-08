@@ -80,8 +80,8 @@ pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
 	buf.resize(next_offset.into(), 0)?;
 	let header_bytes = bytemuck::bytes_of(&header);
 
-	header_region.write(buf, header_bytes);
-	payload_region.write(buf, event.payload);
+	header_region.write(buf, header_bytes).expect("fixvec to be resized");
+	payload_region.write(buf, event.payload).expect("fixvec to be resized");
 
 	Ok(())
 }
