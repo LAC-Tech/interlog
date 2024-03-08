@@ -140,7 +140,7 @@ impl ReadCache {
 		let b_would_overflow = self.b.end + mem::size(es) > self.capacity();
 
 		if b_would_overflow {
-			self.a = mem::Region::from_zero(self.b.end);
+			self.a = mem::Region::new(0.into(), self.b.end);
 			self.b = mem::Region::ZERO;
 		}
 
@@ -162,7 +162,7 @@ impl ReadCache {
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = mem::Region::from_zero(self.b.end);
+				self.a = mem::Region::new(0.into(), self.b.end);
 				self.b = mem::Region::ZERO;
 				self.write_a(es);
 			}

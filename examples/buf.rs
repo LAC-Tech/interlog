@@ -1,87 +1,105 @@
 extern crate interlog;
 
-use interlog::util::*;
+use interlog::{mem, unit};
 use pretty_assertions::assert_eq;
+
+#[derive(Debug)]
+struct WouldOverflow;
+
+trait Extendable {
+	fn extend(
+		&mut self,
+		mem: &mut [u8],
+		es: &[u8]
+	) -> Result<(), WouldOverflow>;
+}
+
+impl Extendable for mem::Region {
+	fn extend(
+		&mut self,
+		mem: &mut [u8],
+		es: &[u8]
+	) -> Result<(), WouldOverflow> {
+		let extension = mem::Region::new(self.len, mem::size(es));
+
+		if let Err(err) = extension.write(mem, es) {
+			match err {
+				mem::WriteErr::DestOverflow => return Err(WouldOverflow),
+				mem::WriteErr::LenMisMatch => panic!("assumed regions match up")
+			}
+		}
+
+		self.lengthen(mem::size(es));
+		Ok(())
+	}
+}
 
 struct Buf {
 	mem: Box<[u8]>,
-	a: Segment,
-	b_end: usize
+	a: mem::Region,
+	b: mem::Region
 }
+
+#[derive(Debug)]
+struct TxnWriteBufTooLarge;
 
 impl Buf {
 	fn new(capacity: usize) -> Self {
 		let mem = vec![0; capacity].into_boxed_slice();
-		let a = Segment::ZERO;
-		let b_end = 0; // by definition B always starts at 0
-		Self { mem, a, b_end }
+		let a = mem::Region::ZERO;
+		let b = mem::Region::ZERO; // by definition B always starts at 0
+		Self { mem, a, b }
 	}
 
-	fn extend(&mut self, s: &[u8]) {
-		let a_would_overflow = self.a.end + s.len() > self.mem.len();
-
-		if !a_would_overflow && self.b_end == 0 {
-			self.write_a(s);
-			return;
+	fn extend(&mut self, s: &[u8]) -> Result<(), WouldOverflow> {
+		match (self.a.empty(), self.b.empty()) {
+			(true, true) => self.a.extend(&mut self.mem, s),
+			(false, true) => match self.a.extend(&mut self.mem, s) {
+				Ok(()) => Ok(()),
+				Err(WouldOverflow) => self.overlapping_write(s)
+			},
+			(_, false) => self.overlapping_write(s)
 		}
+	}
 
-		let a_will_be_modified = self.b_end + s.len() >= self.a.pos;
-
-		if !a_will_be_modified {
-			self.write_b(s);
-			return;
-		}
-
-		let b_would_overflow = self.b_end + s.len() > self.mem.len();
-
-		if b_would_overflow {
-			self.a = Segment::new(0, self.b_end);
-			self.b_end = 0;
-		}
-
-		let new_b_end = self.b_end + s.len();
-
-		// EITHER part of A will be overwritten by extending B,
-		// OR extending B would overflow, so instead we start a new A
-		let new_a_pos: Option<usize> = self
-			.read_a()
-			.into_iter()
-			.skip(new_b_end)
-			.enumerate()
-			.find_map(|(i, &c)| is_upper_ascii(c).then(|| i + new_b_end));
-
-		match new_a_pos {
+	fn overlapping_write(&mut self, s: &[u8]) -> Result<(), WouldOverflow> {
+		match self.new_a_pos(s) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
 				self.a.change_pos(new_a_pos);
-				self.write_b(s);
+				self.b.extend(self.mem.as_mut(), s)
 			}
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = Segment::new(0, self.b_end);
-				self.b_end = 0;
-				self.write_a(s);
+				self.a = mem::Region::new(0.into(), self.b.end);
+				self.b = mem::Region::ZERO;
+				match self.a.extend(self.mem.as_mut(), s) {
+					Ok(()) => Ok(()),
+					// the new A cannot fit, resize again
+					Err(WouldOverflow) => {
+						self.a = mem::Region::ZERO;
+						self.a.extend(&mut self.mem, s)
+					}
+				}
 			}
 		}
 	}
 
-	fn write_a(&mut self, s: &[u8]) {
-		self.mem[self.a.len..self.a.len + s.len()].copy_from_slice(s);
-		self.a.lengthen(s.len());
-	}
+	fn new_a_pos(&self, es: &[u8]) -> Option<unit::Byte> {
+		let new_b_end = self.b.end + mem::size(es);
 
-	fn write_b(&mut self, s: &[u8]) {
-		self.mem[self.b_end..self.b_end + s.len()].copy_from_slice(s);
-		self.b_end += s.len();
+		self.read_a().into_iter().skip(new_b_end.into()).enumerate().find_map(
+			|(i, &c)| is_upper_ascii(c).then(|| unit::Byte(i) + new_b_end)
+		)
 	}
 
 	fn read_a(&self) -> &[u8] {
-		&self.mem[self.a.range()]
+		self.a.read(&self.mem).expect("a range to be correct")
 	}
 
 	fn read_b(&self) -> &[u8] {
-		&self.mem[0..self.b_end]
+		self.b.read(&self.mem).expect("b range to be correct")
 	}
 }
 
@@ -92,75 +110,75 @@ fn is_upper_ascii(ch: u8) -> bool {
 fn main() {
 	let mut buf = Buf::new(16);
 
-	buf.extend(b"Who");
+	buf.extend(b"Who").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 3));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"Who");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 3));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"Is");
+	buf.extend(b"Is").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 5));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"WhoIs");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 5));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"This");
+	buf.extend(b"This").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 9));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"WhoIsThis");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 9));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"Doin");
+	buf.extend(b"Doin").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 13));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"WhoIsThisDoin");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 13));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"This");
+	buf.extend(b"This").unwrap();
+	assert_eq!(buf.a, mem::Region::new(5, 8));
+	assert_eq!(buf.b, mem::Region::new(0, 4));
 	assert_eq!(buf.read_a(), b"ThisDoin");
 	assert_eq!(buf.read_b(), b"This");
-	assert_eq!(buf.a, Segment::new(5, 8));
-	assert_eq!(buf.b_end, 4);
 
-	buf.extend(b"Synthetic");
+	buf.extend(b"Synthetic").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 13));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"ThisSynthetic");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 13));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"Type");
+	buf.extend(b"Type").unwrap();
+	assert_eq!(buf.a, mem::Region::new(4, 9));
+	assert_eq!(buf.b, mem::Region::new(0, 4));
 	assert_eq!(buf.read_a(), b"Synthetic");
 	assert_eq!(buf.read_b(), b"Type");
-	assert_eq!(buf.a, Segment::new(4, 9));
-	assert_eq!(buf.b_end, 4);
 
-	buf.extend(b"Of");
+	buf.extend(b"Of").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 6));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"TypeOf");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 6));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"Alpha");
+	buf.extend(b"Alpha").unwrap();
 	assert_eq!(buf.read_a(), b"TypeOfAlpha");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 11));
-	assert_eq!(buf.b_end, 0);
+	assert_eq!(buf.a, mem::Region::new(0, 11));
+	assert_eq!(buf.b, mem::Region::ZERO);
 
-	buf.extend(b"Beta");
+	buf.extend(b"Beta").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 15));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"TypeOfAlphaBeta");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 15));
-	assert_eq!(buf.b_end, 0);
 
-	buf.extend(b"Psychedelic");
+	buf.extend(b"Psychedelic").unwrap();
+	assert_eq!(buf.a, mem::Region::new(11, 4));
+	assert_eq!(buf.b, mem::Region::new(0, 11));
 	assert_eq!(buf.read_a(), b"Beta");
 	assert_eq!(buf.read_b(), b"Psychedelic");
-	assert_eq!(buf.a, Segment::new(11, 4));
-	assert_eq!(buf.b_end, 11);
 
-	buf.extend(b"Funkin");
+	buf.extend(b"Funkin").unwrap();
+	assert_eq!(buf.a, mem::Region::new(0, 6));
+	assert_eq!(buf.b, mem::Region::ZERO);
 	assert_eq!(buf.read_a(), b"Funkin");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, Segment::new(0, 6));
-	assert_eq!(buf.b_end, 0);
 }

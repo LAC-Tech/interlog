@@ -7,19 +7,19 @@ pub struct Region {
 	pub end: unit::Byte
 }
 
+#[derive(Debug)]
+pub enum WriteErr {
+	DestOverflow,
+	LenMisMatch
+}
+
+pub type WriteRes = Result<(), WriteErr>;
+
 impl Region {
 	pub fn new<B: Into<unit::Byte>>(pos: B, len: B) -> Self {
 		let pos: unit::Byte = pos.into();
 		let len: unit::Byte = len.into();
 		Self { pos, len, end: pos + len }
-	}
-
-	pub fn from_zero(len: unit::Byte) -> Self {
-		Self::new(0.into(), len)
-	}
-
-	pub fn zero() -> Self {
-		Self::from_zero(0.into())
 	}
 
 	pub const ZERO: Self =
@@ -44,8 +44,35 @@ impl Region {
 		bytes.get(self.pos.into()..self.end.into())
 	}
 
-	pub fn write(&self, dest: &mut [u8], src: &[u8]) {
-		dest[self.pos.into()..self.end.into()].copy_from_slice(src.as_ref())
+	pub fn write(&self, dest: &mut [u8], src: &[u8]) -> WriteRes {
+		// I tried using_copy_from slice, but it panics on overflow
+		// I need an error, so I basically reimplemented it
+
+		//let dest = &mut dest[self.pos.into()..self.end.into()];
+
+		let dest_start: usize = self.pos.into();
+		let dest_end: usize = self.end.into();
+
+		if dest_end > dest.len() {
+			return Err(WriteErr::DestOverflow);
+		}
+
+		let dest = &mut dest[dest_start..dest_end];
+
+		if dest.len() != src.len() {
+			return Err(WriteErr::LenMisMatch);
+		}
+
+		// We know that src and dest are the same length
+		unsafe {
+			core::ptr::copy_nonoverlapping(
+				src.as_ptr(),
+				dest.as_mut_ptr(),
+				src.len()
+			);
+		}
+
+		Ok(())
 	}
 
 	pub fn empty(&self) -> bool {
