@@ -14,8 +14,8 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 #[derive(Debug)]
 pub enum WriteErr {
 	Disk(disk::AppendErr),
-	ReadCache(FixVecOverflow),
-	WriteCache(FixVecOverflow),
+	ReadCache(mem::ExtendOverflow),
+	TxnWriteBuf(FixVecOverflow),
 	KeyIndex(FixVecOverflow)
 }
 
@@ -101,82 +101,60 @@ pub struct ReadCache {
 	b: mem::Region // pos is always 0 but it's just easier
 }
 
-struct ReadCacheConfig {
-	key_index_capacity: unit::Logical,
-	mem_capacity: unit::Byte
-}
-
 impl ReadCache {
-	fn new(config: ReadCacheConfig) -> Self {
-		Self {
-			mem: vec![0; config.mem_capacity.into()].into_boxed_slice(),
-			a: mem::Region::ZERO,
-			b: mem::Region::ZERO
-		}
+	pub fn new(capacity: usize) -> Self {
+		let mem = vec![0; capacity].into_boxed_slice();
+		let a = mem::Region::ZERO;
+		let b = mem::Region::ZERO; // by definition B always starts at 0
+		Self { mem, a, b }
 	}
 
-	#[inline]
-	fn capacity(&self) -> unit::Byte {
-		self.mem.len().into()
+	pub fn update(&mut self, es: &[u8]) -> WriteRes {
+		let result = match (self.a.empty(), self.b.empty()) {
+			(true, true) => self.a.extend(&mut self.mem, es),
+			(false, true) => match self.a.extend(&mut self.mem, es) {
+				Ok(()) => Ok(()),
+				Err(mem::ExtendOverflow) => self.wraparound(es)
+			},
+			(_, false) => self.wraparound(es)
+		};
+
+		result.map_err(WriteErr::ReadCache)
 	}
 
-	fn update(&mut self, es: &TxnWriteBuf) {
-		let a_would_overflow = self.a.end + mem::size(es) > self.capacity();
-
-		if !a_would_overflow && self.b.end == 0.into() {
-			self.write_a(es);
-			return;
-		}
-
-		let a_will_be_modified = self.b.end + mem::size(es) >= self.a.pos;
-
-		if !a_will_be_modified {
-			self.write_b(es);
-			return;
-		}
-
-		let b_would_overflow = self.b.end + mem::size(es) > self.capacity();
-
-		if b_would_overflow {
-			self.a = mem::Region::new(0.into(), self.b.end);
-			self.b = mem::Region::ZERO;
-		}
-
-		let new_b_end = self.b.end + mem::size(es);
-
-		let new_a_pos: Option<unit::Byte> = event::View::new(self.read_a())
-			.scan(unit::Byte(0), |offset, e| {
-				*offset += e.on_disk_size();
-				Some(*offset)
-			})
-			.find(|&offset| offset > new_b_end);
-
-		match new_a_pos {
+	fn wraparound(&mut self, es: &[u8]) -> Result<(), mem::ExtendOverflow> {
+		match self.new_a_pos(es) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
 				self.a.change_pos(new_a_pos);
-				self.write_b(es);
+				self.b.extend(self.mem.as_mut(), es)
 			}
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
 				self.a = mem::Region::new(0.into(), self.b.end);
 				self.b = mem::Region::ZERO;
-				self.write_a(es);
+				match self.a.extend(self.mem.as_mut(), es) {
+					Ok(()) => Ok(()),
+					// the new A cannot fit, erase it.
+					// would not occur with buf size 2x or more max event size
+					Err(mem::ExtendOverflow) => {
+						self.a = mem::Region::ZERO;
+						self.a.extend(&mut self.mem, es)
+					}
+				}
 			}
 		}
 	}
 
-	fn write_a(&mut self, es: &TxnWriteBuf) {
-		mem::Region::new(self.a.len, mem::size(es))
-			.write(&mut self.mem, es.as_ref());
-		self.a.lengthen(mem::size(es));
-	}
-
-	fn write_b(&mut self, es: &TxnWriteBuf) {
-		mem::Region::new(self.b.len, mem::size(es))
-			.write(&mut self.mem, es.as_ref());
-		self.b.lengthen(mem::size(es));
+	fn new_a_pos(&self, es: &[u8]) -> Option<unit::Byte> {
+		let new_b_end = self.b.end + mem::size(es);
+		event::View::new(self.read_a())
+			.scan(unit::Byte(0), |offset, e| {
+				*offset += e.on_disk_size();
+				Some(*offset)
+			})
+			.find(|&offset| offset > new_b_end)
 	}
 
 	fn read_a(&self) -> &[u8] {
@@ -211,10 +189,14 @@ impl TxnWriteBuf {
 			let pos = from + i.into();
 			let id = event::ID { origin, pos };
 			let e = event::Event { id, payload };
-			event::append(&mut self.0, &e).map_err(WriteErr::WriteCache)?;
+			event::append(&mut self.0, &e).map_err(WriteErr::TxnWriteBuf)?;
 		}
 
 		Ok(())
+	}
+
+	fn into_iter(&self) -> impl Iterator<Item = event::Event<'_>> {
+		event::View::new(&self.0)
 	}
 }
 
@@ -253,6 +235,38 @@ impl ReadBuf {
 	}
 }
 
+struct Log {
+	disk: disk::Log,
+	/// Keeps track of the disk
+	byte_len: unit::Byte,
+	read_cache: ReadCache,
+	key_index: KeyIndex
+}
+
+impl Log {
+	fn persist(&mut self, txn_write_buf: &TxnWriteBuf) -> Result<(), WriteErr> {
+		let bytes_flushed = self
+			.disk
+			.append(txn_write_buf)
+			.map(unit::Byte::align)
+			.map_err(WriteErr::Disk)?;
+
+		// TODO: the below operations need to be made atomic w/ each other
+		self.read_cache.update(txn_write_buf.as_ref())?;
+
+		// Disk offsets recored in the Key Index always lag behind by one
+		let mut disk_offset = self.byte_len;
+
+		for e in txn_write_buf.into_iter() {
+			self.key_index.push(disk_offset)?;
+			disk_offset += e.on_disk_size();
+		}
+
+		self.byte_len += bytes_flushed;
+
+		Ok(())
+	}
+}
 /*
 /// Read and write data bus for data going into and out of the replica
 /// These buffers are written to independently, but the idea of putting them
@@ -324,54 +338,6 @@ pub mod io_bus {
 				assert_eq!(&actual, &es);
 			}
 		}
-	}
-}
-
-struct Log {
-	disk: disk::Log,
-	byte_len: unit::Byte,
-	read_cache: ReadCache,
-	key_index: KeyIndex
-}
-
-impl Log {
-	fn persist(&mut self, txn_write_buf: &TxnWriteBuf) -> Result<(), WriteErr> {
-		let bytes_flushed = self
-			.disk
-			.append(txn_write_buf)
-			.map(unit::Byte::align)
-			.map_err(WriteErr::Disk)?;
-
-		// TODO: the below operations need to be made atomic w/ each other
-		self.read_cache.update(txn_write_buf)?;
-
-		// Disk offsets recored in the Key Index always lag behind by one
-		let mut disk_offset = self.byte_len;
-
-		for e in self.read_cache.into_iter() {
-			self.key_index.push(disk_offset)?;
-			disk_offset += e.on_disk_size();
-		}
-
-		self.byte_len += bytes_flushed;
-
-		Ok(())
-	}
-
-	fn logical_len(&self) -> unit::Logical {
-		self.key_index.len()
-	}
-
-	fn byte_len(&self) -> unit::Byte {
-		self.byte_len
-	}
-
-	fn events_since(
-		&self,
-		pos: unit::Logical
-	) -> impl Iterator<Item = event::Event<'_>> {
-		let byte_offsets = self.key_index.read_since(pos);
-		self.read_cache.read(byte_offsets)
 	}
 }
 
