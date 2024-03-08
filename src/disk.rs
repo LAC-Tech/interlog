@@ -40,7 +40,11 @@ impl Log {
 		fs::open(path, flags, mode).map(Log)
 	}
 
-	pub fn append(&self, bytes: &[u8]) -> Result<unit::Byte, AppendErr> {
+	pub fn append<B>(&self, bytes: B) -> Result<unit::Byte, AppendErr>
+	where
+		B: AsRef<[u8]>
+	{
+		let bytes = bytes.as_ref();
 		let fd = self.0.as_fd();
 		// always sets file offset to EOF.
 		let bytes_written =

@@ -33,14 +33,7 @@ struct Header {
 }
 
 impl Header {
-	const SIZE: unit::Byte = std::mem::size_of::<Self>().into();
-}
-
-pub struct WriteInfo {
-	header_region: mem::Region,
-	header: Header,
-	payload_segment: mem::Region,
-	next_offset: unit::Byte
+	const SIZE: unit::Byte = unit::Byte(std::mem::size_of::<Self>());
 }
 
 /// An immutable record of some event. The core data structure of interlog.
@@ -63,29 +56,17 @@ impl<'a> Event<'a> {
 	fn payload_len(&self) -> unit::Byte {
 		self.payload.len().into()
 	}
-
-	fn write_info(&self, offset: unit::Byte) -> WriteInfo {
-		let header_region = mem::Region::new(offset, Header::SIZE);
-
-		WriteInfo {
-			header: Header { byte_len: self.payload_len(), id: self.id },
-			header_region,
-			payload_segment: header_region.next(self.payload_len()),
-			next_offset: offset + self.on_disk_size()
-		}
-	}
 }
 
-pub fn read<'a, B, O>(bytes: B, offset: O) -> Option<Event<'a>>
+pub fn read<O>(bytes: &[u8], offset: O) -> Option<Event<'_>>
 where
-	B: mem::Readable,
 	O: Into<unit::Byte>
 {
 	let header_region = mem::Region::new(offset.into(), Header::SIZE);
-	let header_bytes = mem::read(bytes, &header_region)?;
+	let header_bytes = header_region.read(bytes)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
-	let payload = mem::read(bytes, &payload_region)?;
+	let payload = payload_region.read(bytes)?;
 	Some(Event { id, payload })
 }
 
@@ -94,13 +75,13 @@ pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
 	let offset = buf.len().into();
 	let header_region = mem::Region::new(offset, Header::SIZE);
 	let header = Header { byte_len, id: event.id };
-	let payload_segment = header_region.next(byte_len);
+	let payload_region = header_region.next(byte_len);
 	let next_offset = offset + event.on_disk_size();
 	buf.resize(next_offset.into(), 0)?;
 	let header_bytes = bytemuck::bytes_of(&header);
 
-	mem::write(buf, &header_region, header_bytes);
-	mem::write(buf, &payload_segment, event.payload);
+	header_region.write(buf, header_bytes).expect("fixvec to be resized");
+	payload_region.write(buf, event.payload).expect("fixvec to be resized");
 
 	Ok(())
 }
@@ -111,8 +92,8 @@ pub struct View<'a> {
 }
 
 impl<'a> View<'a> {
-	pub fn new<R: mem::Readable>(mem: R) -> Self {
-		Self { bytes: mem.as_bytes(), index: 0.into() }
+	pub fn new(bytes: &'a [u8]) -> Self {
+		Self { bytes, index: 0.into() }
 	}
 }
 
@@ -146,7 +127,7 @@ mod tests {
 
 			// Pre conditions
 			assert_eq!(mem::size(buf), 0.into(), "buf should start empty");
-			assert!(read(buf, 0).is_none(), "should contain no event");
+			assert!(read(&buf, 0).is_none(), "should contain no event");
 
 			println!("\nAPPEND\n");
 			// Modifying
@@ -154,7 +135,7 @@ mod tests {
 
 			println!("\nREAD\n");
 			// Post conditions
-			let actual = read(buf, 0).expect("one event to be at 0");
+			let actual = read(&buf, 0).expect("one event to be at 0");
 			assert_eq!(actual.payload, &e);
 		}
 	}

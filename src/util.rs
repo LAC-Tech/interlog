@@ -118,6 +118,12 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 	}
 }
 
+impl AsRef<[u8]> for FixVec<u8> {
+	fn as_ref(&self) -> &[u8] {
+		&self.elems
+	}
+}
+
 #[derive(Debug)]
 pub struct CircBufWrapAround;
 
