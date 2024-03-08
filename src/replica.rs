@@ -39,6 +39,7 @@ struct KeyIndex {
 	fix_vec: FixVec<unit::Byte>
 }
 
+/// The entire index in memory, like bitcask's KeyDir
 /// Maps logical indices to disk offsets
 impl KeyIndex {
 	fn new(capacity: usize) -> Self {
@@ -95,8 +96,6 @@ impl KeyIndex {
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
 pub struct ReadCache {
-	/// The entire index in memory, like bitcask's KeyDir
-	key_index: FixVec<unit::Byte>,
 	mem: Box<[u8]>,
 	a: mem::Region,
 	b: mem::Region // pos is always 0 but it's just easier
@@ -110,7 +109,6 @@ struct ReadCacheConfig {
 impl ReadCache {
 	fn new(config: ReadCacheConfig) -> Self {
 		Self {
-			key_index: FixVec::new(config.key_index_capacity.into()),
 			mem: vec![0; config.mem_capacity.into()].into_boxed_slice(),
 			a: mem::Region::ZERO,
 			b: mem::Region::ZERO
@@ -332,7 +330,8 @@ pub mod io_bus {
 struct Log {
 	disk: disk::Log,
 	byte_len: unit::Byte,
-	read_cache: ReadCache
+	read_cache: ReadCache,
+	key_index: KeyIndex
 }
 
 impl Log {
