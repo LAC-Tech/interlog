@@ -46,7 +46,15 @@ impl fmt::Debug for Byte {
 /// The sequence number or position on the log of an event.
 #[repr(transparent)]
 #[derive(
-	Add, AddAssign, Clone, Copy, From, Into, bytemuck::Pod, bytemuck::Zeroable,
+	Add,
+	AddAssign,
+	Sub,
+	Clone,
+	Copy,
+	From,
+	Into,
+	bytemuck::Pod,
+	bytemuck::Zeroable,
 )]
 pub struct Logical(pub usize);
 

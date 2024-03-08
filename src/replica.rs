@@ -34,39 +34,33 @@ enum KeyIndexHit {
 	Cache(unit::Byte)
 }
 
-struct KeyIndex {
-	cache_start: unit::Logical,
-	fix_vec: FixVec<unit::Byte>
-}
+struct KeyIndex(FixVec<unit::Byte>);
 
 /// The entire index in memory, like bitcask's KeyDir
 /// Maps logical indices to disk offsets
 impl KeyIndex {
 	fn new(capacity: unit::Logical) -> Self {
-		Self {
-			cache_start: unit::Logical(0),
-			fix_vec: FixVec::new(capacity.into())
-		}
+		Self(FixVec::new(capacity.into()))
 	}
 
 	fn len(&self) -> unit::Logical {
-		self.fix_vec.len().into()
+		self.0.len().into()
 	}
 
 	fn push(&mut self, byte_offset: unit::Byte) -> WriteRes {
-		self.fix_vec.push(byte_offset).map_err(WriteErr::KeyIndex)
+		self.0.push(byte_offset).map_err(WriteErr::KeyIndex)
 	}
 
 	fn get(&self, logical_pos: unit::Logical) -> Result<unit::Byte, ReadErr> {
 		let i: usize = logical_pos.into();
-		self.fix_vec.get(i).cloned().ok_or(ReadErr::KeyIndex)
+		self.0.get(i).cloned().ok_or(ReadErr::KeyIndex)
 	}
 
 	fn read_since(
 		&self,
 		pos: unit::Logical
 	) -> impl Iterator<Item = unit::Byte> + '_ {
-		self.fix_vec.iter().skip(pos.into()).copied()
+		self.0.iter().skip(pos.into()).copied()
 	}
 }
 
@@ -101,7 +95,7 @@ impl KeyIndex {
 pub struct ReadCache {
 	mem: Box<[u8]>,
 	/// Everything above this is in this cache
-	logical_start: unit::Logical,
+	pub logical_start: unit::Logical,
 	a: mem::Region,
 	b: mem::Region // pos is always 0 but it's just easier
 }
@@ -279,6 +273,23 @@ impl Log {
 		self.byte_len += bytes_flushed;
 
 		Ok(())
+	}
+
+	fn read(&self, buf: &mut ReadBuf, since: unit::Logical) {
+		let end = self.key_index.len();
+		let read_cache_start = self.read_cache.logical_start;
+
+		// Two optional ranges are created.
+		// uncached positions, and cached positions
+		// if both are None, this is a No Op
+
+		/*
+		let uncached_range = if read_cache_start > since {
+			(since, read_cache_start - 1.into())
+		} else {
+
+		}
+		*/
 	}
 }
 /*
