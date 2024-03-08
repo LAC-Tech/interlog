@@ -3,45 +3,11 @@ extern crate interlog;
 use interlog::{mem, unit};
 use pretty_assertions::assert_eq;
 
-#[derive(Debug)]
-struct WouldOverflow;
-
-trait Extendable {
-	fn extend(
-		&mut self,
-		mem: &mut [u8],
-		es: &[u8]
-	) -> Result<(), WouldOverflow>;
-}
-
-impl Extendable for mem::Region {
-	fn extend(
-		&mut self,
-		mem: &mut [u8],
-		es: &[u8]
-	) -> Result<(), WouldOverflow> {
-		let extension = mem::Region::new(self.len, mem::size(es));
-
-		if let Err(err) = extension.write(mem, es) {
-			match err {
-				mem::WriteErr::DestOverflow => return Err(WouldOverflow),
-				mem::WriteErr::LenMisMatch => panic!("assumed regions match up")
-			}
-		}
-
-		self.lengthen(mem::size(es));
-		Ok(())
-	}
-}
-
 struct Buf {
 	mem: Box<[u8]>,
 	a: mem::Region,
 	b: mem::Region
 }
-
-#[derive(Debug)]
-struct TxnWriteBufTooLarge;
 
 impl Buf {
 	fn new(capacity: usize) -> Self {
@@ -51,18 +17,21 @@ impl Buf {
 		Self { mem, a, b }
 	}
 
-	fn extend(&mut self, s: &[u8]) -> Result<(), WouldOverflow> {
+	fn extend(&mut self, s: &[u8]) -> Result<(), mem::ExtendOverflow> {
 		match (self.a.empty(), self.b.empty()) {
 			(true, true) => self.a.extend(&mut self.mem, s),
 			(false, true) => match self.a.extend(&mut self.mem, s) {
 				Ok(()) => Ok(()),
-				Err(WouldOverflow) => self.overlapping_write(s)
+				Err(mem::ExtendOverflow) => self.overlapping_write(s)
 			},
 			(_, false) => self.overlapping_write(s)
 		}
 	}
 
-	fn overlapping_write(&mut self, s: &[u8]) -> Result<(), WouldOverflow> {
+	fn overlapping_write(
+		&mut self,
+		s: &[u8]
+	) -> Result<(), mem::ExtendOverflow> {
 		match self.new_a_pos(s) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
@@ -76,8 +45,9 @@ impl Buf {
 				self.b = mem::Region::ZERO;
 				match self.a.extend(self.mem.as_mut(), s) {
 					Ok(()) => Ok(()),
-					// the new A cannot fit, resize again
-					Err(WouldOverflow) => {
+					// the new A cannot fit, erase it.
+					// would not occur with buf size 2x or more max event size
+					Err(mem::ExtendOverflow) => {
 						self.a = mem::Region::ZERO;
 						self.a.extend(&mut self.mem, s)
 					}

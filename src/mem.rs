@@ -13,7 +13,8 @@ pub enum WriteErr {
 	LenMisMatch
 }
 
-pub type WriteRes = Result<(), WriteErr>;
+#[derive(Debug)]
+pub struct ExtendOverflow;
 
 impl Region {
 	pub fn new<B: Into<unit::Byte>>(pos: B, len: B) -> Self {
@@ -44,7 +45,7 @@ impl Region {
 		bytes.get(self.pos.into()..self.end.into())
 	}
 
-	pub fn write(&self, dest: &mut [u8], src: &[u8]) -> WriteRes {
+	pub fn write(&self, dest: &mut [u8], src: &[u8]) -> Result<(), WriteErr> {
 		// I tried using_copy_from slice, but it panics on overflow
 		// I need an error, so I basically reimplemented it
 
@@ -72,6 +73,25 @@ impl Region {
 			);
 		}
 
+		Ok(())
+	}
+
+	// TODO: write implementation of this that does not reference write
+	pub fn extend(
+		&mut self,
+		dest: &mut [u8],
+		src: &[u8]
+	) -> Result<(), ExtendOverflow> {
+		let extension = Region::new(self.len, size(src));
+
+		if let Err(err) = extension.write(dest, src) {
+			match err {
+				WriteErr::DestOverflow => return Err(ExtendOverflow),
+				WriteErr::LenMisMatch => panic!("assumed regions match up")
+			}
+		}
+
+		self.lengthen(size(src));
 		Ok(())
 	}
 
