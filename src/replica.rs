@@ -275,6 +275,12 @@ impl Log {
 		Ok(())
 	}
 
+	fn logical_range_iter(
+		range: core::ops::Range<unit::Logical>
+	) -> impl Iterator<Item = unit::Logical> {
+		(range.start.into()..range.end.into()).into_iter().map(unit::Logical)
+	}
+
 	fn read(&self, buf: &mut ReadBuf, since: unit::Logical) {
 		let end = self.key_index.len();
 		let read_cache_start = self.read_cache.logical_start;
@@ -283,12 +289,25 @@ impl Log {
 		// uncached positions, and cached positions
 		// if both are None, this is a No Op
 
+		let uncached_range = (read_cache_start > since)
+			.then(|| since..read_cache_start - 1.into())
+			.map(Self::logical_range_iter);
+
+		let cached_range =
+			(since >= read_cache_start).then(|| read_cache_start..end);
+
 		/*
 		let uncached_range = if read_cache_start > since {
-			(since, read_cache_start - 1.into())
+			Some(since..read_cache_start - 1.into())
 		} else {
+			None
+		};
 
-		}
+		let cached_range = if read_cache_start > since {
+			Some(read_cache_start..end)
+		} else {
+			None
+		};
 		*/
 	}
 }

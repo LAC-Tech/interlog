@@ -49,6 +49,8 @@ impl fmt::Debug for Byte {
 	Add,
 	AddAssign,
 	Sub,
+	PartialEq,
+	PartialOrd,
 	Clone,
 	Copy,
 	From,
