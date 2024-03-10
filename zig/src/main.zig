@@ -4,6 +4,12 @@ const Allocator = std.mem.Allocator;
 
 const util = @import("util.zig");
 
+const ReplicaID = struct {
+    _n: u128,
+
+    fn init() @This() {}
+};
+
 const ReadCache = struct {
     buf: []u8,
     a: util.Region(u8),

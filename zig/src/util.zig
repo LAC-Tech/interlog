@@ -58,7 +58,7 @@ pub fn JaggedArray(comptime T: type) type {
             self.* = undefined;
         }
 
-        fn append(self: *@This(), items: []const T) Allocator.Error!void {
+        pub fn append(self: *@This(), items: []const T) Allocator.Error!void {
             try self.indices.append(.{
                 .pos = self.flat_mem.items.len,
                 .len = items.len,
@@ -66,11 +66,11 @@ pub fn JaggedArray(comptime T: type) type {
             try self.flat_mem.appendSlice(items);
         }
 
-        fn count(self: *@This()) usize {
+        pub fn count(self: *@This()) usize {
             return self.indices.items.len;
         }
 
-        fn get(self: @This(), index: usize) []const T {
+        pub fn get(self: @This(), index: usize) []const T {
             const region = self.indices.items[index];
             return region.read(self.flat_mem.items);
         }
