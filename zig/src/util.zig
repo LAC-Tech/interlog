@@ -43,10 +43,10 @@ pub fn JaggedArray(comptime T: type) type {
         flat_mem: std.ArrayList(T),
         indices: std.ArrayList(Region(T)),
 
-        pub fn init(allocator: Allocator) !@This() {
+        pub fn init(allocator: Allocator) @This() {
             return @This(){
                 .flat_mem = std.ArrayList(T).init(allocator),
-                .indices = std.ArrayList(Region(u8)).init(allocator),
+                .indices = std.ArrayList(Region(T)).init(allocator),
             };
         }
 
@@ -76,7 +76,7 @@ pub fn JaggedArray(comptime T: type) type {
 }
 
 test "messing around with jagged arrays" {
-    var ja = try JaggedArray(u8).init(testing.allocator);
+    var ja = JaggedArray(u8).init(testing.allocator);
     defer ja.deinit();
 
     try testing.expectEqual(ja.count(), 0);
