@@ -4,10 +4,25 @@ const Allocator = std.mem.Allocator;
 
 const util = @import("util.zig");
 
-const ReplicaID = struct {
-    _n: u128,
+const ReplicaID = enum(u128) {
+    _,
 
-    fn init() @This() {}
+    fn init(rng: anytype) @This() {
+        return @enumFromInt(rng.random().int(u128));
+    }
+};
+
+test "create replica ID" {
+    const seed: u128 = @bitCast(std.time.nanoTimestamp());
+    var rng = std.rand.DefaultPrng.init(@truncate(seed));
+    _ = ReplicaID.init(&rng);
+}
+
+const event = struct {
+    pub const ID = struct { origin: ReplicaID, pos: usize };
+    pub const Header = struct { byte_len: usize, id: ID };
+
+    pub const Event = struct { id: ID, payload: []const u8 };
 };
 
 const ReadCache = struct {

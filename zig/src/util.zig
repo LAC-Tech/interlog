@@ -42,13 +42,11 @@ pub fn JaggedArray(comptime T: type) type {
     return struct {
         flat_mem: std.ArrayList(T),
         indices: std.ArrayList(Region(T)),
-        allocator: Allocator,
 
         pub fn init(allocator: Allocator) !@This() {
             return @This(){
                 .flat_mem = std.ArrayList(T).init(allocator),
                 .indices = std.ArrayList(Region(u8)).init(allocator),
-                .allocator = allocator,
             };
         }
 
