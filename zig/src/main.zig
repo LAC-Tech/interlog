@@ -44,33 +44,62 @@ const event = struct {
     }
 
     pub const Event = struct { id: ID, payload: []const u8 };
+
+    fn read(bytes: []const u8, offset: usize) Event {
+        const header_region = util.Region.init(offset, @sizeOf(Header));
+        const header_bytes: []u8 = header_region.read(bytes);
+        const header: Header = @bitCast(header_bytes);
+
+        const payload_region = header_region.right_adjacent(header.byte_len);
+        const payload = payload_region.read(bytes);
+
+        return .{ .id = header.id, .payload = payload };
+    }
 };
 
 const ReadCache = struct {
-    buf: []u8,
+    mem: []u8,
+    logical_start: usize,
     a: util.Region(u8),
     b: util.Region(u8),
 
     pub fn init(allocator: Allocator, capacity: usize) !@This() {
         return ReadCache{
-            .buf = try allocator.alloc(u8, capacity),
+            .mem = try allocator.alloc(u8, capacity),
+            .logical_start = 0,
             .a = util.Region(u8).zero(),
             .b = util.Region(u8).zero(),
         };
     }
 
     pub fn deinit(self: *@This(), allocator: Allocator) void {
-        allocator.free(self.buf);
+        allocator.free(self.mem);
         self.* = undefined;
+    }
+
+    fn set_logical_start(self: *@This(), es: []const u8) void {
+        self.logical_start = event.read(es, 0).id.pos;
+    }
+
+    fn new_a_byte_pos(self: @This(), es: []const u8) ?usize {
+        const new_b_end = self.b.end + es.len;
+        _ = new_b_end;
+
+        var result: ?usize = null;
+        _ = result;
+
+        // return inside the loop once you find it, otherwise return null
+
+        return null;
     }
 
     // TODO: delete below, just inline
     pub fn read_a(self: @This()) []const u8 {
-        return self.a.read(self.buf);
+        return self.a.read(self.mem);
     }
 
     pub fn read_b(self: @This()) []const u8 {
-        return self.b.read(self.buf);
+        return self.b.read(self.mem);
     }
 };
 

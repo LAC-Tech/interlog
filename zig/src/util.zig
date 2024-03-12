@@ -35,6 +35,10 @@ pub fn Region(comptime T: type) type {
         pub fn empty(self: *@This()) bool {
             return self.len == 0;
         }
+
+        pub fn right_adjacent(self: @This(), len: usize) @This() {
+            return init(self.end, len);
+        }
     };
 }
 
