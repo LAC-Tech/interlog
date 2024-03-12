@@ -75,34 +75,46 @@ const ReadCache = struct {
 };
 
 test "alloc and free buf" {
-    //const Letter = enum(u8) {
-    //    a,
-    //    b,
-    //    c,
-    //    d,
-    //    e,
-    //    f,
-    //    h,
-    //    i,
-    //    k,
-    //    l,
-    //    n,
-    //    o,
-    //    p,
-    //    s,
-    //    t,
-    //    u,
-    //    w,
-    //    y,
-    //};
+    const Letter = enum(u192) {
+        a,
+        b,
+        c,
+        d,
+        e,
+        f,
+        h,
+        i,
+        k,
+        l,
+        n,
+        o,
+        p,
+        s,
+        t,
+        u,
+        w,
+        y,
+    };
 
-    //var rng = std.rand.DefaultPrng.init(rng_seed());
-    //const replica_id = ReplicaID.init(&rng);
-    //_ = replica_id;
+    var rng = std.rand.DefaultPrng.init(rng_seed());
+    const replica_id = ReplicaID.init(&rng);
+    _ = replica_id;
 
-    //var ja: util.JaggedArray(Letter) = util.JaggedArray(Letter).init(testing.allocator);
+    var ja: util.JaggedArray(Letter) = util.JaggedArray(Letter).init(testing.allocator);
 
-    //try ja.append(&[_]Letter{ .w, .h, .o });
+    defer ja.deinit();
+    try ja.append(&[_]Letter{ .w, .h, .o });
+    try ja.append(&[_]Letter{ .i, .s });
+    try ja.append(&[_]Letter{ .t, .h, .i, .s });
+    try ja.append(&[_]Letter{ .d, .o, .i, .n });
+    try ja.append(&[_]Letter{ .t, .h, .i, .s });
+    try ja.append(&[_]Letter{ .s, .y, .n, .t, .h, .e, .t, .i, .c });
+    try ja.append(&[_]Letter{ .t, .y, .p, .e });
+    try ja.append(&[_]Letter{ .o, .f });
+    try ja.append(&[_]Letter{ .a, .l, .p, .h, .a });
+    try ja.append(&[_]Letter{ .b, .e, .t, .a });
+    try ja.append(&[_]Letter{ .p, .s, .y, .c, .h, .e, .d, .e, .l, .i, .c });
+    try ja.append(&[_]Letter{ .f, .u, .n, .k, .i, .n });
 
     var rc = try ReadCache.init(testing.allocator, 8);
     defer rc.deinit(testing.allocator);
