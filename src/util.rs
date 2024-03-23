@@ -51,11 +51,9 @@ impl<T> FixVec<T> {
 	}
 
 	pub fn push(&mut self, value: T) -> FixVecRes {
-		let new_len = self.len + 1;
-		self.check_capacity(new_len)?;
-		self.elems[self.len] = value;
-		self.len = new_len;
-		Ok(())
+		self.check_capacity(self.len + 1)?;
+		self.elems[self.len + 1] = value;
+		Ok(self.len += 1)
 	}
 
 	pub fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> FixVecRes {
