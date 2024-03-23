@@ -2,55 +2,62 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
-pub fn Region(comptime T: type) type {
-    return struct {
-        pos: usize,
-        len: usize,
+pub const Region = struct {
+    pos: usize,
+    len: usize,
 
-        pub fn init(pos: usize, len: usize) @This() {
-            return @This(){ .pos = pos, .len = len };
-        }
+    pub fn init(pos: usize, len: usize) @This() {
+        return @This(){ .pos = pos, .len = len };
+    }
 
-        pub fn zero() @This() {
-            return init(0, 0);
-        }
+    pub fn zero() @This() {
+        return init(0, 0);
+    }
 
-        fn end(self: @This()) usize {
-            return self.pos + self.len;
-        }
+    fn end(self: @This()) usize {
+        return self.pos + self.len;
+    }
 
-        pub fn lengthen(self: *@This(), len_diff: usize) void {
-            self.len += len_diff;
-            self.end = self.pos + self.len;
-        }
+    pub fn lengthen(self: *@This(), len_diff: usize) void {
+        self.len += len_diff;
+        self.end = self.pos + self.len;
+    }
 
-        pub fn read(self: @This(), bytes: []const T) []const T {
-            return bytes[self.pos..self.end()];
+    pub fn read(self: @This(), comptime T: type, items: []const T) ?[]const T {
+        if (items.len >= self.end()) {
+            return null;
+        } else {
+            return items[self.pos..self.end()];
         }
+    }
 
-        pub fn write(self: *@This(), dest: []T, src: []const T) void {
-            @memcpy(dest[self.pos..self.end()], src);
-        }
+    pub fn write(self: @This(), comptime T: type, dest: []T, src: []const T) void {
+        @memcpy(dest[self.pos..self.end()], src);
+    }
 
-        pub fn empty(self: *@This()) bool {
-            return self.len == 0;
-        }
+    pub fn empty(self: @This()) bool {
+        return self.len == 0;
+    }
 
-        pub fn right_adjacent(self: @This(), len: usize) @This() {
-            return init(self.end, len);
-        }
-    };
+    pub fn rightAdjacent(self: @This(), len: usize) @This() {
+        return init(self.end, len);
+    }
+};
+
+test "empty region, empty slice" {
+    const r = Region.zero();
+    try testing.expectEqualSlices(u8, r.read(u8, &.{}).?, &.{});
 }
 
 pub fn JaggedArray(comptime T: type) type {
     return struct {
         flat_mem: std.ArrayList(T),
-        indices: std.ArrayList(Region(T)),
+        indices: std.ArrayList(Region),
 
         pub fn init(allocator: Allocator) @This() {
             return @This(){
                 .flat_mem = std.ArrayList(T).init(allocator),
-                .indices = std.ArrayList(Region(T)).init(allocator),
+                .indices = std.ArrayList(Region).init(allocator),
             };
         }
 
@@ -72,9 +79,9 @@ pub fn JaggedArray(comptime T: type) type {
             return self.indices.items.len;
         }
 
-        pub fn get(self: @This(), index: usize) []const T {
+        pub fn get(self: @This(), index: usize) ?[]const T {
             const region = self.indices.items[index];
-            return region.read(self.flat_mem.items);
+            return region.read(T, self.flat_mem.items);
         }
     };
 }
@@ -87,20 +94,22 @@ test "messing around with jagged arrays" {
 
     try ja.append("9PM");
     try testing.expectEqual(ja.count(), 1);
-    try testing.expectEqualSlices(u8, ja.get(0), "9PM");
+    try testing.expectEqualSlices(u8, ja.get(0).?, "9PM");
 
     try ja.append("Til");
     try testing.expectEqual(ja.count(), 2);
-    try testing.expectEqualSlices(u8, ja.get(1), "Til");
+    try testing.expectEqualSlices(u8, ja.get(1).?, "Til");
 
     try ja.append("I");
     try testing.expectEqual(ja.count(), 3);
-    try testing.expectEqualSlices(u8, ja.get(2), "I");
+    try testing.expectEqualSlices(u8, ja.get(2).?, "I");
 
     try ja.append("Come");
     try testing.expectEqual(ja.count(), 4);
-    try testing.expectEqualSlices(u8, ja.get(3), "Come");
+    try testing.expectEqualSlices(u8, ja.get(3).?, "Come");
 }
+
+const FixVecErr = error{Overflow};
 
 pub fn FixVec(comptime T: type) type {
     return struct {
@@ -122,6 +131,28 @@ pub fn FixVec(comptime T: type) type {
         pub fn capacity(self: *@This()) usize {
             return self._items.len;
         }
+
+        pub fn clear(self: *@This()) void {
+            self.len = 0;
+        }
+
+        fn checkCapacity(self: *@This(), new_len: usize) FixVecErr!void {
+            if (new_len > self.capacity()) {
+                return FixVecErr.Overflow;
+            }
+        }
+
+        pub fn append(self: *@This(), item: T) FixVecErr!void {
+            try self.checkCapacity(self.len + 1);
+            self._items[self.len] = item;
+            self.len += 1;
+        }
+
+        pub fn appendSlice(self: *@This(), items: []const T) FixVecErr!void {
+            try self.checkCapacity(self.len + items.len);
+            @memcpy(self._items[self.len .. self.len + items.len], items);
+            self.len += items.len;
+        }
     };
 }
 
@@ -130,4 +161,9 @@ test "fixvec stuff" {
     defer fv.deinit(testing.allocator);
 
     try testing.expectEqual(fv.capacity(), 8);
+    try fv.append(42);
+    try testing.expectEqual(fv.len, 1);
+
+    try fv.appendSlice(&[_]u64{ 6, 1, 9 });
+    try testing.expectEqual(fv.len, 4);
 }

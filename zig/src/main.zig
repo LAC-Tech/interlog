@@ -43,32 +43,50 @@ const event = struct {
         }
     }
 
-    pub const Event = struct { id: ID, payload: []const u8 };
+    pub const Event = struct {
+        id: ID,
+        payload: []const u8,
 
-    fn read(bytes: []const u8, offset: usize) Event {
+        pub fn onDiskSize(self: @This()) usize {
+            return @sizeOf(Header) + self.payload.len;
+        }
+    };
+
+    fn read(bytes: []const u8, offset: usize) ?Event {
         const header_region = util.Region.init(offset, @sizeOf(Header));
         const header_bytes: []u8 = header_region.read(bytes);
         const header: Header = @bitCast(header_bytes);
 
         const payload_region = header_region.right_adjacent(header.byte_len);
-        const payload = payload_region.read(bytes);
+        const payload = try payload_region.read(bytes);
 
         return .{ .id = header.id, .payload = payload };
     }
+
+    const Iterator = struct {
+        bytes: []const u8,
+        index: usize,
+
+        pub fn next(self: @This()) ?[]Event {
+            const result = try read(self.bytes, self.index);
+            self.index += result.on_disk_size();
+            return result;
+        }
+    };
 };
 
 const ReadCache = struct {
     mem: []u8,
     logical_start: usize,
-    a: util.Region(u8),
-    b: util.Region(u8),
+    a: util.Region,
+    b: util.Region,
 
     pub fn init(allocator: Allocator, capacity: usize) !@This() {
         return ReadCache{
             .mem = try allocator.alloc(u8, capacity),
             .logical_start = 0,
-            .a = util.Region(u8).zero(),
-            .b = util.Region(u8).zero(),
+            .a = util.Region.zero(),
+            .b = util.Region.zero(),
         };
     }
 
@@ -130,13 +148,12 @@ const ReadCache = struct {
         return null;
     }
 
-    // TODO: delete below, just inline
     pub fn read_a(self: @This()) []const u8 {
-        return self.a.read(self.mem);
+        return self.a.read(u8, self.mem).?;
     }
 
     pub fn read_b(self: @This()) []const u8 {
-        return self.b.read(self.mem);
+        return self.b.read(u8, self.mem).?;
     }
 };
 
@@ -163,6 +180,7 @@ test "alloc and free buf" {
     };
 
     var rng = std.rand.DefaultPrng.init(rng_seed());
+
     const replica_id = ReplicaID.init(&rng);
     _ = replica_id;
 
