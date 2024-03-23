@@ -1,6 +1,6 @@
 extern crate interlog;
 
-use interlog::{mem, unit};
+use interlog::mem;
 use pretty_assertions::assert_eq;
 
 struct Buf {
@@ -41,7 +41,7 @@ impl Buf {
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = mem::Region::new(0.into(), self.b.end);
+				self.a = mem::Region::new(0, self.b.end());
 				self.b = mem::Region::ZERO;
 				match self.a.extend(self.mem.as_mut(), s) {
 					Ok(()) => Ok(()),
@@ -56,12 +56,14 @@ impl Buf {
 		}
 	}
 
-	fn new_a_pos(&self, es: &[u8]) -> Option<unit::Byte> {
-		let new_b_end = self.b.end + mem::size(es);
+	fn new_a_pos(&self, es: &[u8]) -> Option<usize> {
+		let new_b_end = self.b.end() + es.len();
 
-		self.read_a().into_iter().skip(new_b_end.into()).enumerate().find_map(
-			|(i, &c)| is_upper_ascii(c).then(|| unit::Byte(i) + new_b_end)
-		)
+		self.read_a()
+			.into_iter()
+			.skip(new_b_end.into())
+			.enumerate()
+			.find_map(|(i, &c)| is_upper_ascii(c).then(|| i + new_b_end))
 	}
 
 	fn read_a(&self) -> &[u8] {

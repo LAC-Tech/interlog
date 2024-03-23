@@ -1,5 +1,4 @@
 //! Some error checking around linux sys calls to disk.
-use crate::unit;
 use fs::OFlags;
 use rustix::fd::AsFd;
 use rustix::{fd, fs, io};
@@ -28,7 +27,7 @@ pub fn read_from_file(
 #[derive(Debug, PartialEq)]
 pub enum AppendErr {
 	OS(rustix::io::Errno),
-	NonAtomic { bytes_expected: unit::Byte, bytes_written: unit::Byte }
+	NonAtomic { bytes_expected: usize, bytes_written: usize }
 }
 
 pub struct Log(fd::OwnedFd);
@@ -40,18 +39,17 @@ impl Log {
 		fs::open(path, flags, mode).map(Log)
 	}
 
-	pub fn append<B>(&self, bytes: B) -> Result<unit::Byte, AppendErr>
+	pub fn append<B>(&self, bytes: B) -> Result<usize, AppendErr>
 	where
 		B: AsRef<[u8]>
 	{
 		let bytes = bytes.as_ref();
 		let fd = self.0.as_fd();
 		// always sets file offset to EOF.
-		let bytes_written =
-			io::write(fd, bytes).map(unit::Byte).map_err(AppendErr::OS)?;
+		let bytes_written = io::write(fd, bytes).map_err(AppendErr::OS)?;
 		// Linux 'man open': appending to file opened w/ O_APPEND is atomic
 		// TODO: will this happen? if so how to recover?
-		let bytes_expected: unit::Byte = bytes.len().into();
+		let bytes_expected = bytes.len();
 		if bytes_written != bytes_expected {
 			return Err(AppendErr::NonAtomic { bytes_expected, bytes_written });
 		}

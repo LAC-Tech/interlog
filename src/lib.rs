@@ -19,7 +19,6 @@ pub mod event;
 pub mod mem;
 pub mod replica;
 pub mod replica_id;
-pub mod unit;
 pub mod util;
 
 #[cfg(not(target_pointer_width = "64"))]

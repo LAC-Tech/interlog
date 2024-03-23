@@ -1,12 +1,12 @@
 //! User facing functions for readidng and writing to interlog replicas.
 //! This can be considered the "top level" of the library.
+
+use core::ops::Range;
+
 use crate::mem;
 use crate::replica_id::ReplicaID;
-use crate::unit;
 use crate::util::{FixVec, FixVecOverflow};
 use crate::{disk, event};
-use rand::prelude::*;
-use rustix::io; // TODO make OpenErr in disk, and return that, remove this
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -30,37 +30,33 @@ pub enum ReadErr {
 type ReadRes = Result<(), ReadErr>;
 
 enum KeyIndexHit {
-	Disk(unit::Byte),
-	Cache(unit::Byte)
+	Disk(usize),
+	Cache(usize)
 }
 
-struct KeyIndex(FixVec<unit::Byte>);
+struct KeyIndex(FixVec<usize>);
 
 /// The entire index in memory, like bitcask's KeyDir
 /// Maps logical indices to disk offsets
 impl KeyIndex {
-	fn new(capacity: unit::Logical) -> Self {
-		Self(FixVec::new(capacity.into()))
+	fn new(capacity: usize) -> Self {
+		Self(FixVec::new(capacity))
 	}
 
-	fn len(&self) -> unit::Logical {
-		self.0.len().into()
+	fn len(&self) -> usize {
+		self.0.len()
 	}
 
-	fn push(&mut self, byte_offset: unit::Byte) -> WriteRes {
+	fn push(&mut self, byte_offset: usize) -> WriteRes {
 		self.0.push(byte_offset).map_err(WriteErr::KeyIndex)
 	}
 
-	fn get(&self, logical_pos: unit::Logical) -> Result<unit::Byte, ReadErr> {
-		let i: usize = logical_pos.into();
-		self.0.get(i).cloned().ok_or(ReadErr::KeyIndex)
+	fn get(&self, logical_pos: usize) -> Result<usize, ReadErr> {
+		self.0.get(logical_pos).cloned().ok_or(ReadErr::KeyIndex)
 	}
 
-	fn read_since(
-		&self,
-		pos: unit::Logical
-	) -> impl Iterator<Item = unit::Byte> + '_ {
-		self.0.iter().skip(pos.into()).copied()
+	fn read_since(&self, pos: usize) -> impl Iterator<Item = usize> + '_ {
+		self.0.iter().skip(pos).copied()
 	}
 }
 
@@ -95,7 +91,7 @@ impl KeyIndex {
 pub struct ReadCache {
 	mem: Box<[u8]>,
 	/// Everything above this is in this cache
-	pub logical_start: unit::Logical,
+	pub logical_start: usize,
 	a: mem::Region,
 	b: mem::Region // pos is always 0 but it's just easier
 }
@@ -103,7 +99,7 @@ pub struct ReadCache {
 impl ReadCache {
 	pub fn new(capacity: usize) -> Self {
 		let mem = vec![0; capacity].into_boxed_slice();
-		let logical_start = unit::Logical(0);
+		let logical_start = 0;
 		let a = mem::Region::ZERO;
 		let b = mem::Region::ZERO; // by definition B always starts at 0
 		Self { mem, logical_start, a, b }
@@ -126,7 +122,8 @@ impl ReadCache {
 	}
 
 	fn set_logical_start(&mut self, es: &[u8]) {
-		self.logical_start = event::read(es, 0).expect("event at 0").id.pos;
+		self.logical_start =
+			event::read(es, 0).expect("event at 0").id.logical_pos;
 	}
 
 	fn wrap_around(&mut self, es: &[u8]) -> Result<(), mem::ExtendOverflow> {
@@ -139,7 +136,7 @@ impl ReadCache {
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = mem::Region::new(0.into(), self.b.end);
+				self.a = mem::Region::new(0, self.b.end());
 				self.b = mem::Region::ZERO;
 				match self.a.extend(self.mem.as_mut(), es) {
 					Ok(()) => Ok(()),
@@ -155,10 +152,10 @@ impl ReadCache {
 		}
 	}
 
-	fn new_a_pos(&self, es: &[u8]) -> Option<unit::Byte> {
-		let new_b_end = self.b.end + mem::size(es);
+	fn new_a_pos(&self, es: &[u8]) -> Option<usize> {
+		let new_b_end = self.b.end() + es.len();
 		event::View::new(self.read_a())
-			.scan(unit::Byte(0), |offset, e| {
+			.scan(0, |offset, e| {
 				*offset += e.on_disk_size();
 				Some(*offset)
 			})
@@ -177,13 +174,13 @@ impl ReadCache {
 struct TxnWriteBuf(FixVec<u8>);
 
 impl TxnWriteBuf {
-	fn new(capacity: unit::Byte) -> Self {
-		Self(FixVec::new(capacity.into()))
+	fn new(capacity: usize) -> Self {
+		Self(FixVec::new(capacity))
 	}
 
 	fn write<'a, I>(
 		&mut self,
-		from: unit::Logical,
+		logical_from: usize,
 		origin: ReplicaID,
 		new_events: I
 	) -> WriteRes
@@ -194,8 +191,7 @@ impl TxnWriteBuf {
 
 		// Write Events with their headers
 		for (i, payload) in new_events.into_iter().enumerate() {
-			let pos = from + i.into();
-			let id = event::ID { origin, pos };
+			let id = event::ID { origin, logical_pos: logical_from + i };
 			let e = event::Event { id, payload };
 			event::append(&mut self.0, &e).map_err(WriteErr::TxnWriteBuf)?;
 		}
@@ -203,7 +199,7 @@ impl TxnWriteBuf {
 		Ok(())
 	}
 
-	fn into_iter(&self) -> impl Iterator<Item = event::Event<'_>> {
+	fn iter(&self) -> impl Iterator<Item = event::Event<'_>> {
 		event::View::new(&self.0)
 	}
 }
@@ -223,8 +219,8 @@ impl AsMut<[u8]> for TxnWriteBuf {
 struct ReadBuf(FixVec<u8>);
 
 impl ReadBuf {
-	fn new(capacity: unit::Byte) -> Self {
-		Self(FixVec::new(capacity.into()))
+	fn new(capacity: usize) -> Self {
+		Self(FixVec::new(capacity))
 	}
 
 	pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
@@ -246,18 +242,15 @@ impl ReadBuf {
 struct Log {
 	disk: disk::Log,
 	/// Keeps track of the disk
-	byte_len: unit::Byte,
+	byte_len: usize,
 	read_cache: ReadCache,
 	key_index: KeyIndex
 }
 
 impl Log {
 	fn persist(&mut self, txn_write_buf: &TxnWriteBuf) -> Result<(), WriteErr> {
-		let bytes_flushed = self
-			.disk
-			.append(txn_write_buf)
-			.map(unit::Byte::align)
-			.map_err(WriteErr::Disk)?;
+		let bytes_flushed =
+			self.disk.append(txn_write_buf).map_err(WriteErr::Disk)?;
 
 		// TODO: the below operations need to be made atomic w/ each other
 		self.read_cache.update(txn_write_buf.as_ref())?;
@@ -265,50 +258,20 @@ impl Log {
 		// Disk offsets recored in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 
-		for e in txn_write_buf.into_iter() {
+		for e in txn_write_buf.iter() {
 			self.key_index.push(disk_offset)?;
 			disk_offset += e.on_disk_size();
 		}
 
 		self.byte_len += bytes_flushed;
 
+		assert!(
+			self.byte_len % 8 == 0,
+			"length of log in bytes should be aligned to 8 bytes, given {}",
+			self.byte_len
+		);
+
 		Ok(())
-	}
-
-	fn logical_range_iter(
-		range: core::ops::Range<unit::Logical>
-	) -> impl Iterator<Item = unit::Logical> {
-		(range.start.into()..range.end.into()).into_iter().map(unit::Logical)
-	}
-
-	fn read(&self, buf: &mut ReadBuf, since: unit::Logical) {
-		let end = self.key_index.len();
-		let read_cache_start = self.read_cache.logical_start;
-
-		// Two optional ranges are created.
-		// uncached positions, and cached positions
-		// if both are None, this is a No Op
-
-		let uncached_range = (read_cache_start > since)
-			.then(|| since..read_cache_start - 1.into())
-			.map(Self::logical_range_iter);
-
-		let cached_range =
-			(since >= read_cache_start).then(|| read_cache_start..end);
-
-		/*
-		let uncached_range = if read_cache_start > since {
-			Some(since..read_cache_start - 1.into())
-		} else {
-			None
-		};
-
-		let cached_range = if read_cache_start > since {
-			Some(read_cache_start..end)
-		} else {
-			None
-		};
-		*/
 	}
 }
 /*
