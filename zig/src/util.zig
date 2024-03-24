@@ -164,7 +164,7 @@ pub fn FixVec(comptime T: type) type {
             self.len += items.len;
         }
 
-        pub fn asSlice(self: @This()) []const T {
+        pub fn asSlice(self: @This()) []T {
             return self._items[0..self.len];
         }
     };

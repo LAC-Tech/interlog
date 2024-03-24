@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
@@ -39,8 +40,8 @@ test "create replica ID" {
 }
 
 const event = struct {
-    pub const ID = struct { origin: ReplicaID, pos: usize };
-    pub const Header = struct { byte_len: usize, id: ID };
+    pub const ID = packed struct { origin: ReplicaID, pos: usize };
+    pub const Header = packed struct { byte_len: usize, id: ID };
 
     comptime {
         const header_size = @sizeOf(Header);
@@ -61,7 +62,7 @@ const event = struct {
 
     fn read(bytes: []const u8, offset: usize) ?Event {
         const header_region = util.Region.init(offset, @sizeOf(Header));
-        const header_bytes: []u8 = header_region.read(bytes);
+        const header_bytes = header_region.read(u8, bytes);
         const header: Header = @bitCast(header_bytes);
 
         const payload_region = header_region.rightAdjacent(header.byte_len);
@@ -76,10 +77,10 @@ const event = struct {
         const payload_region = Region.init(header_region.end(), e.payload.len);
         const next_offset = buf.len + e.onDiskSize();
         try buf.resize(next_offset);
-        const header_bytes: []const u8 = @bitCast(header);
+        const header_bytes = mem.asBytes(&header);
 
-        header_region.write(buf, header_bytes);
-        payload_region.write(buf, event.payload);
+        header_region.write(u8, buf.asSlice(), header_bytes);
+        payload_region.write(u8, buf.asSlice(), e.payload);
     }
 
     const Iterator = struct {
@@ -90,9 +91,9 @@ const event = struct {
             return .{ .bytes = bytes, .index = 0 };
         }
 
-        pub fn next(self: @This()) ?Event {
-            const result = try read(self.bytes, self.index);
-            self.index += result.on_disk_size();
+        pub fn next(self: *@This()) ?Event {
+            const result = read(self.bytes, self.index) orelse return null;
+            self.index += result.onDiskSize();
             return result;
         }
     };
@@ -114,7 +115,9 @@ test "let's write some bytes" {
         try testing.expectEqualSlices(u8, evt.payload, e.payload);
     }
 
-    try testing.expectEqualDeep(event.read(bytes.asSlice(), 8), *evt);
+    const actual = event.read(bytes.asSlice(), 0);
+
+    try testing.expectEqualDeep(actual, evt);
     try testing.expectEqual(1, 2);
 }
 
