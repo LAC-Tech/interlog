@@ -14,7 +14,7 @@ pub const Region = struct {
         return init(0, 0);
     }
 
-    fn end(self: @This()) usize {
+    pub fn end(self: @This()) usize {
         return self.pos + self.len;
     }
 
@@ -23,9 +23,9 @@ pub const Region = struct {
         self.end = self.pos + self.len;
     }
 
-    pub fn read(self: @This(), comptime T: type, items: []const T) ?[]const T {
-        if (items.len >= self.end()) {
-            return null;
+    pub fn read(self: @This(), comptime T: type, items: []const T) []const T {
+        if (items.len > self.end()) {
+            return &.{};
         } else {
             return items[self.pos..self.end()];
         }
@@ -46,7 +46,12 @@ pub const Region = struct {
 
 test "empty region, empty slice" {
     const r = Region.zero();
-    try testing.expectEqualSlices(u8, r.read(u8, &.{}).?, &.{});
+    try testing.expectEqualSlices(u8, r.read(u8, &.{}), &.{});
+}
+
+test "empty region, non-empty slice" {
+    const r = Region.zero();
+    try testing.expectEqualSlices(u8, r.read(u8, &.{ 1, 3, 3, 7 }), &.{});
 }
 
 pub fn JaggedArray(comptime T: type) type {
@@ -109,7 +114,7 @@ test "messing around with jagged arrays" {
     try testing.expectEqualSlices(u8, ja.get(3).?, "Come");
 }
 
-const FixVecErr = error{Overflow};
+pub const FixVecErr = error{Overflow};
 
 pub fn FixVec(comptime T: type) type {
     return struct {
@@ -142,6 +147,11 @@ pub fn FixVec(comptime T: type) type {
             }
         }
 
+        pub fn resize(self: *@This(), new_len: usize) FixVecErr!void {
+            try self.check_capacity(new_len);
+            self.len = new_len;
+        }
+
         pub fn append(self: *@This(), item: T) FixVecErr!void {
             try self.checkCapacity(self.len + 1);
             self._items[self.len] = item;
@@ -152,6 +162,10 @@ pub fn FixVec(comptime T: type) type {
             try self.checkCapacity(self.len + items.len);
             @memcpy(self._items[self.len .. self.len + items.len], items);
             self.len += items.len;
+        }
+
+        pub fn asSlice(self: @This()) []const T {
+            return self._items[0..self.len];
         }
     };
 }

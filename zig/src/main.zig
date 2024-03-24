@@ -5,6 +5,10 @@ const Allocator = std.mem.Allocator;
 
 const util = @import("util.zig");
 
+const FixVec = util.FixVec;
+const FixVecErr = util.FixVecErr;
+const Region = util.Region;
+
 comptime {
     if (builtin.target.cpu.arch.endian() != .Little) {
         @compileError("Big Endian is not supported");
@@ -30,7 +34,8 @@ fn rng_seed() u64 {
 
 test "create replica ID" {
     var rng = std.rand.DefaultPrng.init(rng_seed());
-    _ = ReplicaID.init(&rng);
+    const id = ReplicaID.init(&rng);
+    std.debug.print("{}", .{id});
 }
 
 const event = struct {
@@ -38,7 +43,9 @@ const event = struct {
     pub const Header = struct { byte_len: usize, id: ID };
 
     comptime {
-        if (@sizeOf(Header) != 24) {
+        const header_size = @sizeOf(Header);
+        if (header_size != 32) {
+            @compileLog("header size = ", @sizeOf(Header));
             @compileError("event header sized has changed");
         }
     }
@@ -57,17 +64,33 @@ const event = struct {
         const header_bytes: []u8 = header_region.read(bytes);
         const header: Header = @bitCast(header_bytes);
 
-        const payload_region = header_region.right_adjacent(header.byte_len);
+        const payload_region = header_region.rightAdjacent(header.byte_len);
         const payload = try payload_region.read(bytes);
 
         return .{ .id = header.id, .payload = payload };
+    }
+
+    fn append(buf: *FixVec(u8), e: *const Event) FixVecErr!void {
+        const header_region = Region.init(buf.len, @sizeOf(event.Header));
+        const header = .{ .byte_len = e.payload.len, .id = e.id };
+        const payload_region = Region.init(header_region.end(), e.payload.len);
+        const next_offset = buf.len + e.onDiskSize();
+        try buf.resize(next_offset);
+        const header_bytes: []const u8 = @bitCast(header);
+
+        header_region.write(buf, header_bytes);
+        payload_region.write(buf, event.payload);
     }
 
     const Iterator = struct {
         bytes: []const u8,
         index: usize,
 
-        pub fn next(self: @This()) ?[]Event {
+        pub fn init(bytes: []const u8) @This() {
+            return .{ .bytes = bytes, .index = 0 };
+        }
+
+        pub fn next(self: @This()) ?Event {
             const result = try read(self.bytes, self.index);
             self.index += result.on_disk_size();
             return result;
@@ -75,18 +98,46 @@ const event = struct {
     };
 };
 
+test "let's write some bytes" {
+    var bytes = try FixVec(u8).init(testing.allocator, 20);
+
+    var rng = std.rand.DefaultPrng.init(rng_seed());
+    const id = ReplicaID.init(&rng);
+
+    const evt = .{ .id = .{ .origin = id, .pos = 0 }, .payload = "j;fkls" };
+
+    try event.append(&bytes, &evt);
+
+    var it = event.Iterator.init(bytes.asSlice());
+
+    while (it.next()) |e| {
+        try testing.expectEqualSlices(u8, evt.payload, e.payload);
+    }
+
+    try testing.expectEqualDeep(event.read(bytes.asSlice(), 8), *evt);
+    try testing.expectEqual(1, 2);
+}
+
+const TxnWriteBuf = struct {
+    bytes: FixVec(u8),
+
+    fn init(capacity: usize) @This() {
+        return .{ .bytes = FixVec(u8).init(capacity) };
+    }
+};
+
 const ReadCache = struct {
     mem: []u8,
     logical_start: usize,
-    a: util.Region,
-    b: util.Region,
+    a: Region,
+    b: Region,
 
     pub fn init(allocator: Allocator, capacity: usize) !@This() {
         return ReadCache{
             .mem = try allocator.alloc(u8, capacity),
             .logical_start = 0,
-            .a = util.Region.zero(),
-            .b = util.Region.zero(),
+            .a = Region.zero(),
+            .b = Region.zero(),
         };
     }
 
@@ -113,16 +164,16 @@ const ReadCache = struct {
         const b_would_overflow = self.b.end + txn_write_buf.len > self.mem.len;
 
         if (b_would_overflow) {
-            self.a = util.Region(u8).init(0, self.b.end);
-            self.b = util.Region(u8).zero();
+            self.a = Region(u8).init(0, self.b.end);
+            self.b = Region(u8).zero();
         }
 
         if (self.new_a_byte_pos(txn_write_buf)) |new_a_pos| {
             self.a.change_pos(new_a_pos);
             self.write_b(txn_write_buf);
         } else {
-            self.a = util.Region(u8).init(0, self.b.end);
-            self.b = util.Region(u8).zero();
+            self.a = Region(u8).init(0, self.b.end);
+            self.b = Region(u8).zero();
             self.write_a(txn_write_buf);
         }
     }
@@ -135,11 +186,11 @@ const ReadCache = struct {
         const new_b_end = self.b.end + es.len;
 
         // return inside the loop once you find it, otherwise return null
-
         var offset: usize = 0;
 
         for (self.read_a()) |e| {
             offset += e.onDiskSize();
+
             if (offset > new_b_end) {
                 return offset;
             }
@@ -148,17 +199,25 @@ const ReadCache = struct {
         return null;
     }
 
+    fn write_a(self: *@This(), es: []const u8) void {
+        Region.init(self.a.len, es.len).write(self.mem, es);
+    }
+
+    fn write_b(self: *@This(), es: []const u8) void {
+        Region.init(self.b.len, es.len).write(self.mem, es);
+    }
+
     pub fn read_a(self: @This()) []const u8 {
-        return self.a.read(u8, self.mem).?;
+        return self.a.read(u8, self.mem);
     }
 
     pub fn read_b(self: @This()) []const u8 {
-        return self.b.read(u8, self.mem).?;
+        return self.b.read(u8, self.mem);
     }
 };
 
 test "alloc and free buf" {
-    const Letter = enum(u192) {
+    const Letter = enum(u256) {
         a,
         b,
         c,
