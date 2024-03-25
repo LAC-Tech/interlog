@@ -23,7 +23,7 @@ pub struct Byte(pub usize);
 
 impl Byte {
 	pub fn align(self) -> Byte {
-		Self((self.0 + 7) & !7)
+		Self((self.0 + 7) & ~7)
 	}
 
 	pub fn region(self, len: Self) -> mem::Region {

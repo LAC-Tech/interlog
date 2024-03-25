@@ -23,9 +23,9 @@ pub const Region = struct {
         self.end = self.pos + self.len;
     }
 
-    pub fn read(self: @This(), comptime T: type, items: []const T) []const T {
-        if (items.len > self.end()) {
-            return &.{};
+    pub fn read(self: @This(), comptime T: type, items: []const T) ?[]const T {
+        if (self.end() > items.len) {
+            return null;
         } else {
             return items[self.pos..self.end()];
         }
@@ -40,18 +40,27 @@ pub const Region = struct {
     }
 
     pub fn rightAdjacent(self: @This(), len: usize) @This() {
-        return init(self.end, len);
+        return init(self.end(), len);
     }
 };
 
 test "empty region, empty slice" {
     const r = Region.zero();
-    try testing.expectEqualSlices(u8, r.read(u8, &.{}), &.{});
+    try testing.expectEqualSlices(u8, r.read(u8, &.{}).?, &.{});
 }
 
 test "empty region, non-empty slice" {
     const r = Region.zero();
-    try testing.expectEqualSlices(u8, r.read(u8, &.{ 1, 3, 3, 7 }), &.{});
+    try testing.expectEqualSlices(u8, r.read(u8, &.{ 1, 3, 3, 7 }).?, &.{});
+}
+
+test "non-empty region, non-empty slice" {
+    const r = Region.init(1, 2);
+    try testing.expectEqualSlices(
+        u8,
+        r.read(u8, &.{ 1, 3, 3, 7 }).?,
+        &.{ 3, 3 },
+    );
 }
 
 pub fn JaggedArray(comptime T: type) type {
@@ -148,7 +157,7 @@ pub fn FixVec(comptime T: type) type {
         }
 
         pub fn resize(self: *@This(), new_len: usize) FixVecErr!void {
-            try self.check_capacity(new_len);
+            try self.checkCapacity(new_len);
             self.len = new_len;
         }
 

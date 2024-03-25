@@ -36,11 +36,11 @@ fn rng_seed() u64 {
 test "create replica ID" {
     var rng = std.rand.DefaultPrng.init(rng_seed());
     const id = ReplicaID.init(&rng);
-    std.debug.print("{}", .{id});
+    _ = id;
 }
 
 const event = struct {
-    pub const ID = packed struct { origin: ReplicaID, pos: usize };
+    pub const ID = packed struct { origin: ReplicaID, logical_pos: usize };
     pub const Header = packed struct { byte_len: usize, id: ID };
 
     comptime {
@@ -56,23 +56,27 @@ const event = struct {
         payload: []const u8,
 
         pub fn onDiskSize(self: @This()) usize {
-            return @sizeOf(Header) + self.payload.len;
+            const result = @sizeOf(Header) + self.payload.len;
+            return (result + 7) & ~@as(u8, 7); // 8 byte aligned on disk
         }
     };
 
     fn read(bytes: []const u8, offset: usize) ?Event {
         const header_region = util.Region.init(offset, @sizeOf(Header));
-        const header_bytes = header_region.read(u8, bytes);
-        const header: Header = @bitCast(header_bytes);
+        const header_bytes = header_region.read(u8, bytes) orelse return null;
+        const header = mem.bytesAsValue(
+            Header,
+            header_bytes[0..@sizeOf(Header)],
+        );
 
         const payload_region = header_region.rightAdjacent(header.byte_len);
-        const payload = try payload_region.read(bytes);
+        const payload = payload_region.read(u8, bytes) orelse return null;
 
         return .{ .id = header.id, .payload = payload };
     }
 
     fn append(buf: *FixVec(u8), e: *const Event) FixVecErr!void {
-        const header_region = Region.init(buf.len, @sizeOf(event.Header));
+        const header_region = Region.init(buf.len, @sizeOf(Header));
         const header = .{ .byte_len = e.payload.len, .id = e.id };
         const payload_region = Region.init(header_region.end(), e.payload.len);
         const next_offset = buf.len + e.onDiskSize();
@@ -100,12 +104,16 @@ const event = struct {
 };
 
 test "let's write some bytes" {
-    var bytes = try FixVec(u8).init(testing.allocator, 20);
+    var bytes = try FixVec(u8).init(testing.allocator, 63);
+    defer bytes.deinit(testing.allocator);
 
     var rng = std.rand.DefaultPrng.init(rng_seed());
     const id = ReplicaID.init(&rng);
 
-    const evt = .{ .id = .{ .origin = id, .pos = 0 }, .payload = "j;fkls" };
+    const evt = .{
+        .id = .{ .origin = id, .logical_pos = 0 },
+        .payload = "j;fkls",
+    };
 
     try event.append(&bytes, &evt);
 
@@ -118,7 +126,6 @@ test "let's write some bytes" {
     const actual = event.read(bytes.asSlice(), 0);
 
     try testing.expectEqualDeep(actual, evt);
-    try testing.expectEqual(1, 2);
 }
 
 const TxnWriteBuf = struct {
@@ -211,11 +218,11 @@ const ReadCache = struct {
     }
 
     pub fn read_a(self: @This()) []const u8 {
-        return self.a.read(u8, self.mem);
+        return self.a.read(u8, self.mem).?;
     }
 
     pub fn read_b(self: @This()) []const u8 {
-        return self.b.read(u8, self.mem);
+        return self.b.read(u8, self.mem).?;
     }
 };
 
