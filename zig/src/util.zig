@@ -2,9 +2,15 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
+// A region of memory with bounds checked functions to read and write from it
+// Kind of turning pos..pos+len into an object, that can be grown, shifted etc
 pub const Region = struct {
     pos: usize,
     len: usize,
+
+    const WriteError = error{
+        DestOverflow,
+    };
 
     pub fn init(pos: usize, len: usize) @This() {
         return @This(){ .pos = pos, .len = len };
@@ -31,7 +37,16 @@ pub const Region = struct {
         }
     }
 
-    pub fn write(self: @This(), comptime T: type, dest: []T, src: []const T) void {
+    // "Safe" wrapper around memcpy
+    pub fn write(
+        self: @This(),
+        dest: anytype,
+        src: anytype,
+    ) WriteError!void {
+        if (self.end() > dest.len) {
+            return error.DestOverflow;
+        }
+
         @memcpy(dest[self.pos..self.end()], src);
     }
 
@@ -39,8 +54,13 @@ pub const Region = struct {
         return self.len == 0;
     }
 
-    pub fn rightAdjacent(self: @This(), len: usize) @This() {
-        return init(self.end(), len);
+    pub fn isZero(self: @This()) bool {
+        return self.pos == 0 and self.len == 0;
+    }
+
+    pub fn changePos(self: *@This(), new_pos: usize) void {
+        self.pos = new_pos;
+        self.len = self.end() - new_pos;
     }
 };
 

@@ -69,22 +69,22 @@ const event = struct {
             header_bytes[0..@sizeOf(Header)],
         );
 
-        const payload_region = header_region.rightAdjacent(header.byte_len);
+        const payload_region = Region.init(header_region.end(), header.byte_len);
         const payload = payload_region.read(u8, bytes) orelse return null;
 
         return .{ .id = header.id, .payload = payload };
     }
 
-    fn append(buf: *FixVec(u8), e: *const Event) FixVecErr!void {
+    fn append(buf: *FixVec(u8), e: *const Event) !void {
         const header_region = Region.init(buf.len, @sizeOf(Header));
         const header = .{ .byte_len = e.payload.len, .id = e.id };
-        const payload_region = Region.init(header_region.end(), e.payload.len);
-        const next_offset = buf.len + e.onDiskSize();
-        try buf.resize(next_offset);
         const header_bytes = mem.asBytes(&header);
 
-        header_region.write(u8, buf.asSlice(), header_bytes);
-        payload_region.write(u8, buf.asSlice(), e.payload);
+        const payload_region = Region.init(header_region.end(), e.payload.len);
+
+        try buf.resize(buf.len + e.onDiskSize());
+        try header_region.write(buf.asSlice(), header_bytes);
+        try payload_region.write(buf.asSlice(), e.payload);
     }
 
     const Iterator = struct {
@@ -156,6 +156,21 @@ const ReadCache = struct {
         self.* = undefined;
     }
 
+    fn wrapAround(self: *@This(), txn_write_buf: []const u8) void {
+        if (self.new_a_byte_pos(txn_write_buf)) |new_a_pos| {
+            // Truncate A and write to B
+            self.a.changePos(new_a_pos);
+            self.b.extend(self.mem.asSlice(), txn_write_buf);
+        } else {
+            // We've searched past the end of A and found nothing.
+            // B is now A
+            self.a = Region.init(0, self.b.end());
+            self.b = Region.zero();
+
+            // TODO: if ()
+        }
+    }
+
     pub fn update(self: @This(), txn_write_buf: []const u8) void {
         const a_would_overflow = self.a.end + txn_write_buf.len + self.mem.len;
 
@@ -189,7 +204,7 @@ const ReadCache = struct {
     }
 
     fn set_logical_start(self: *@This(), es: []const u8) void {
-        self.logical_start = event.read(es, 0).id.pos;
+        self.logical_start = event.read(es, 0).id.logical_pos;
     }
 
     fn new_a_byte_pos(self: @This(), es: []const u8) ?usize {
