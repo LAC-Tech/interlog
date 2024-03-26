@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 const util = @import("util.zig");
 
 const FixVec = util.FixVec;
-const FixVecErr = util.FixVecErr;
+const FixVecAligned = util.FixVecAligned;
 const Region = util.Region;
 
 comptime {
@@ -20,7 +20,7 @@ comptime {
     }
 }
 
-const ReplicaID = enum(u128) {
+const LogID = enum(u128) {
     _,
 
     fn init(rng: anytype) @This() {
@@ -35,12 +35,12 @@ fn rng_seed() u64 {
 
 test "create replica ID" {
     var rng = std.rand.DefaultPrng.init(rng_seed());
-    const id = ReplicaID.init(&rng);
+    const id = LogID.init(&rng);
     _ = id;
 }
 
 const event = struct {
-    pub const ID = packed struct { origin: ReplicaID, logical_pos: usize };
+    pub const ID = packed struct { origin: LogID, logical_pos: usize };
     pub const Header = packed struct { byte_len: usize, id: ID };
 
     comptime {
@@ -57,7 +57,8 @@ const event = struct {
 
         pub fn onDiskSize(self: @This()) usize {
             const result = @sizeOf(Header) + self.payload.len;
-            return (result + 7) & ~@as(u8, 7); // 8 byte aligned on disk
+            // While payload sizes are arbitrary, on disk we want 8 byte alignment
+            return (result + 7) & ~@as(u8, 7);
         }
     };
 
@@ -75,7 +76,7 @@ const event = struct {
         return .{ .id = header.id, .payload = payload };
     }
 
-    fn append(buf: *FixVec(u8), e: *const Event) !void {
+    fn append(buf: *FixVecAligned(u8, 8), e: *const Event) !void {
         const header_region = Region.init(buf.len, @sizeOf(Header));
         const header = .{ .byte_len = e.payload.len, .id = e.id };
         const header_bytes = mem.asBytes(&header);
@@ -104,11 +105,11 @@ const event = struct {
 };
 
 test "let's write some bytes" {
-    var bytes = try FixVec(u8).init(testing.allocator, 63);
+    var bytes = try FixVecAligned(u8, 8).init(testing.allocator, 63);
     defer bytes.deinit(testing.allocator);
 
     var rng = std.rand.DefaultPrng.init(rng_seed());
-    const id = ReplicaID.init(&rng);
+    const id = LogID.init(&rng);
 
     const evt = .{
         .id = .{ .origin = id, .logical_pos = 0 },
@@ -128,29 +129,8 @@ test "let's write some bytes" {
     try testing.expectEqualDeep(actual, evt);
 }
 
-//const TxnWriteBuf = struct {
-//    bytes: FixVec(u8),
-//
-//    fn init(capacity: usize) @This() {
-//        return .{ .bytes = FixVec(u8).init(capacity) };
-//    }
-//
-//    fn write(self: *@This(), e: event.Event) !void {
-//        const current_byte_len = self.bytes.len;
-//
-//        try event.append(self.bytes, e) catch |err| {
-//            try self.bytes.resize(current_byte_len);
-//            return err;
-//        };
-//    }
-//
-//    fn asByteSlice(self: @This()) []const u8 {
-//        return self.bytes.asSlice();
-//    }
-//};
-
 const ReadCache = struct {
-    mem: []u8,
+    mem: []align(8) u8,
     logical_start: usize,
     a: Region,
     b: Region,
@@ -159,7 +139,7 @@ const ReadCache = struct {
 
     pub fn init(allocator: Allocator, capacity: usize) !@This() {
         return ReadCache{
-            .mem = try allocator.alloc(u8, capacity),
+            .mem = try allocator.alignedAlloc(u8, 8, capacity),
             .logical_start = 0,
             .a = Region.zero(),
             .b = Region.zero(),
@@ -171,7 +151,7 @@ const ReadCache = struct {
         self.* = undefined;
     }
 
-    pub fn update(self: @This(), txn_write_buf: []const u8) void {
+    pub fn update(self: *@This(), txn_write_buf: []align(8) const u8) !void {
         // Should never happen but... let's see if it does
         if (txn_write_buf.len > self.mem.len) {
             return error.TooLongForCache;
@@ -179,13 +159,13 @@ const ReadCache = struct {
 
         if (self.b.empty()) {
             if (self.a.empty()) {
-                self.set_logical_start(txn_write_buf);
+                self.setLogicalStart(txn_write_buf);
             }
 
             self.tryAppendA(txn_write_buf) catch {
                 // If there's no space, start B, write to that, and truncate A
                 self.b = Region.init(0, txn_write_buf.len);
-                try self.tryAppendB(self.mem, txn_write_buf);
+                try self.tryAppendB(txn_write_buf);
             };
         } else {
             if (self.newABytePos(txn_write_buf)) |new_a_pos| {
@@ -195,23 +175,24 @@ const ReadCache = struct {
                 // New a position would fragment memory across an event
                 // B gets deleted and we move to a fresh A
                 self.a = Region.init(0, txn_write_buf.len);
-                self.setLoigcalStart(txn_write_buf);
-                try self.tryAppendA(self.mem, txn_write_buf);
+                self.setLogicalStart(txn_write_buf);
+                try self.tryAppendA(txn_write_buf);
             }
         }
     }
 
-    fn setLogicalStart(self: *@This(), es: []const u8) void {
-        self.logical_start = event.read(es, 0).id.logical_pos;
+    fn setLogicalStart(self: *@This(), es: []align(8) const u8) void {
+        self.logical_start = event.read(es, 0).?.id.logical_pos;
     }
 
-    fn newABytePos(self: @This(), es: []const u8) ?usize {
-        const new_b_end = self.b.end + es.len;
+    fn newABytePos(self: @This(), es: []align(8) const u8) ?usize {
+        const new_b_end = self.b.end() + es.len;
 
         // return inside the loop once you find it, otherwise return null
         var offset: usize = 0;
 
-        for (self.readA()) |e| {
+        var a_event_iter = event.Iterator.init(self.readA());
+        while (a_event_iter.next()) |e| {
             offset += e.onDiskSize();
 
             if (offset > new_b_end) {
@@ -241,9 +222,9 @@ const ReadCache = struct {
     }
 };
 
-const Replica = struct {
-    replica_id: ReplicaID,
-    txn_write_buf: FixVec(u8),
+const Log = struct {
+    id: LogID,
+    txn_write_buf: FixVecAligned(u8, 8),
     read_cache: ReadCache,
     key_index: FixVec(usize),
     arena: std.heap.ArenaAllocator,
@@ -264,8 +245,8 @@ const Replica = struct {
         var arena = std.heap.ArenaAllocator.init(child_allocator);
         const allocator = arena.allocator();
         return .{
-            .replica_id = ReplicaID.init(rng),
-            .txn_write_buf = try FixVec(u8).init(
+            .id = LogID.init(rng),
+            .txn_write_buf = try FixVecAligned(u8, 8).init(
                 allocator,
                 config.capacity.txn_write_buf,
             ),
@@ -285,9 +266,25 @@ const Replica = struct {
         self.arena.deinit();
         self.* = undefined;
     }
+
+    fn enqueue(self: *@This(), payload: anytype) !void {
+        const e: event.Event = .{
+            .id = .{ .origin = self.id, .logical_pos = self.key_index.len },
+            .payload = mem.sliceAsBytes(payload),
+        };
+
+        try event.append(&self.txn_write_buf, &e);
+    }
+
+    fn commit(self: *@This()) !void {
+        try self.read_cache.update(self.txn_write_buf.asSlice());
+        self.txn_write_buf.clear();
+    }
 };
 
-test "alloc and free buf" {
+// TODO: I need ASCII diagram of my graph paper sketch, otherwise this test
+// makes zero sense
+test "test read cache" {
     const Letter = enum(u256) {
         a,
         b,
@@ -311,41 +308,47 @@ test "alloc and free buf" {
 
     var rng = std.rand.DefaultPrng.init(rng_seed());
 
-    const replica_id = ReplicaID.init(&rng);
-    _ = replica_id;
+    //var ja = util.JaggedArray(Letter).init(testing.allocator);
+    //defer ja.deinit();
+    //try ja.append(&.{ .w, .h, .o });
+    //try ja.append(&.{ .i, .s });
+    //try ja.append(&.{ .t, .h, .i, .s });
+    //try ja.append(&.{ .d, .o, .i, .n });
+    //try ja.append(&.{ .t, .h, .i, .s });
+    //try ja.append(&.{ .s, .y, .n, .t, .h, .e, .t, .i, .c });
+    //try ja.append(&.{ .t, .y, .p, .e });
+    //try ja.append(&.{ .o, .f });
+    //try ja.append(&.{ .a, .l, .p, .h, .a });
+    //try ja.append(&.{ .b, .e, .t, .a });
+    //try ja.append(&.{ .p, .s, .y, .c, .h, .e, .d, .e, .l, .i, .c });
+    //try ja.append(&.{ .f, .u, .n, .k, .i, .n });
 
-    var ja = util.JaggedArray(Letter).init(testing.allocator);
-
-    defer ja.deinit();
-    try ja.append(&.{ .w, .h, .o });
-    try ja.append(&.{ .i, .s });
-    try ja.append(&.{ .t, .h, .i, .s });
-    try ja.append(&.{ .d, .o, .i, .n });
-    try ja.append(&.{ .t, .h, .i, .s });
-    try ja.append(&.{ .s, .y, .n, .t, .h, .e, .t, .i, .c });
-    try ja.append(&.{ .t, .y, .p, .e });
-    try ja.append(&.{ .o, .f });
-    try ja.append(&.{ .a, .l, .p, .h, .a });
-    try ja.append(&.{ .b, .e, .t, .a });
-    try ja.append(&.{ .p, .s, .y, .c, .h, .e, .d, .e, .l, .i, .c });
-    try ja.append(&.{ .f, .u, .n, .k, .i, .n });
-
-    var rc = try ReadCache.init(testing.allocator, 8);
-    defer rc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, rc.readA(), &.{});
-    try testing.expectEqualSlices(u8, rc.readB(), &.{});
-
-    var replica = try Replica.init(
+    var log = try Log.init(
         testing.allocator,
         &rng,
         .{
             .capacity = .{
-                .txn_write_buf = 8,
-                .read_cache = 16,
-                .key_index = 127,
+                .txn_write_buf = 0x200,
+                .read_cache = 0x1000,
+                .key_index = 0x10000,
             },
         },
     );
+    defer log.deinit();
 
-    defer replica.deinit();
+    try log.enqueue(&[_]Letter{ .w, .h, .o });
+    try log.commit();
+    try testing.expectEqualDeep(Region.init(0, 32 * 4), log.read_cache.a);
+
+    try log.enqueue(&[_]Letter{ .i, .s });
+    try log.commit();
+    try testing.expectEqualDeep(Region.init(0, 32 * 7), log.read_cache.a);
+
+    try log.enqueue(&[_]Letter{ .t, .h, .i, .s });
+    try log.commit();
+    try testing.expectEqualDeep(Region.init(0, 32 * 12), log.read_cache.a);
+
+    try log.enqueue(&[_]Letter{ .d, .o, .i, .n });
+    try log.commit();
+    try testing.expectEqualDeep(Region.init(32 * 7, 32 * 5), log.read_cache.a);
 }

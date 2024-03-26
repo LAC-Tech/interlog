@@ -142,16 +142,18 @@ test "messing around with jagged arrays" {
     try testing.expectEqualSlices(u8, ja.get(3).?, "Come");
 }
 
-pub const FixVecErr = error{Overflow};
-
-pub fn FixVec(comptime T: type) type {
+pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
     return struct {
-        _items: []T,
+        _items: Slice,
         len: usize,
+
+        pub const Slice = if (alignment) |a| ([]align(a) T) else []T;
+
+        pub const Err = error{Overflow};
 
         pub fn init(allocator: Allocator, fixed_capacity: usize) !@This() {
             return @This(){
-                ._items = try allocator.alloc(T, fixed_capacity),
+                ._items = try allocator.alignedAlloc(T, alignment, fixed_capacity),
                 .len = 0,
             };
         }
@@ -169,33 +171,37 @@ pub fn FixVec(comptime T: type) type {
             self.len = 0;
         }
 
-        fn checkCapacity(self: *@This(), new_len: usize) FixVecErr!void {
+        fn checkCapacity(self: *@This(), new_len: usize) Err!void {
             if (new_len > self.capacity()) {
-                return FixVecErr.Overflow;
+                return Err.Overflow;
             }
         }
 
-        pub fn resize(self: *@This(), new_len: usize) FixVecErr!void {
+        pub fn resize(self: *@This(), new_len: usize) Err!void {
             try self.checkCapacity(new_len);
             self.len = new_len;
         }
 
-        pub fn append(self: *@This(), item: T) FixVecErr!void {
+        pub fn append(self: *@This(), item: T) Err!void {
             try self.checkCapacity(self.len + 1);
             self._items[self.len] = item;
             self.len += 1;
         }
 
-        pub fn appendSlice(self: *@This(), items: []const T) FixVecErr!void {
+        pub fn appendSlice(self: *@This(), items: []const T) Err!void {
             try self.checkCapacity(self.len + items.len);
             @memcpy(self._items[self.len .. self.len + items.len], items);
             self.len += items.len;
         }
 
-        pub fn asSlice(self: @This()) []T {
+        pub fn asSlice(self: @This()) Slice {
             return self._items[0..self.len];
         }
     };
+}
+
+pub fn FixVec(comptime T: type) type {
+    return FixVecAligned(T, null);
 }
 
 test "fixvec stuff" {
