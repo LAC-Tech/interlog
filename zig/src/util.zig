@@ -26,7 +26,6 @@ pub const Region = struct {
 
     pub fn lengthen(self: *@This(), len_diff: usize) void {
         self.len += len_diff;
-        self.end = self.pos + self.len;
     }
 
     pub fn read(self: @This(), comptime T: type, items: []const T) ?[]const T {

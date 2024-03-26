@@ -128,19 +128,34 @@ test "let's write some bytes" {
     try testing.expectEqualDeep(actual, evt);
 }
 
-const TxnWriteBuf = struct {
-    bytes: FixVec(u8),
-
-    fn init(capacity: usize) @This() {
-        return .{ .bytes = FixVec(u8).init(capacity) };
-    }
-};
+//const TxnWriteBuf = struct {
+//    bytes: FixVec(u8),
+//
+//    fn init(capacity: usize) @This() {
+//        return .{ .bytes = FixVec(u8).init(capacity) };
+//    }
+//
+//    fn write(self: *@This(), e: event.Event) !void {
+//        const current_byte_len = self.bytes.len;
+//
+//        try event.append(self.bytes, e) catch |err| {
+//            try self.bytes.resize(current_byte_len);
+//            return err;
+//        };
+//    }
+//
+//    fn asByteSlice(self: @This()) []const u8 {
+//        return self.bytes.asSlice();
+//    }
+//};
 
 const ReadCache = struct {
     mem: []u8,
     logical_start: usize,
     a: Region,
     b: Region,
+
+    const UpdateErr = error{TooLongForCache};
 
     pub fn init(allocator: Allocator, capacity: usize) !@This() {
         return ReadCache{
@@ -156,64 +171,47 @@ const ReadCache = struct {
         self.* = undefined;
     }
 
-    fn wrapAround(self: *@This(), txn_write_buf: []const u8) void {
-        if (self.new_a_byte_pos(txn_write_buf)) |new_a_pos| {
-            // Truncate A and write to B
-            self.a.changePos(new_a_pos);
-            self.b.extend(self.mem.asSlice(), txn_write_buf);
-        } else {
-            // We've searched past the end of A and found nothing.
-            // B is now A
-            self.a = Region.init(0, self.b.end());
-            self.b = Region.zero();
-
-            // TODO: if ()
-        }
-    }
-
     pub fn update(self: @This(), txn_write_buf: []const u8) void {
-        const a_would_overflow = self.a.end + txn_write_buf.len + self.mem.len;
-
-        if (!a_would_overflow and self.b.end == 0) {
-            self.write_a(txn_write_buf);
-            return;
+        // Should never happen but... let's see if it does
+        if (txn_write_buf.len > self.mem.len) {
+            return error.TooLongForCache;
         }
 
-        const a_will_be_modified = self.b.end + txn_write_buf.len >= self.a.pos;
+        if (self.b.empty()) {
+            if (self.a.empty()) {
+                self.set_logical_start(txn_write_buf);
+            }
 
-        if (!a_will_be_modified) {
-            self.write_b(txn_write_buf);
-            return;
-        }
-
-        const b_would_overflow = self.b.end + txn_write_buf.len > self.mem.len;
-
-        if (b_would_overflow) {
-            self.a = Region(u8).init(0, self.b.end);
-            self.b = Region(u8).zero();
-        }
-
-        if (self.new_a_byte_pos(txn_write_buf)) |new_a_pos| {
-            self.a.change_pos(new_a_pos);
-            self.write_b(txn_write_buf);
+            self.tryAppendA(txn_write_buf) catch {
+                // If there's no space, start B, write to that, and truncate A
+                self.b = Region.init(0, txn_write_buf.len);
+                try self.tryAppendB(self.mem, txn_write_buf);
+            };
         } else {
-            self.a = Region(u8).init(0, self.b.end);
-            self.b = Region(u8).zero();
-            self.write_a(txn_write_buf);
+            if (self.newABytePos(txn_write_buf)) |new_a_pos| {
+                self.a.changePos(new_a_pos);
+                try self.tryAppendB(txn_write_buf);
+            } else {
+                // New a position would fragment memory across an event
+                // B gets deleted and we move to a fresh A
+                self.a = Region.init(0, txn_write_buf.len);
+                self.setLoigcalStart(txn_write_buf);
+                try self.tryAppendA(self.mem, txn_write_buf);
+            }
         }
     }
 
-    fn set_logical_start(self: *@This(), es: []const u8) void {
+    fn setLogicalStart(self: *@This(), es: []const u8) void {
         self.logical_start = event.read(es, 0).id.logical_pos;
     }
 
-    fn new_a_byte_pos(self: @This(), es: []const u8) ?usize {
+    fn newABytePos(self: @This(), es: []const u8) ?usize {
         const new_b_end = self.b.end + es.len;
 
         // return inside the loop once you find it, otherwise return null
         var offset: usize = 0;
 
-        for (self.read_a()) |e| {
+        for (self.readA()) |e| {
             offset += e.onDiskSize();
 
             if (offset > new_b_end) {
@@ -224,20 +222,68 @@ const ReadCache = struct {
         return null;
     }
 
-    fn write_a(self: *@This(), es: []const u8) void {
-        Region.init(self.a.len, es.len).write(self.mem, es);
+    fn tryAppendA(self: *@This(), es: []const u8) !void {
+        try Region.init(self.a.len, es.len).write(self.mem, es);
+        self.a.lengthen(es.len);
     }
 
-    fn write_b(self: *@This(), es: []const u8) void {
-        Region.init(self.b.len, es.len).write(self.mem, es);
+    fn tryAppendB(self: *@This(), es: []const u8) !void {
+        try Region.init(self.b.len, es.len).write(self.mem, es);
+        self.b.lengthen(es.len);
     }
 
-    pub fn read_a(self: @This()) []const u8 {
+    pub fn readA(self: @This()) []const u8 {
         return self.a.read(u8, self.mem).?;
     }
 
-    pub fn read_b(self: @This()) []const u8 {
+    pub fn readB(self: @This()) []const u8 {
         return self.b.read(u8, self.mem).?;
+    }
+};
+
+const Replica = struct {
+    replica_id: ReplicaID,
+    txn_write_buf: FixVec(u8),
+    read_cache: ReadCache,
+    key_index: FixVec(usize),
+    arena: std.heap.ArenaAllocator,
+
+    const Config = struct {
+        capacity: struct {
+            txn_write_buf: usize,
+            read_cache: usize,
+            key_index: usize,
+        },
+    };
+
+    fn init(
+        child_allocator: mem.Allocator,
+        rng: anytype,
+        config: Config,
+    ) !@This() {
+        var arena = std.heap.ArenaAllocator.init(child_allocator);
+        const allocator = arena.allocator();
+        return .{
+            .replica_id = ReplicaID.init(rng),
+            .txn_write_buf = try FixVec(u8).init(
+                allocator,
+                config.capacity.txn_write_buf,
+            ),
+            .read_cache = try ReadCache.init(
+                allocator,
+                config.capacity.read_cache,
+            ),
+            .key_index = try FixVec(usize).init(
+                allocator,
+                config.capacity.key_index,
+            ),
+            .arena = arena,
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.arena.deinit();
+        self.* = undefined;
     }
 };
 
@@ -286,6 +332,20 @@ test "alloc and free buf" {
 
     var rc = try ReadCache.init(testing.allocator, 8);
     defer rc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, rc.read_a(), &.{});
-    try testing.expectEqualSlices(u8, rc.read_b(), &.{});
+    try testing.expectEqualSlices(u8, rc.readA(), &.{});
+    try testing.expectEqualSlices(u8, rc.readB(), &.{});
+
+    var replica = try Replica.init(
+        testing.allocator,
+        &rng,
+        .{
+            .capacity = .{
+                .txn_write_buf = 8,
+                .read_cache = 16,
+                .key_index = 127,
+            },
+        },
+    );
+
+    defer replica.deinit();
 }
