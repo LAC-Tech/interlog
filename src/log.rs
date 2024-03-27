@@ -3,10 +3,10 @@
 
 use core::ops::Range;
 
-use crate::mem;
-use crate::replica_id::ReplicaID;
-use crate::util::{FixVec, FixVecOverflow};
+use crate::log_id::LogID;
+use crate::util::{region, FixVec, FixVecOverflow};
 use crate::{disk, event};
+use region::Region;
 
 // Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
 pub const MAX_SIZE: usize = 2048 * 1024;
@@ -14,7 +14,7 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 #[derive(Debug)]
 pub enum WriteErr {
 	Disk(disk::AppendErr),
-	ReadCache(mem::ExtendOverflow),
+	ReadCache(region::ExtendOverflow),
 	TxnWriteBuf(FixVecOverflow),
 	KeyIndex(FixVecOverflow)
 }
@@ -28,37 +28,6 @@ pub enum ReadErr {
 }
 
 type ReadRes = Result<(), ReadErr>;
-
-enum KeyIndexHit {
-	Disk(usize),
-	Cache(usize)
-}
-
-struct KeyIndex(FixVec<usize>);
-
-/// The entire index in memory, like bitcask's KeyDir
-/// Maps logical indices to disk offsets
-impl KeyIndex {
-	fn new(capacity: usize) -> Self {
-		Self(FixVec::new(capacity))
-	}
-
-	fn len(&self) -> usize {
-		self.0.len()
-	}
-
-	fn push(&mut self, byte_offset: usize) -> WriteRes {
-		self.0.push(byte_offset).map_err(WriteErr::KeyIndex)
-	}
-
-	fn get(&self, logical_pos: usize) -> Result<usize, ReadErr> {
-		self.0.get(logical_pos).cloned().ok_or(ReadErr::KeyIndex)
-	}
-
-	fn read_since(&self, pos: usize) -> impl Iterator<Item = usize> + '_ {
-		self.0.iter().skip(pos).copied()
-	}
-}
 
 /// ReadCache is a fixed sized structure that caches the latest entries in the
 /// log (LIFO caching). The assumption is that things recently added are
@@ -92,16 +61,16 @@ pub struct ReadCache {
 	mem: Box<[u8]>,
 	/// Everything above this is in this cache
 	pub logical_start: usize,
-	a: mem::Region,
-	b: mem::Region // pos is always 0 but it's just easier
+	a: Region,
+	b: Region // pos is always 0 but it's just easier
 }
 
 impl ReadCache {
 	pub fn new(capacity: usize) -> Self {
 		let mem = vec![0; capacity].into_boxed_slice();
 		let logical_start = 0;
-		let a = mem::Region::ZERO;
-		let b = mem::Region::ZERO; // by definition B always starts at 0
+		let a = Region::ZERO;
+		let b = Region::ZERO; // by definition B always starts at 0
 		Self { mem, logical_start, a, b }
 	}
 
@@ -113,7 +82,7 @@ impl ReadCache {
 			}
 			(false, true) => match self.a.extend(&mut self.mem, es) {
 				Ok(()) => Ok(()),
-				Err(mem::ExtendOverflow) => self.wrap_around(es)
+				Err(region::ExtendOverflow) => self.wrap_around(es)
 			},
 			(_, false) => self.wrap_around(es)
 		};
@@ -126,7 +95,7 @@ impl ReadCache {
 			event::read(es, 0).expect("event at 0").id.logical_pos;
 	}
 
-	fn wrap_around(&mut self, es: &[u8]) -> Result<(), mem::ExtendOverflow> {
+	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::ExtendOverflow> {
 		match self.new_a_pos(es) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
@@ -136,14 +105,14 @@ impl ReadCache {
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = mem::Region::new(0, self.b.end());
-				self.b = mem::Region::ZERO;
+				self.a = Region::new(0, self.b.end());
+				self.b = Region::ZERO;
 				match self.a.extend(self.mem.as_mut(), es) {
 					Ok(()) => Ok(()),
 					// the new A cannot fit, erase it.
 					// would not occur with buf size 2x or more max event size
-					Err(mem::ExtendOverflow) => {
-						self.a = mem::Region::ZERO;
+					Err(region::ExtendOverflow) => {
+						self.a = Region::ZERO;
 						self.set_logical_start(es);
 						self.a.extend(&mut self.mem, es)
 					}
@@ -181,7 +150,7 @@ impl TxnWriteBuf {
 	fn write<'a, I>(
 		&mut self,
 		logical_from: usize,
-		origin: ReplicaID,
+		origin: LogID,
 		new_events: I
 	) -> WriteRes
 	where
@@ -244,7 +213,9 @@ struct Log {
 	/// Keeps track of the disk
 	byte_len: usize,
 	read_cache: ReadCache,
-	key_index: KeyIndex
+	/// The entire index in memory, like bitcask's KeyDir
+	/// Maps logical indices to disk offsets
+	key_index: FixVec<usize>
 }
 
 impl Log {
@@ -259,7 +230,7 @@ impl Log {
 		let mut disk_offset = self.byte_len;
 
 		for e in txn_write_buf.iter() {
-			self.key_index.push(disk_offset)?;
+			self.key_index.push(disk_offset).map_err(WriteErr::KeyIndex)?;
 			disk_offset += e.on_disk_size();
 		}
 
