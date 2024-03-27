@@ -1,5 +1,7 @@
-const std = @import("std");
 const builtin = @import("builtin");
+const std = @import("std");
+
+const assert = std.debug.assert;
 const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
@@ -83,9 +85,10 @@ const event = struct {
 
         const payload_region = Region.init(header_region.end(), e.payload.len);
 
-        try buf.resize(buf.len + e.onDiskSize());
-        try header_region.write(buf.asSlice(), header_bytes);
-        try payload_region.write(buf.asSlice(), e.payload);
+        const new_buf_len = buf.len + e.onDiskSize();
+        try buf.resize(new_buf_len);
+        header_region.write(buf.asSlice(), header_bytes) catch unreachable;
+        payload_region.write(buf.asSlice(), e.payload) catch unreachable;
     }
 
     const Iterator = struct {
@@ -151,7 +154,13 @@ const ReadCache = struct {
         self.* = undefined;
     }
 
+    fn overlappingRegions(self: @This()) bool {
+        return self.b.end() > self.a.pos;
+    }
+
     pub fn update(self: *@This(), txn_write_buf: []align(8) const u8) !void {
+        assert(!self.overlappingRegions());
+
         // Should never happen but... let's see if it does
         if (txn_write_buf.len > self.mem.len) {
             return error.TooLongForCache;
@@ -164,21 +173,13 @@ const ReadCache = struct {
 
             self.tryAppendA(txn_write_buf) catch {
                 // If there's no space, start B, write to that, and truncate A
-                self.b = Region.init(0, txn_write_buf.len);
                 try self.tryAppendB(txn_write_buf);
             };
         } else {
-            if (self.newABytePos(txn_write_buf)) |new_a_pos| {
-                self.a.changePos(new_a_pos);
-                try self.tryAppendB(txn_write_buf);
-            } else {
-                // New a position would fragment memory across an event
-                // B gets deleted and we move to a fresh A
-                self.a = Region.init(0, txn_write_buf.len);
-                self.setLogicalStart(txn_write_buf);
-                try self.tryAppendA(txn_write_buf);
-            }
+            try self.tryAppendB(txn_write_buf);
         }
+
+        assert(!self.overlappingRegions());
     }
 
     fn setLogicalStart(self: *@This(), es: []align(8) const u8) void {
@@ -208,9 +209,20 @@ const ReadCache = struct {
         self.a.lengthen(es.len);
     }
 
-    fn tryAppendB(self: *@This(), es: []const u8) !void {
-        try Region.init(self.b.len, es.len).write(self.mem, es);
-        self.b.lengthen(es.len);
+    fn tryAppendB(self: *@This(), txn_write_buf: []align(8) const u8) !void {
+        if (self.newABytePos(txn_write_buf)) |new_a_pos| {
+            self.a.changePos(new_a_pos);
+            try Region
+                .init(self.b.len, txn_write_buf.len)
+                .write(self.mem, txn_write_buf);
+            self.b.lengthen(txn_write_buf.len);
+        } else {
+            // New a position would fragment memory across an event
+            // B gets deleted and we move to a fresh A
+            self.a = Region.init(0, txn_write_buf.len);
+            self.setLogicalStart(txn_write_buf);
+            try self.tryAppendA(txn_write_buf);
+        }
     }
 
     pub fn readA(self: @This()) []const u8 {
@@ -328,8 +340,8 @@ test "test read cache" {
         &rng,
         .{
             .capacity = .{
-                .txn_write_buf = 0x200,
-                .read_cache = 0x1000,
+                .txn_write_buf = 512,
+                .read_cache = 16 * 32,
                 .key_index = 0x10000,
             },
         },
@@ -338,17 +350,17 @@ test "test read cache" {
 
     try log.enqueue(&[_]Letter{ .w, .h, .o });
     try log.commit();
-    try testing.expectEqualDeep(Region.init(0, 32 * 4), log.read_cache.a);
+    try testing.expectEqualDeep(Region.init(0, 4 * 32), log.read_cache.a);
 
     try log.enqueue(&[_]Letter{ .i, .s });
     try log.commit();
-    try testing.expectEqualDeep(Region.init(0, 32 * 7), log.read_cache.a);
+    try testing.expectEqualDeep(Region.init(0, 7 * 32), log.read_cache.a);
 
     try log.enqueue(&[_]Letter{ .t, .h, .i, .s });
     try log.commit();
-    try testing.expectEqualDeep(Region.init(0, 32 * 12), log.read_cache.a);
+    try testing.expectEqualDeep(Region.init(0, 12 * 32), log.read_cache.a);
 
     try log.enqueue(&[_]Letter{ .d, .o, .i, .n });
     try log.commit();
-    try testing.expectEqualDeep(Region.init(32 * 7, 32 * 5), log.read_cache.a);
+    try testing.expectEqualDeep(Region.init(7 * 32, 5 * 32), log.read_cache.a);
 }

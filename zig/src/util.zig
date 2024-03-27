@@ -151,9 +151,9 @@ pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
 
         pub const Err = error{Overflow};
 
-        pub fn init(allocator: Allocator, fixed_capacity: usize) !@This() {
+        pub fn init(allocator: Allocator, _capacity: usize) !@This() {
             return @This(){
-                ._items = try allocator.alignedAlloc(T, alignment, fixed_capacity),
+                ._items = try allocator.alignedAlloc(T, alignment, _capacity),
                 .len = 0,
             };
         }
