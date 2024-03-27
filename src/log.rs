@@ -3,8 +3,10 @@
 
 use core::ops::Range;
 
+use crate::fixvec;
+use crate::fixvec::FixVec;
 use crate::log_id::LogID;
-use crate::util::{region, FixVec, FixVecOverflow};
+use crate::util::region;
 use crate::{disk, event};
 use region::Region;
 
@@ -15,8 +17,8 @@ pub const MAX_SIZE: usize = 2048 * 1024;
 pub enum WriteErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::ExtendOverflow),
-	TxnWriteBuf(FixVecOverflow),
-	KeyIndex(FixVecOverflow)
+	TxnWriteBuf(fixvec::Overflow),
+	KeyIndex(fixvec::Overflow)
 }
 
 type WriteRes = Result<(), WriteErr>;
@@ -24,7 +26,7 @@ type WriteRes = Result<(), WriteErr>;
 #[derive(Debug)]
 pub enum ReadErr {
 	KeyIndex,
-	ClientBuf(FixVecOverflow)
+	ClientBuf(fixvec::Overflow)
 }
 
 type ReadRes = Result<(), ReadErr>;

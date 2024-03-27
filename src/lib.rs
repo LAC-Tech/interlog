@@ -12,6 +12,7 @@
 
 extern crate alloc;
 mod disk;
+mod fixvec;
 mod log;
 mod log_id;
 mod test_utils;
