@@ -1,7 +1,6 @@
 //! Structs for reading and writing events from contiguous bytes.
-use crate::mem;
-use crate::replica_id::ReplicaID;
-use crate::util::{FixVec, FixVecRes};
+use crate::log_id::LogID;
+use crate::util::{region::Region, FixVec, FixVecRes};
 
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
@@ -10,15 +9,15 @@ use crate::util::{FixVec, FixVecRes};
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 pub struct ID {
 	/// Replica the event was first recorded at.
-	pub origin: ReplicaID,
+	pub origin: LogID,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
 	pub logical_pos: usize
 }
 
 impl ID {
-	fn new(origin: ReplicaID, disk_pos: usize) -> Self {
-		ID { origin, logical_pos: disk_pos }
+	fn new(origin: LogID, logical_pos: usize) -> Self {
+		ID { origin, logical_pos }
 	}
 }
 
@@ -55,7 +54,7 @@ impl<'a> Event<'a> {
 }
 
 pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
-	let header_region = mem::Region::new(byte_offset, Header::SIZE);
+	let header_region = Region::new(byte_offset, Header::SIZE);
 	let header_bytes = header_region.read(bytes)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
@@ -65,7 +64,7 @@ pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
 
 pub fn append(buf: &mut FixVec<u8>, event: &Event) -> FixVecRes {
 	let byte_len = event.payload.len();
-	let header_region = mem::Region::new(buf.len(), Header::SIZE);
+	let header_region = Region::new(buf.len(), Header::SIZE);
 	let header = Header { byte_len, id: event.id };
 	let payload_region = header_region.next(byte_len);
 	let next_offset = buf.len() + event.on_disk_size();
@@ -113,7 +112,7 @@ mod tests {
 			// Setup
 			let mut rng = rand::thread_rng();
 			let mut buf = FixVec::new(256);
-			let replica_id = ReplicaID::new(&mut rng);
+			let replica_id = LogID::new(&mut rng);
 			let event = Event {id: ID::new(replica_id, 0), payload: &e};
 
 			// Pre conditions

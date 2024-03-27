@@ -1,28 +1,29 @@
 extern crate interlog;
 
-use interlog::mem;
+use interlog::util::region;
 use pretty_assertions::assert_eq;
+use region::Region;
 
 struct Buf {
 	mem: Box<[u8]>,
-	a: mem::Region,
-	b: mem::Region
+	a: Region,
+	b: Region
 }
 
 impl Buf {
 	fn new(capacity: usize) -> Self {
 		let mem = vec![0; capacity].into_boxed_slice();
-		let a = mem::Region::ZERO;
-		let b = mem::Region::ZERO; // by definition B always starts at 0
+		let a = Region::ZERO;
+		let b = Region::ZERO; // by definition B always starts at 0
 		Self { mem, a, b }
 	}
 
-	fn extend(&mut self, s: &[u8]) -> Result<(), mem::ExtendOverflow> {
+	fn extend(&mut self, s: &[u8]) -> Result<(), region::ExtendOverflow> {
 		match (self.a.empty(), self.b.empty()) {
 			(true, true) => self.a.extend(&mut self.mem, s),
 			(false, true) => match self.a.extend(&mut self.mem, s) {
 				Ok(()) => Ok(()),
-				Err(mem::ExtendOverflow) => self.overlapping_write(s)
+				Err(region::ExtendOverflow) => self.overlapping_write(s)
 			},
 			(_, false) => self.overlapping_write(s)
 		}
@@ -31,7 +32,7 @@ impl Buf {
 	fn overlapping_write(
 		&mut self,
 		s: &[u8]
-	) -> Result<(), mem::ExtendOverflow> {
+	) -> Result<(), region::ExtendOverflow> {
 		match self.new_a_pos(s) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
@@ -41,14 +42,14 @@ impl Buf {
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
-				self.a = mem::Region::new(0, self.b.end());
-				self.b = mem::Region::ZERO;
+				self.a = Region::new(0, self.b.end());
+				self.b = Region::ZERO;
 				match self.a.extend(self.mem.as_mut(), s) {
 					Ok(()) => Ok(()),
 					// the new A cannot fit, erase it.
 					// would not occur with buf size 2x or more max event size
-					Err(mem::ExtendOverflow) => {
-						self.a = mem::Region::ZERO;
+					Err(region::ExtendOverflow) => {
+						self.a = Region::ZERO;
 						self.a.extend(&mut self.mem, s)
 					}
 				}
@@ -83,74 +84,74 @@ fn main() {
 	let mut buf = Buf::new(16);
 
 	buf.extend(b"Who").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 3));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 3));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"Who");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"Is").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 5));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 5));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"WhoIs");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"This").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 9));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 9));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"WhoIsThis");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"Doin").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 13));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 13));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"WhoIsThisDoin");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"This").unwrap();
-	assert_eq!(buf.a, mem::Region::new(5, 8));
-	assert_eq!(buf.b, mem::Region::new(0, 4));
+	assert_eq!(buf.a, Region::new(5, 8));
+	assert_eq!(buf.b, Region::new(0, 4));
 	assert_eq!(buf.read_a(), b"ThisDoin");
 	assert_eq!(buf.read_b(), b"This");
 
 	buf.extend(b"Synthetic").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 13));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 13));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"ThisSynthetic");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"Type").unwrap();
-	assert_eq!(buf.a, mem::Region::new(4, 9));
-	assert_eq!(buf.b, mem::Region::new(0, 4));
+	assert_eq!(buf.a, Region::new(4, 9));
+	assert_eq!(buf.b, Region::new(0, 4));
 	assert_eq!(buf.read_a(), b"Synthetic");
 	assert_eq!(buf.read_b(), b"Type");
 
 	buf.extend(b"Of").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 6));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 6));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"TypeOf");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"Alpha").unwrap();
 	assert_eq!(buf.read_a(), b"TypeOfAlpha");
 	assert_eq!(buf.read_b(), b"");
-	assert_eq!(buf.a, mem::Region::new(0, 11));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 11));
+	assert_eq!(buf.b, Region::ZERO);
 
 	buf.extend(b"Beta").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 15));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 15));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"TypeOfAlphaBeta");
 	assert_eq!(buf.read_b(), b"");
 
 	buf.extend(b"Psychedelic").unwrap();
-	assert_eq!(buf.a, mem::Region::new(11, 4));
-	assert_eq!(buf.b, mem::Region::new(0, 11));
+	assert_eq!(buf.a, Region::new(11, 4));
+	assert_eq!(buf.b, Region::new(0, 11));
 	assert_eq!(buf.read_a(), b"Beta");
 	assert_eq!(buf.read_b(), b"Psychedelic");
 
 	buf.extend(b"Funkin").unwrap();
-	assert_eq!(buf.a, mem::Region::new(0, 6));
-	assert_eq!(buf.b, mem::Region::ZERO);
+	assert_eq!(buf.a, Region::new(0, 6));
+	assert_eq!(buf.b, Region::ZERO);
 	assert_eq!(buf.read_a(), b"Funkin");
 	assert_eq!(buf.read_b(), b"");
 }
