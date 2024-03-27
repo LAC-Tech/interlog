@@ -2,7 +2,7 @@
 use crate::fixvec;
 use crate::fixvec::FixVec;
 use crate::log_id::LogID;
-use crate::util::region::Region;
+use crate::region::Region;
 
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
