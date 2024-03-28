@@ -2,7 +2,7 @@
 //! This can be considered the "top level" of the library.
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
+use alloc::string::String;
 
 use crate::fixvec;
 use crate::fixvec::FixVec;
@@ -153,7 +153,15 @@ impl ReadCache {
 	}
 }
 
+struct Config {
+	read_cache_capacity: usize,
+	key_index_capacity: usize,
+	txn_write_buf_capacity: usize
+}
+
 struct Log {
+	/// Still counts as "static allocation" as only allocating in constructor
+	path: String,
 	disk: disk::Log,
 	/// Keeps track of the disk
 	byte_len: usize,
@@ -167,6 +175,24 @@ struct Log {
 }
 
 impl Log {
+	fn new<R: rand::Rng>(
+		dir_path: &str,
+		rng: &mut R,
+		config: &Config
+	) -> rustix::io::Result<Self> {
+		let id = LogID::new(rng);
+		let path = format!("{dir_path}/{id}");
+
+		disk::Log::open(path.as_bytes()).map(|disk| Self {
+			path,
+			disk,
+			byte_len: 0,
+			read_cache: ReadCache::new(config.read_cache_capacity),
+			key_index: FixVec::new(config.key_index_capacity),
+			txn_write_buf: FixVec::new(config.txn_write_buf_capacity)
+		})
+	}
+
 	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<(), WriteErr> {
 		let bytes_flushed =
 			self.disk.append(txn_write_buf).map_err(WriteErr::Disk)?;

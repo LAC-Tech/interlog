@@ -33,7 +33,7 @@ pub enum AppendErr {
 pub struct Log(fd::OwnedFd);
 
 impl Log {
-	pub fn open(path: &std::path::PathBuf) -> io::Result<Self> {
+	pub fn open(path: &[u8]) -> io::Result<Self> {
 		let flags = O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC;
 		let mode = fs::Mode::RUSR | fs::Mode::WUSR;
 		fs::open(path, flags, mode).map(Log)
