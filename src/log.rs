@@ -1,22 +1,17 @@
 //! User facing functions for readidng and writing to interlog replicas.
 //! This can be considered the "top level" of the library.
 
-use core::ops::Range;
-
 use crate::fixvec;
 use crate::fixvec::FixVec;
 use crate::log_id::LogID;
-use crate::util::region;
+use crate::region;
 use crate::{disk, event};
 use region::Region;
-
-// Hugepagesize is "2048 kB" in /proc/meminfo. Assume kB = 1024
-pub const MAX_SIZE: usize = 2048 * 1024;
 
 #[derive(Debug)]
 pub enum WriteErr {
 	Disk(disk::AppendErr),
-	ReadCache(region::ExtendOverflow),
+	ReadCache(region::WriteErr),
 	TxnWriteBuf(fixvec::Overflow),
 	KeyIndex(fixvec::Overflow)
 }
@@ -76,15 +71,28 @@ impl ReadCache {
 		Self { mem, logical_start, a, b }
 	}
 
+	pub fn extend(
+		region: &mut Region,
+		dest: &mut [u8],
+		src: &[u8]
+	) -> Result<(), region::WriteErr> {
+		let extension = Region::new(region.len, src.len());
+
+		extension.write(dest, src)?;
+		region.lengthen(src.len());
+		Ok(())
+	}
+
 	pub fn update(&mut self, es: &[u8]) -> WriteRes {
 		let result = match (self.a.empty(), self.b.empty()) {
 			(true, true) => {
 				self.set_logical_start(es);
-				self.a.extend(&mut self.mem, es)
+				Self::extend(&mut self.a, &mut self.mem, es)
 			}
-			(false, true) => match self.a.extend(&mut self.mem, es) {
+			(false, true) => match Self::extend(&mut self.a, &mut self.mem, es)
+			{
 				Ok(()) => Ok(()),
-				Err(region::ExtendOverflow) => self.wrap_around(es)
+				Err(region::WriteErr) => self.wrap_around(es)
 			},
 			(_, false) => self.wrap_around(es)
 		};
@@ -97,26 +105,26 @@ impl ReadCache {
 			event::read(es, 0).expect("event at 0").id.logical_pos;
 	}
 
-	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::ExtendOverflow> {
+	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::WriteErr> {
 		match self.new_a_pos(es) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
 				self.a.change_pos(new_a_pos);
-				self.b.extend(self.mem.as_mut(), es)
+				Self::extend(&mut self.b, self.mem.as_mut(), es)
 			}
 			// We've searched past the end of A and found nothing.
 			// B is now A
 			None => {
 				self.a = Region::new(0, self.b.end());
 				self.b = Region::ZERO;
-				match self.a.extend(self.mem.as_mut(), es) {
+				match Self::extend(&mut self.a, self.mem.as_mut(), es) {
 					Ok(()) => Ok(()),
 					// the new A cannot fit, erase it.
 					// would not occur with buf size 2x or more max event size
-					Err(region::ExtendOverflow) => {
+					Err(region::WriteErr) => {
 						self.a = Region::ZERO;
 						self.set_logical_start(es);
-						self.a.extend(&mut self.mem, es)
+						Self::extend(&mut self.a, self.mem.as_mut(), es)
 					}
 				}
 			}
@@ -142,74 +150,6 @@ impl ReadCache {
 	}
 }
 
-struct TxnWriteBuf(FixVec<u8>);
-
-impl TxnWriteBuf {
-	fn new(capacity: usize) -> Self {
-		Self(FixVec::new(capacity))
-	}
-
-	fn write<'a, I>(
-		&mut self,
-		logical_from: usize,
-		origin: LogID,
-		new_events: I
-	) -> WriteRes
-	where
-		I: IntoIterator<Item = &'a [u8]>
-	{
-		self.0.clear();
-
-		// Write Events with their headers
-		for (i, payload) in new_events.into_iter().enumerate() {
-			let id = event::ID { origin, logical_pos: logical_from + i };
-			let e = event::Event { id, payload };
-			event::append(&mut self.0, &e).map_err(WriteErr::TxnWriteBuf)?;
-		}
-
-		Ok(())
-	}
-
-	fn iter(&self) -> impl Iterator<Item = event::Event<'_>> {
-		event::View::new(&self.0)
-	}
-}
-
-impl AsRef<[u8]> for TxnWriteBuf {
-	fn as_ref(&self) -> &[u8] {
-		&self.0
-	}
-}
-
-impl AsMut<[u8]> for TxnWriteBuf {
-	fn as_mut(&mut self) -> &mut [u8] {
-		&mut self.0
-	}
-}
-
-struct ReadBuf(FixVec<u8>);
-
-impl ReadBuf {
-	fn new(capacity: usize) -> Self {
-		Self(FixVec::new(capacity))
-	}
-
-	pub fn read_in<'a, I>(&mut self, events: I) -> ReadRes
-	where
-		I: IntoIterator<Item = event::Event<'a>>
-	{
-		for e in events {
-			event::append(&mut self.0, &e).map_err(ReadErr::ClientBuf)?;
-		}
-
-		Ok(())
-	}
-
-	pub fn read_out(&self) -> impl Iterator<Item = event::Event<'_>> {
-		event::View::new(&self.0)
-	}
-}
-
 struct Log {
 	disk: disk::Log,
 	/// Keeps track of the disk
@@ -217,11 +157,14 @@ struct Log {
 	read_cache: ReadCache,
 	/// The entire index in memory, like bitcask's KeyDir
 	/// Maps logical indices to disk offsets
-	key_index: FixVec<usize>
+	key_index: FixVec<usize>,
+	/// This stores all the events w/headers, contiguously, which means only
+	/// one syscall is required to write to disk.
+	txn_write_buf: FixVec<u8>
 }
 
 impl Log {
-	fn persist(&mut self, txn_write_buf: &TxnWriteBuf) -> Result<(), WriteErr> {
+	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<(), WriteErr> {
 		let bytes_flushed =
 			self.disk.append(txn_write_buf).map_err(WriteErr::Disk)?;
 
@@ -231,7 +174,7 @@ impl Log {
 		// Disk offsets recored in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 
-		for e in txn_write_buf.iter() {
+		for e in event::View::new(txn_write_buf) {
 			self.key_index.push(disk_offset).map_err(WriteErr::KeyIndex)?;
 			disk_offset += e.on_disk_size();
 		}
@@ -247,80 +190,8 @@ impl Log {
 		Ok(())
 	}
 }
+
 /*
-/// Read and write data bus for data going into and out of the replica
-/// These buffers are written to independently, but the idea of putting them
-/// together is a scenario where there are many IO buses to one Log
-///
-/// Both buffers represent 1..N events, with the following invariants:
-/// INVARIANTS
-/// - starts at the start of an event
-/// - ends at the end of an event
-/// - aligns events to 8 bytes
-pub mod io_bus {
-	use super::*;
-	use crate::unit;
-	use crate::util::FixVec;
-
-	pub struct IOBus {
-		/// This stores all the events w/headers, contigously, which means only
-		/// one syscall is required to write to disk.
-		pub txn_write_buf: TxnWriteBuf,
-		pub read_buf: FixVec<u8>
-	}
-
-	impl IOBus {
-		pub fn new(
-			txn_write_buf_capacity: unit::Byte,
-			read_buf_capacity: unit::Byte
-		) -> Self {
-			Self {
-				txn_write_buf: TxnWriteBuf::new(txn_write_buf_capacity),
-				read_buf: FixVec::new(read_buf_capacity.into())
-			}
-		}
-	}
-
-	#[cfg(test)]
-	mod tests {
-		use super::*;
-		use crate::replica_id::ReplicaID;
-		use crate::test_utils::*;
-		use core::ops::Deref;
-		use pretty_assertions::assert_eq;
-		use proptest::prelude::*;
-
-		proptest! {
-			#[test]
-			fn w_many_events(es in arb_local_events(16, 16)) {
-				// Setup
-				let mut rng = rand::thread_rng();
-				let replica_id = ReplicaID::new(&mut rng);
-
-				let mut bus = IOBus::new(0x400.into(), 0x400.into());
-
-				// Pre conditions
-				assert_eq!(
-					bus.stats().txn_write_buf_len,
-					0.into(), "buf should start empty");
-				assert!(
-					event::read(&bus.txn_write_buf, 0).is_none(),
-					"should contain no event");
-
-				let vals = es.iter().map(Deref::deref);
-				bus.txn_write_buf.write(0.into(), replica_id, vals)
-					.expect("buf should have enough");
-
-				// Post conditions
-				let actual: Vec<_> = bus.txn_write_buf.into_iter()
-					.map(|e| e.payload)
-					.collect();
-				assert_eq!(&actual, &es);
-			}
-		}
-	}
-}
-
 /// A replica on the same machine as user code
 pub struct Local {
 	pub id: ReplicaID,
