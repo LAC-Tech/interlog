@@ -3,15 +3,6 @@ use alloc::vec::Vec;
 use core::ops;
 use core::slice::SliceIndex;
 
-fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
-	let mut result = Vec::with_capacity(size);
-	#[allow(clippy::uninit_vec)]
-	unsafe {
-		result.set_len(size)
-	};
-	result.into_boxed_slice()
-}
-
 #[derive(Debug)]
 pub struct Overflow;
 pub type Res = Result<(), Overflow>;
@@ -23,14 +14,16 @@ pub struct FixVec<T> {
 	len: usize
 }
 
-impl<T> FixVec<T> {
+impl<T: core::default::Default + Clone> FixVec<T> {
 	#[allow(clippy::uninit_vec)]
 	pub fn new(capacity: usize) -> FixVec<T> {
-		let elems = uninit_boxed_slice(capacity);
+		let elems = vec![T::default(); capacity].into_boxed_slice();
 		assert_eq!(core::mem::size_of_val(&elems), 16);
 		Self { elems, len: 0 }
 	}
+}
 
+impl<T> FixVec<T> {
 	#[inline]
 	pub fn capacity(&self) -> usize {
 		self.elems.len()

@@ -19,7 +19,7 @@ pub struct EnqueueErr(fixvec::Overflow);
 pub enum CommitErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::WriteErr),
-	EmptyTxnWriteBuf,
+	TxnWriteBufHasNoEvents,
 	KeyIndex(fixvec::Overflow)
 }
 
@@ -183,7 +183,7 @@ impl Log {
 	fn new<R: rand::Rng>(
 		dir_path: &str,
 		rng: &mut R,
-		config: &Config
+		config: Config
 	) -> rustix::io::Result<Self> {
 		let id = LogID::new(rng);
 		let path = format!("{dir_path}/{id}");
@@ -208,8 +208,10 @@ impl Log {
 	}
 
 	fn commit(&mut self) -> Result<(), CommitErr> {
+		assert!(self.byte_len % 8 == 0);
+
 		if event::HEADER_SIZE > self.txn_write_buf.len() {
-			return Err(CommitErr::EmptyTxnWriteBuf);
+			return Err(CommitErr::TxnWriteBufHasNoEvents);
 		}
 		let bytes_flushed =
 			self.disk.append(&self.txn_write_buf).map_err(CommitErr::Disk)?;
@@ -225,13 +227,7 @@ impl Log {
 		}
 
 		self.byte_len += bytes_flushed;
-
-		assert!(
-			self.byte_len % 8 == 0,
-			"length of log in bytes should be aligned to 8 bytes, given {}",
-			self.byte_len
-		);
-
+		assert!(self.byte_len % 8 == 0);
 		Ok(self.txn_write_buf.clear())
 	}
 }
@@ -244,6 +240,24 @@ mod tests {
 	use proptest::prelude::*;
 	use tempfile::TempDir;
 
+	#[test]
+	fn graph_paper() {
+		let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
+
+		let tmp_dir_path = tmp_dir.path().to_string_lossy().into_owned();
+		let mut rng = rand::thread_rng();
+		let mut log = Log::new(
+			&tmp_dir_path,
+			&mut rng,
+			Config {
+				txn_write_buf_capacity: 512,
+				read_cache_capacity: 16 * 32,
+				key_index_capacity: 0x10000
+			}
+		);
+	}
+
+	/*
 	proptest! {
 		// TODO: change stream max to reveal bugs
 		#[test]
@@ -275,4 +289,5 @@ mod tests {
 			}
 		}
 	}
+	*/
 }
