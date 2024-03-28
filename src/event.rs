@@ -33,7 +33,6 @@ impl Header {
 /// An immutable record of some event. The core data structure of interlog.
 /// The term "event" comes from event sourcing, but this couldd also be thought
 /// of as a record or entry.
-/// TODO: Enforce that Payload is 2MiB or less?
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
 	pub id: ID,

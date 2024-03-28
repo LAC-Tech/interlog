@@ -10,7 +10,7 @@
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever)
 //! server is out of scope.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #[macro_use]
 extern crate alloc;
 mod disk;

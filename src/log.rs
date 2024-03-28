@@ -185,6 +185,8 @@ impl Log {
 		let id = LogID::new(rng);
 		let path = format!("{dir_path}/{id}");
 
+		#[cfg(test)]
+		dbg!(&path);
 		disk::Log::open(&path).map(|disk| Self {
 			id,
 			path,
@@ -244,8 +246,10 @@ mod tests {
 		// TODO: change stream max to reveal bugs
 		#[test]
 		fn rw_log(ess in arb_local_events_stream(1, 16, 16)) {
-			let tmp_dir = TempDir::with_prefix("interlog-")
-				.expect("failed to open temp file")
+			let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
+
+			let tmp_dir_path =
+				tmp_dir
 				.path()
 				.to_string_lossy().into_owned();
 
@@ -256,7 +260,7 @@ mod tests {
 				key_index_capacity: 0x10000,
 			};
 
-			let mut log = Log::new(&tmp_dir, &mut rng, &config)
+			let mut log = Log::new(&tmp_dir_path, &mut rng, &config)
 				.expect("failed to open file");
 
 			for es in ess {

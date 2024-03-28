@@ -14,12 +14,12 @@ impl LogID {
 
 impl fmt::Display for LogID {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "ReplicaID({:x})", self.0)
+		write!(f, "{:x}", self.0)
 	}
 }
 
 impl fmt::Debug for LogID {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{:x}", self.0)
+		write!(f, "ReplicaID({:x})", self.0)
 	}
 }
