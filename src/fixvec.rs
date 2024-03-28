@@ -38,18 +38,13 @@ impl<T> FixVec<T> {
 		self.len = 0;
 	}
 
-	#[inline]
-	fn len(&self) -> usize {
-		self.len
-	}
-
 	fn check_capacity(&self, new_len: usize) -> Res {
 		(self.capacity() >= new_len).then_some(()).ok_or(Overflow)
 	}
 
 	pub fn push(&mut self, value: T) -> Res {
 		self.check_capacity(self.len + 1)?;
-		self.elems[self.len + 1] = value;
+		self.elems[self.len] = value;
 		Ok(self.len += 1)
 	}
 
@@ -116,5 +111,31 @@ impl<T> std::ops::DerefMut for FixVec<T> {
 impl AsRef<[u8]> for FixVec<u8> {
 	fn as_ref(&self) -> &[u8] {
 		&self.elems
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	//use pretty_assertions::assert_eq;
+
+	#[test]
+	fn fixvec_stuff() {
+		let mut fv = FixVec::<u64>::new(8);
+		assert_eq!(fv.capacity(), 8);
+		assert_eq!(fv.len(), 0);
+
+		fv.push(42).unwrap();
+		assert_eq!(fv.len(), 1);
+
+		assert_eq!(*fv.get(0).unwrap(), 42);
+
+		fv.extend_from_slice(&[6, 1, 9]).unwrap();
+		assert_eq!(fv.len, 4);
+
+		assert_eq!(
+			fv.into_iter().copied().collect::<Vec<_>>(),
+			vec![42, 6, 1, 9]
+		);
 	}
 }

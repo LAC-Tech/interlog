@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.14.0", features = ["derive"] }
-derive_more = "0.99.17"
 rand = "0.8.5"
 rustix = { version = "0.38.28", features = ["fs"] }
 
