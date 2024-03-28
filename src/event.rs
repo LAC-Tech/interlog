@@ -26,9 +26,7 @@ struct Header {
 	id: ID
 }
 
-impl Header {
-	const SIZE: usize = core::mem::size_of::<Self>();
-}
+pub const HEADER_SIZE: usize = core::mem::size_of::<Header>();
 
 /// An immutable record of some event. The core data structure of interlog.
 /// The term "event" comes from event sourcing, but this couldd also be thought
@@ -42,14 +40,14 @@ pub struct Event<'a> {
 impl<'a> Event<'a> {
 	/// Number of bytes the event will take up, including the header
 	pub fn on_disk_size(&self) -> usize {
-		let raw_size = Header::SIZE + self.payload.len();
+		let raw_size = HEADER_SIZE + self.payload.len();
 		// align to 8
 		(raw_size + 7) & !7
 	}
 }
 
 pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
-	let header_region = Region::new(byte_offset, Header::SIZE);
+	let header_region = Region::new(byte_offset, HEADER_SIZE);
 	let header_bytes = header_region.read(bytes)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
@@ -59,7 +57,7 @@ pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
 
 pub fn append(buf: &mut FixVec<u8>, event: &Event) -> fixvec::Res {
 	let byte_len = event.payload.len();
-	let header_region = Region::new(buf.len(), Header::SIZE);
+	let header_region = Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
 	let payload_region = header_region.next(byte_len);
 	let next_offset = buf.len() + event.on_disk_size();

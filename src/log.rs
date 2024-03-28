@@ -13,14 +13,17 @@ use event::Event;
 use region::Region;
 
 #[derive(Debug)]
-pub enum WriteErr {
+pub struct EnqueueErr(fixvec::Overflow);
+
+#[derive(Debug)]
+pub enum CommitErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::WriteErr),
-	TxnWriteBuf(fixvec::Overflow),
+	EmptyTxnWriteBuf,
 	KeyIndex(fixvec::Overflow)
 }
 
-type WriteRes = Result<(), WriteErr>;
+type WriteRes = Result<(), CommitErr>;
 
 #[derive(Debug)]
 pub enum ReadErr {
@@ -101,7 +104,7 @@ impl ReadCache {
 			(_, false) => self.wrap_around(es)
 		};
 
-		result.map_err(WriteErr::ReadCache)
+		result.map_err(CommitErr::ReadCache)
 	}
 
 	fn set_logical_start(&mut self, es: &[u8]) {
@@ -196,27 +199,28 @@ impl Log {
 		})
 	}
 
-	pub fn enqueue(&mut self, payload: &[u8]) -> fixvec::Res {
+	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let logical_pos = self.key_index.len();
 		let e =
 			Event { id: event::ID { origin: self.id, logical_pos }, payload };
 
-		event::append(&mut self.txn_write_buf, &e)
+		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
 	}
 
-	fn commit(&mut self) -> Result<(), WriteErr> {
+	fn commit(&mut self) -> Result<(), CommitErr> {
+		if event::HEADER_SIZE > self.txn_write_buf.len() {
+			return Err(CommitErr::EmptyTxnWriteBuf);
+		}
 		let bytes_flushed =
-			self.disk.append(&self.txn_write_buf).map_err(WriteErr::Disk)?;
+			self.disk.append(&self.txn_write_buf).map_err(CommitErr::Disk)?;
 
-		// TODO: the below operations need to be made atomic w/ each other
-		self.txn_write_buf.clear();
 		self.read_cache.update(&self.txn_write_buf)?;
 
 		// Disk offsets recored in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 
 		for e in event::View::new(&self.txn_write_buf) {
-			self.key_index.push(disk_offset).map_err(WriteErr::KeyIndex)?;
+			self.key_index.push(disk_offset).map_err(CommitErr::KeyIndex)?;
 			disk_offset += e.on_disk_size();
 		}
 
@@ -228,7 +232,7 @@ impl Log {
 			self.byte_len
 		);
 
-		Ok(())
+		Ok(self.txn_write_buf.clear())
 	}
 }
 
