@@ -1,6 +1,9 @@
 //! User facing functions for readidng and writing to interlog replicas.
 //! This can be considered the "top level" of the library.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use crate::fixvec;
 use crate::fixvec::FixVec;
 use crate::log_id::LogID;

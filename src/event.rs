@@ -33,7 +33,7 @@ struct Header {
 }
 
 impl Header {
-	const SIZE: usize = std::mem::size_of::<Self>();
+	const SIZE: usize = core::mem::size_of::<Self>();
 }
 
 /// An immutable record of some event. The core data structure of interlog.
@@ -121,11 +121,9 @@ mod tests {
 			assert_eq!(buf.len(), 0, "buf should start empty");
 			assert!(read(&buf, 0).is_none(), "should contain no event");
 
-			println!("\nAPPEND\n");
 			// Modifying
 			append(&mut buf, &event).expect("buf should have enough");
 
-			println!("\nREAD\n");
 			// Post conditions
 			let actual = read(&buf, 0).expect("one event to be at 0");
 			assert_eq!(actual.payload, &e);

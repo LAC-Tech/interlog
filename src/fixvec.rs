@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::ops;
 use core::slice::SliceIndex;
 
 fn uninit_boxed_slice<T>(size: usize) -> Box<[T]> {
@@ -24,7 +27,7 @@ impl<T> FixVec<T> {
 	#[allow(clippy::uninit_vec)]
 	pub fn new(capacity: usize) -> FixVec<T> {
 		let elems = uninit_boxed_slice(capacity);
-		assert_eq!(std::mem::size_of_val(&elems), 16);
+		assert_eq!(core::mem::size_of_val(&elems), 16);
 		Self { elems, len: 0 }
 	}
 
@@ -94,7 +97,7 @@ impl<T: Copy> FixVec<T> {
 	}
 }
 
-impl<T> std::ops::Deref for FixVec<T> {
+impl<T> ops::Deref for FixVec<T> {
 	type Target = [T];
 
 	fn deref(&self) -> &Self::Target {
@@ -102,7 +105,7 @@ impl<T> std::ops::Deref for FixVec<T> {
 	}
 }
 
-impl<T> std::ops::DerefMut for FixVec<T> {
+impl<T> ops::DerefMut for FixVec<T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.elems[..self.len]
 	}

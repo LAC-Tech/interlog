@@ -1,9 +1,8 @@
 //! Useful random generators.
-#[cfg(test)]
+use alloc::vec::Vec;
 use proptest::prelude::*;
 
 // TODO: too many allocations. Make a liffe vector implementation
-#[cfg(test)]
 pub fn arb_local_events(
 	outer_max: usize,
 	inner_max: usize
@@ -14,7 +13,6 @@ pub fn arb_local_events(
 	)
 }
 
-#[cfg(test)]
 pub fn arb_local_events_stream(
 	stream_max: usize,
 	outer_max: usize,

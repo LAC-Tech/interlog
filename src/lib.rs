@@ -10,11 +10,14 @@
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever)
 //! server is out of scope.
 
+//#![no_std] // TODO: get rid of pathbuf in the disk module
+#[macro_use]
 extern crate alloc;
 mod disk;
 mod fixvec;
 mod log;
 mod log_id;
+#[cfg(test)]
 mod test_utils;
 
 pub mod event;
