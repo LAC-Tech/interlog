@@ -37,6 +37,11 @@ impl<T> FixVec<T> {
 	}
 
 	#[inline]
+	pub fn len(&self) -> usize {
+		self.len
+	}
+
+	#[inline]
 	pub fn clear(&mut self) {
 		self.len = 0;
 	}

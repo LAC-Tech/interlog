@@ -17,12 +17,6 @@ pub struct ID {
 	pub logical_pos: usize
 }
 
-impl ID {
-	fn new(origin: LogID, logical_pos: usize) -> Self {
-		ID { origin, logical_pos }
-	}
-}
-
 /// This is written before every event in the log, and allows reading out
 /// payloads which are of variable length.
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
@@ -114,8 +108,9 @@ mod tests {
 			// Setup
 			let mut rng = rand::thread_rng();
 			let mut buf = FixVec::new(256);
-			let replica_id = LogID::new(&mut rng);
-			let event = Event {id: ID::new(replica_id, 0), payload: &e};
+			let origin = LogID::new(&mut rng);
+			let id = ID { origin, logical_pos: 0 };
+			let event = Event {id, payload: &e};
 
 			// Pre conditions
 			assert_eq!(buf.len(), 0, "buf should start empty");

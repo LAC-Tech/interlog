@@ -9,6 +9,7 @@ use crate::fixvec::FixVec;
 use crate::log_id::LogID;
 use crate::region;
 use crate::{disk, event};
+use event::Event;
 use region::Region;
 
 #[derive(Debug)]
@@ -160,6 +161,7 @@ struct Config {
 }
 
 struct Log {
+	id: LogID,
 	/// Still counts as "static allocation" as only allocating in constructor
 	path: String,
 	disk: disk::Log,
@@ -183,7 +185,8 @@ impl Log {
 		let id = LogID::new(rng);
 		let path = format!("{dir_path}/{id}");
 
-		disk::Log::open(path.as_bytes()).map(|disk| Self {
+		disk::Log::open(&path).map(|disk| Self {
+			id,
 			path,
 			disk,
 			byte_len: 0,
@@ -193,17 +196,26 @@ impl Log {
 		})
 	}
 
-	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<(), WriteErr> {
+	pub fn enqueue(&mut self, payload: &[u8]) -> fixvec::Res {
+		let logical_pos = self.key_index.len();
+		let e =
+			Event { id: event::ID { origin: self.id, logical_pos }, payload };
+
+		event::append(&mut self.txn_write_buf, &e)
+	}
+
+	fn commit(&mut self) -> Result<(), WriteErr> {
 		let bytes_flushed =
-			self.disk.append(txn_write_buf).map_err(WriteErr::Disk)?;
+			self.disk.append(&self.txn_write_buf).map_err(WriteErr::Disk)?;
 
 		// TODO: the below operations need to be made atomic w/ each other
-		self.read_cache.update(txn_write_buf.as_ref())?;
+		self.txn_write_buf.clear();
+		self.read_cache.update(&self.txn_write_buf)?;
 
 		// Disk offsets recored in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 
-		for e in event::View::new(txn_write_buf) {
+		for e in event::View::new(&self.txn_write_buf) {
 			self.key_index.push(disk_offset).map_err(WriteErr::KeyIndex)?;
 			disk_offset += e.on_disk_size();
 		}
@@ -217,62 +229,6 @@ impl Log {
 		);
 
 		Ok(())
-	}
-}
-
-/*
-/// A replica on the same machine as user code
-pub struct Local {
-	pub id: ReplicaID,
-	pub path: std::path::PathBuf,
-	key_index: KeyIndex,
-	log: Log
-}
-
-// TODO: store data larger than read cache
-impl Local {
-	pub fn new<R: Rng>(
-		dir_path: &std::path::Path,
-		rng: &mut R,
-		config: ReadCacheConfig
-	) -> io::Result<Self> {
-		let id = ReplicaID::new(rng);
-
-		let path = dir_path.join(id.to_string());
-
-		let key_index = KeyIndex::new(config.key_index_capacity);
-
-		let log = Log {
-			disk: disk::Log::open(&path)?,
-			// TODO: this assumes the log is empty
-			byte_len: 0.into(),
-			read_cache: ReadCache::new(config)
-		};
-
-		Ok(Self { id, path, log })
-	}
-
-	// Event local to the replica, that don't yet have an ID
-	pub fn local_write<'b, I>(
-		&mut self,
-		io_bus: &mut io_bus::IOBus,
-		datums: I
-	) -> Result<(), WriteErr>
-	where
-		I: IntoIterator<Item = &'b [u8]>
-	{
-		io_bus.txn_write_buf.write(self.log.logical_len(), self.id, datums)?;
-		self.log.persist(&io_bus.txn_write_buf)
-	}
-
-	// TODO: assumes cache is 1:1 with disk
-	pub fn read<P: Into<unit::Logical>>(
-		&mut self,
-		io_bus: &mut io_bus::IOBus,
-		pos: P
-	) -> Result<(), ReadErr> {
-		let events = self.log.events_since(pos.into());
-		io_bus.read_buf.read_in(events)
 	}
 }
 
@@ -290,34 +246,28 @@ mod tests {
 		#[test]
 		fn rw_log(ess in arb_local_events_stream(1, 16, 16)) {
 			let tmp_dir = TempDir::with_prefix("interlog-")
-				.expect("failed to open temp file");
+				.expect("failed to open temp file")
+				.path()
+				.to_string_lossy().into_owned();
 
 			let mut rng = rand::thread_rng();
-			let config = ReadCacheConfig {
-				key_index_capacity: unit::Logical(128),
-				mem_capacity: unit::Byte(1024),
+			let config = Config {
+				txn_write_buf_capacity: 512,
+				read_cache_capacity: 16 * 32,
+				key_index_capacity: 0x10000,
 			};
 
-			let mut replica = Local::new(tmp_dir.path(), &mut rng, config)
+			let mut log = Log::new(&tmp_dir, &mut rng, &config)
 				.expect("failed to open file");
 
-			let mut client =
-				io_bus::IOBus::new(unit::Byte(0x400), unit::Byte(0x400));
-
 			for es in ess {
-				let vals = es.iter().map(Deref::deref);
-				replica.local_write(&mut client, vals)
-					.expect("failed to write to replica");
+				for e in es {
+					log.enqueue(&e).expect("failed to write to replica");
+				}
 
-				replica.read(&mut client, 0).expect("failed to read to file");
+				log.commit().unwrap();
 
-				let events: Vec<_> = client.read_out()
-					.map(|e| e.payload.to_vec())
-					.collect();
-
-				assert_eq!(events, es);
 			}
 		}
 	}
 }
-*/
