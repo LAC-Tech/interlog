@@ -236,7 +236,6 @@ impl Log {
 mod tests {
 	use super::*;
 	use crate::test_utils::*;
-	use core::ops::Deref;
 	use pretty_assertions::assert_eq;
 	use proptest::prelude::*;
 	use tempfile::TempDir;
