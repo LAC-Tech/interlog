@@ -105,8 +105,8 @@ impl ReadCache {
 	}
 
 	fn set_logical_start(&mut self, es: &[u8]) {
-		self.logical_start =
-			event::read(es, 0).expect("event at 0").id.logical_pos;
+		let first_event = event::read(es, 0).expect("no event found at 0");
+		self.logical_start = first_event.id.logical_pos;
 	}
 
 	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::WriteErr> {
@@ -185,8 +185,6 @@ impl Log {
 		let id = LogID::new(rng);
 		let path = format!("{dir_path}/{id}");
 
-		#[cfg(test)]
-		dbg!(&path);
 		disk::Log::open(&path).map(|disk| Self {
 			id,
 			path,
