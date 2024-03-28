@@ -117,7 +117,7 @@ impl AsRef<[u8]> for FixVec<u8> {
 #[cfg(test)]
 mod test {
 	use super::*;
-	//use pretty_assertions::assert_eq;
+	use pretty_assertions::assert_eq;
 
 	#[test]
 	fn fixvec_stuff() {

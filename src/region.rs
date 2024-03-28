@@ -61,3 +61,27 @@ impl Region {
 		self.len == 0
 	}
 }
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use pretty_assertions::assert_eq;
+
+	#[test]
+	fn empty_region_empty_slice() {
+		let r = Region::ZERO;
+		assert_eq!(r.read(&[]), Some([].as_slice()));
+	}
+
+	#[test]
+	fn empty_region_non_empty_slice() {
+		let r = Region::ZERO;
+		assert_eq!(r.read(&[1, 3, 3, 7]), Some([].as_slice()));
+	}
+
+	#[test]
+	fn non_empty_region_non_empty_slice() {
+		let r = Region::new(1, 2);
+		assert_eq!(r.read(&[1, 3, 3, 7]), Some([3, 3].as_slice()));
+	}
+}

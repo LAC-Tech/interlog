@@ -15,10 +15,10 @@ mod disk;
 mod fixvec;
 mod log;
 mod log_id;
-mod region;
 mod test_utils;
 
 pub mod event;
+pub mod region;
 
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
