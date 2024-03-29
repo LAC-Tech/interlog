@@ -123,6 +123,10 @@ impl ReadCache {
 		result.map_err(CommitErr::ReadCache)
 	}
 
+	pub fn read(&self, logical_pos: usize) -> Option<&[u8]> {
+		None
+	}
+
 	fn set_logical_start(&mut self, es: &[u8]) {
 		let first_event = event::read(es, 0).expect("no event found at 0");
 		self.logical_start = first_event.id.logical_pos;
@@ -176,7 +180,8 @@ impl ReadCache {
 struct Config {
 	read_cache_capacity: usize,
 	key_index_capacity: usize,
-	txn_write_buf_capacity: usize
+	txn_write_buf_capacity: usize,
+	disk_read_buf_capacity: usize
 }
 
 struct Log {
@@ -192,7 +197,9 @@ struct Log {
 	key_index: FixVec<usize>,
 	/// This stores all the events w/headers, contiguously, which means only
 	/// one syscall is required to write to disk.
-	txn_write_buf: FixVec<u8>
+	txn_write_buf: FixVec<u8>,
+	/// Written to when a value is not in the read_cache
+	disk_read_buf: FixVec<u8>
 }
 
 impl Log {
@@ -212,7 +219,8 @@ impl Log {
 			byte_len: 0,
 			read_cache: ReadCache::new(config.read_cache_capacity),
 			key_index: FixVec::new(config.key_index_capacity),
-			txn_write_buf: FixVec::new(config.txn_write_buf_capacity)
+			txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
+			disk_read_buf: FixVec::new(config.disk_read_buf_capacity)
 		})
 	}
 
@@ -225,11 +233,12 @@ impl Log {
 	}
 
 	pub fn commit(&mut self) -> Result<(), CommitErr> {
-		assert!(self.byte_len % 8 == 0);
+		assert_eq!(self.byte_len % 8, 0);
 
 		if event::HEADER_SIZE > self.txn_write_buf.len() {
 			return Err(CommitErr::TxnWriteBufHasNoEvents);
 		}
+
 		let bytes_flushed =
 			self.disk.append(&self.txn_write_buf).map_err(CommitErr::Disk)?;
 
@@ -271,9 +280,10 @@ mod tests {
 			&tmp_dir_path,
 			&mut rng,
 			Config {
-				txn_write_buf_capacity: 512,
 				read_cache_capacity: 16 * 32,
-				key_index_capacity: 0x10000
+				key_index_capacity: 0x10000,
+				txn_write_buf_capacity: 512,
+				disk_read_buf_capacity: 256
 			}
 		)
 		.unwrap();

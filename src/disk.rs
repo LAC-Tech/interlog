@@ -3,6 +3,8 @@ use fs::OFlags;
 use rustix::fd::AsFd;
 use rustix::{fd, fs, io};
 
+use crate::fixvec::FixVec;
+
 type O = OFlags;
 
 /*
@@ -55,4 +57,6 @@ impl Log {
 		}
 		Ok(bytes_written)
 	}
+
+	pub fn read(&self, buf: &mut FixVec<u8>) {}
 }
