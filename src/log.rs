@@ -26,12 +26,20 @@ pub enum CommitErr {
 type WriteRes = Result<(), CommitErr>;
 
 #[derive(Debug)]
+pub struct Read<'a> {
+	pub cache_hit: bool,
+	pub payload: &'a [u8]
+}
+
+/*
+#[derive(Debug)]
 pub enum ReadErr {
 	KeyIndex,
 	ClientBuf(fixvec::Overflow)
 }
 
-type ReadRes = Result<(), ReadErr>;
+type ReadRes<'a> = Result<ReadSucc<'a>, ReadErr>;
+*/
 
 /// ReadCache is a fixed sized structure that caches the latest entries in the
 /// log (LIFO caching). The assumption is that things recently added are
@@ -90,6 +98,10 @@ impl ReadCache {
 		Ok(())
 	}
 
+	fn overlapping_regions(&self) -> bool {
+		self.b.end() > self.a.pos
+	}
+
 	pub fn update(&mut self, es: &[u8]) -> WriteRes {
 		let result = match (self.a.empty(), self.b.empty()) {
 			(true, true) => {
@@ -103,6 +115,10 @@ impl ReadCache {
 			},
 			(_, false) => self.wrap_around(es)
 		};
+
+		// Post conditions
+		assert_eq!(self.b.pos, 0);
+		assert!(!self.overlapping_regions());
 
 		result.map_err(CommitErr::ReadCache)
 	}
@@ -180,15 +196,16 @@ struct Log {
 }
 
 impl Log {
-	fn new<R: rand::Rng>(
+	pub fn new<R: rand::Rng>(
 		dir_path: &str,
 		rng: &mut R,
 		config: Config
 	) -> rustix::io::Result<Self> {
 		let id = LogID::new(rng);
 		let path = format!("{dir_path}/{id}");
+		let disk = disk::Log::open(&path)?;
 
-		disk::Log::open(&path).map(|disk| Self {
+		Ok(Self {
 			id,
 			path,
 			disk,
@@ -207,7 +224,7 @@ impl Log {
 		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
 	}
 
-	fn commit(&mut self) -> Result<(), CommitErr> {
+	pub fn commit(&mut self) -> Result<(), CommitErr> {
 		assert!(self.byte_len % 8 == 0);
 
 		if event::HEADER_SIZE > self.txn_write_buf.len() {
@@ -218,7 +235,7 @@ impl Log {
 
 		self.read_cache.update(&self.txn_write_buf)?;
 
-		// Disk offsets recored in the Key Index always lag behind by one
+		// Disk offsets recorded in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 
 		for e in event::View::new(&self.txn_write_buf) {
@@ -229,6 +246,10 @@ impl Log {
 		self.byte_len += bytes_flushed;
 		assert!(self.byte_len % 8 == 0);
 		Ok(self.txn_write_buf.clear())
+	}
+
+	pub fn read(&self, logical_pos: usize) -> Option<Read<'_>> {
+		None
 	}
 }
 
@@ -243,9 +264,9 @@ mod tests {
 	#[test]
 	fn graph_paper() {
 		let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
-
 		let tmp_dir_path = tmp_dir.path().to_string_lossy().into_owned();
 		let mut rng = rand::thread_rng();
+
 		let mut log = Log::new(
 			&tmp_dir_path,
 			&mut rng,
@@ -254,7 +275,13 @@ mod tests {
 				read_cache_capacity: 16 * 32,
 				key_index_capacity: 0x10000
 			}
-		);
+		)
+		.unwrap();
+
+		log.enqueue(b"I have known the arcane law").unwrap();
+		log.commit().unwrap();
+
+		let res = log.read(0).unwrap();
 	}
 
 	/*
