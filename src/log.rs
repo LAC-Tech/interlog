@@ -28,22 +28,12 @@ type WriteRes = Result<(), CommitErr>;
 #[derive(Debug)]
 pub struct Read<'a> {
 	pub cache_hit: bool,
-	pub payload: &'a [u8]
+	pub event: Event<'a>
 }
 
-/*
-#[derive(Debug)]
-pub enum ReadErr {
-	KeyIndex,
-	ClientBuf(fixvec::Overflow)
-}
-
-type ReadRes<'a> = Result<ReadSucc<'a>, ReadErr>;
-*/
-
-/// ReadCache is a fixed sized structure that caches the latest entries in the
-/// log (LIFO caching). The assumption is that things recently added are
-/// most likely to be read out again.
+/// A fixed sized structure that caches the latest entries in the log
+/// (LIFO caching). The assumption is that things recently added are most
+/// likely to be read out again.
 ///
 /// To do this I'm using a single circular buffer, with two "write pointers".
 /// At any given point in time the buffer will have two contiguous segments,
@@ -123,8 +113,15 @@ impl ReadCache {
 		result.map_err(CommitErr::ReadCache)
 	}
 
-	pub fn read(&self, logical_pos: usize) -> Option<&[u8]> {
-		None
+	pub fn read(&self, relative_byte_pos: usize) -> Option<Event<'_>> {
+		let a_bytes = self.read_a();
+		let e: Option<_> = event::read(a_bytes, relative_byte_pos);
+		if let Some(_) = e {
+			return e;
+		}
+
+		let relative_byte_pos = relative_byte_pos - a_bytes.len();
+		return event::read(self.read_b(), relative_byte_pos);
 	}
 
 	fn set_logical_start(&mut self, es: &[u8]) {
@@ -257,8 +254,26 @@ impl Log {
 		Ok(self.txn_write_buf.clear())
 	}
 
-	pub fn read(&self, logical_pos: usize) -> Option<Read<'_>> {
-		None
+	pub fn read(&mut self, logical_pos: usize) -> Option<Read<'_>> {
+		let byte_start = self.key_index[self.read_cache.logical_start];
+		let byte_pos = self.key_index.get(logical_pos).cloned()?;
+
+		match byte_pos.checked_sub(byte_start) {
+			Some(relative_byte_pos) => {
+				// If it's not in here, that means it doesn't exist at all
+				self.read_cache
+					.read(relative_byte_pos)
+					.map(|event| Read { cache_hit: true, event })
+			}
+			None => {
+				panic!("implement reading from disk");
+				// read from disk
+				// - get byte_pos, and byte_pos of the next thing, to len
+				// - resize disk_read_buf
+				// - pass it into disk
+				// If it's not in the disk at this point, panic
+			}
+		}
 	}
 }
 
@@ -271,7 +286,7 @@ mod tests {
 	use tempfile::TempDir;
 
 	#[test]
-	fn graph_paper() {
+	fn log() {
 		let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
 		let tmp_dir_path = tmp_dir.path().to_string_lossy().into_owned();
 		let mut rng = rand::thread_rng();
@@ -280,7 +295,7 @@ mod tests {
 			&tmp_dir_path,
 			&mut rng,
 			Config {
-				read_cache_capacity: 16 * 32,
+				read_cache_capacity: 127,
 				key_index_capacity: 0x10000,
 				txn_write_buf_capacity: 512,
 				disk_read_buf_capacity: 256
@@ -291,7 +306,18 @@ mod tests {
 		log.enqueue(b"I have known the arcane law").unwrap();
 		log.commit().unwrap();
 
-		let res = log.read(0).unwrap();
+		assert_eq!(
+			log.read(0).unwrap().event.payload,
+			b"I have known the arcane law"
+		);
+
+		log.enqueue(b"On strange roads, such visions met").unwrap();
+		log.commit().unwrap();
+
+		assert_eq!(
+			log.read(1).unwrap().event.payload,
+			b"On strange roads, such visions met"
+		);
 	}
 
 	/*

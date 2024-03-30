@@ -7,25 +7,6 @@ use crate::fixvec::FixVec;
 
 type O = OFlags;
 
-/*
-pub fn read_from_file(
-   bytes: &mut [u8], fd: fd::BorrowedFd, index: &Index
-) -> io::Result<()> {
-	// need to set len so pread knows how much to fill
-	if index.len > self.bytes.capacity() { panic!("OVERFLOW") }
-	unsafe {
-		self.bytes.set_len(index.len);
-	}
-
-	// pread ignores the fd offset, supply your own
-	let bytes_read = io::pread(fd, &mut self.bytes, index.pos as u64)?;
-	// If this isn't the case, we should figure out why!
-	assert_eq!(bytes_read, index.len);
-
-	Ok(())
-}
-*/
-
 #[derive(Debug, PartialEq)]
 pub enum AppendErr {
 	OS(rustix::io::Errno),
@@ -58,5 +39,17 @@ impl Log {
 		Ok(bytes_written)
 	}
 
-	pub fn read(&self, buf: &mut FixVec<u8>) {}
+	/// Returns number of bytes read
+	pub fn read(
+		&self,
+		buf: &mut FixVec<u8>,
+		byte_offset: usize
+	) -> io::Result<()> {
+		let fd = self.0.as_fd();
+		let bytes_read = io::pread(fd, buf, byte_offset as u64)?;
+		// According to my understanding of the man page this should never
+		// happen (famous last words)
+		assert_eq!(buf.len(), bytes_read);
+		Ok(())
+	}
 }
