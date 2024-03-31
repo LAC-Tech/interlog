@@ -101,7 +101,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "interlog"
+name = "interlog_core"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -110,6 +110,13 @@ dependencies = [
  "rand",
  "rustix",
  "tempfile",
+]
+
+[[package]]
+name = "interlog_inspector"
+version = "0.1.0"
+dependencies = [
+ "interlog_core",
 ]
 
 [[package]]
