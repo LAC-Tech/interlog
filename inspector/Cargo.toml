@@ -9,6 +9,8 @@ build = "build.rs"
 
 [dependencies]
 slint = "1.4"
+interlog_core = { path = "../core" }
+native-dialog = "0.7.0"
 
 [build-dependencies]
 slint-build = "1.4"

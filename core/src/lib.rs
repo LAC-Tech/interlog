@@ -15,12 +15,12 @@
 extern crate alloc;
 mod disk;
 mod fixvec;
-mod log;
 mod log_id;
 #[cfg(test)]
 mod test_utils;
 
 pub mod event;
+pub mod log;
 pub mod region;
 
 #[cfg(not(target_pointer_width = "64"))]

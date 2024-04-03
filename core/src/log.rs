@@ -59,7 +59,7 @@ pub struct Read<'a> {
 /// X, Y and Z
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
-pub struct ReadCache {
+struct ReadCache {
 	mem: Box<[u8]>,
 	/// Everything above this is in this cache
 	pub logical_start: usize,
@@ -174,14 +174,14 @@ impl ReadCache {
 	}
 }
 
-struct Config {
+pub struct Config {
 	read_cache_capacity: usize,
 	key_index_capacity: usize,
 	txn_write_buf_capacity: usize,
 	disk_read_buf_capacity: usize
 }
 
-struct Log {
+pub struct Log {
 	id: LogID,
 	/// Still counts as "static allocation" as only allocating in constructor
 	path: String,
@@ -202,10 +202,9 @@ struct Log {
 impl Log {
 	pub fn new<R: rand::Rng>(
 		dir_path: &str,
-		rng: &mut R,
 		config: Config
 	) -> rustix::io::Result<Self> {
-		let id = LogID::new(rng);
+		let id = LogID::new(&mut rand::thread_rng());
 		let path = format!("{dir_path}/{id}");
 		let disk = disk::Log::open(&path)?;
 
@@ -289,11 +288,9 @@ mod tests {
 	fn log() {
 		let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
 		let tmp_dir_path = tmp_dir.path().to_string_lossy().into_owned();
-		let mut rng = rand::thread_rng();
 
 		let mut log = Log::new(
 			&tmp_dir_path,
-			&mut rng,
 			Config {
 				read_cache_capacity: 127,
 				key_index_capacity: 0x10000,
