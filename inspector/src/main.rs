@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 
 use cursive::theme::{BorderStyle, Palette, Theme};
-use cursive::views::{Dialog, TextView};
+use cursive::views::{Dialog, ListView, TextView};
 use cursive_table_view::{TableView, TableViewItem};
 
 // Provide a type for the table's columns
@@ -40,11 +40,12 @@ impl TableViewItem<BasicColumn> for interlog_core::event::Event<'_> {
 	}
 }
 
+// Compact text representation of bytes to single braille characters
+fn u8_to_braille(n: u8) -> char {
+	char::from_u32(0x2800 + u32::from(n)).unwrap()
+}
+
 fn main() {
-	for n in 0..=0xff {
-		println!("{}", char::from_u32(0x2800 + n).unwrap());
-	}
-	/*
 	// Creates the cursive root - required for every application.
 	let mut siv = cursive::default();
 
@@ -54,14 +55,14 @@ fn main() {
 		palette: Palette::terminal_default()
 	});
 
-	// Creates a dialog with a single "Quit" button
+	siv.add_global_callback('q', |s| s.quit());
+
 	siv.add_layer(
-		Dialog::around(TextView::new("Hello Dialog!"))
-			.title("Cursive")
-			.button("Quit", |s| s.quit())
+		ListView::new()
+			.child("0", TextView::new("item"))
+			.child("1", TextView::new("item"))
 	);
 
 	// Starts the event loop.
 	siv.run();
-	*/
 }
