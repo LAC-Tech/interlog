@@ -8,7 +8,17 @@ use crate::region::Region;
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
 /// 48 bit logical position.
 #[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
+#[derive(
+	bytemuck::Pod,
+	bytemuck::Zeroable,
+	Clone,
+	Copy,
+	Debug,
+	Eq,
+	PartialEq,
+	PartialOrd,
+	Ord,
+)]
 pub struct ID {
 	/// Replica the event was first recorded at.
 	pub origin: LogID,

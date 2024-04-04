@@ -3,7 +3,16 @@ use core::fmt;
 use rand::prelude::*;
 
 /// This was originally u128, but I changed it to keep the alignment to 0x8
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+#[derive(
+	bytemuck::Pod,
+	bytemuck::Zeroable,
+	Clone,
+	Copy,
+	Eq,
+	PartialEq,
+	PartialOrd,
+	Ord,
+)]
 #[repr(transparent)]
 pub struct LogID([u64; 2]);
 

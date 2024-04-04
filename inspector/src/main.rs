@@ -13,11 +13,10 @@ enum BasicColumn {
 	Payload
 }
 
-/*
 impl TableViewItem<BasicColumn> for interlog_core::event::Event<'_> {
 	fn to_column(&self, column: BasicColumn) -> String {
 		match column {
-			BasicColumn::Origin => { self.id.origin }.to_string(),
+			BasicColumn::Origin => self.id.origin.to_string(),
 			BasicColumn::LogicalPos => self.id.logical_pos.to_string(),
 			BasicColumn::ByteLen => self.payload.len().to_string(),
 			BasicColumn::Payload => {
@@ -31,15 +30,21 @@ impl TableViewItem<BasicColumn> for interlog_core::event::Event<'_> {
 		Self: Sized
 	{
 		match column {
-			BasicColumn::Name => self.name.cmp(&other.name),
-			BasicColumn::Count => self.count.cmp(&other.count),
-			BasicColumn::Rate => self.rate.cmp(&other.rate)
+			BasicColumn::Origin => self.id.origin.cmp(&other.id.origin),
+			BasicColumn::LogicalPos => {
+				self.id.logical_pos.cmp(&other.id.logical_pos)
+			}
+			BasicColumn::ByteLen => self.payload.len().cmp(&self.payload.len()),
+			BasicColumn::Payload => self.payload.cmp(other.payload)
 		}
 	}
 }
-*/
 
 fn main() {
+	for n in 0..=0xff {
+		println!("{}", char::from_u32(0x2800 + n).unwrap());
+	}
+	/*
 	// Creates the cursive root - required for every application.
 	let mut siv = cursive::default();
 
@@ -58,4 +63,5 @@ fn main() {
 
 	// Starts the event loop.
 	siv.run();
+	*/
 }
