@@ -7,7 +7,7 @@ use crate::region::Region;
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
 /// 48 bit logical position.
-#[repr(C, packed(8))]
+#[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 pub struct ID {
 	/// Replica the event was first recorded at.
@@ -22,8 +22,8 @@ pub struct ID {
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Debug)]
 #[repr(C)]
 struct Header {
-	byte_len: usize,
-	id: ID
+	id: ID,
+	byte_len: usize
 }
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Header>();
