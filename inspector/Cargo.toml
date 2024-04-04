@@ -3,14 +3,9 @@ name = "interlog-inspector"
 version = "0.1.0"
 authors = ["Lewis Campbell <info@lewiscampbell.tech>"]
 edition = "2021"
-build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-slint = "1.4"
+cursive = "0.20"
 interlog_core = { path = "../core" }
-native-dialog = "0.7.0"
-
-[build-dependencies]
-slint-build = "1.4"

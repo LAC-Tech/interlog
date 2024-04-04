@@ -1,35 +1,16 @@
-use interlog_core::log::Log;
-
-fn open_file() -> Option<std::path::PathBuf> {
-	native_dialog::FileDialog::new()
-		.set_location("~/Desktop")
-		.add_filter("PNG Image", &["png"])
-		.add_filter("JPEG Image", &["jpg", "jpeg"])
-		.show_open_single_file()
-		.unwrap()
-}
+use cursive::views::{Dialog, TextView};
 
 fn main() {
-	let window = MainWindow::new().unwrap()
-    
-    window.run().unwrap();
-}
+	// Creates the cursive root - required for every application.
+	let mut siv = cursive::default();
 
-slint::slint! {
-	import { Button } from "std-widgets.slint";
-    export global Logic {
-        
-    }
-	export component MainWindow inherits Window {
-		callback open_file;
-		preferred-height: 600px;
-		preferred-width: 800px;
-		default-font-size: 25px;
-		Button {
-			text: "New Log";
-			clicked => {
-				self.text = "clicked";
-			}
-		}
-	}
+	// Creates a dialog with a single "Quit" button
+	siv.add_layer(
+		Dialog::around(TextView::new("Hello Dialog!"))
+			.title("Cursive")
+			.button("Quit", |s| s.quit())
+	);
+
+	// Starts the event loop.
+	siv.run();
 }
