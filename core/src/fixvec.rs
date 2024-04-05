@@ -11,15 +11,26 @@ pub type Res = Result<(), Overflow>;
 /// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
 	elems: alloc::boxed::Box<[T]>,
-	len: usize
+	len: usize,
 }
 
 impl<T: core::default::Default + Clone> FixVec<T> {
-	#[allow(clippy::uninit_vec)]
 	pub fn new(capacity: usize) -> FixVec<T> {
 		let elems = vec![T::default(); capacity].into_boxed_slice();
 		assert_eq!(core::mem::size_of_val(&elems), 16);
 		Self { elems, len: 0 }
+	}
+
+	pub fn resize(&mut self, new_len: usize) -> Res {
+		self.check_capacity(new_len)?;
+
+		if new_len > self.len {
+			self.elems[self.len..new_len].fill(T::default());
+		}
+
+		self.len = new_len;
+
+		Ok(())
 	}
 }
 
@@ -65,23 +76,9 @@ impl<T> FixVec<T> {
 
 	fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
 	where
-		I: SliceIndex<[T]>
+		I: SliceIndex<[T]>,
 	{
 		self.elems[..self.len].get(index)
-	}
-}
-
-impl<T: Clone + core::fmt::Debug> FixVec<T> {
-	pub fn resize(&mut self, new_len: usize, value: T) -> Res {
-		self.check_capacity(new_len)?;
-
-		if new_len > self.len {
-			self.elems[self.len..new_len].fill(value);
-		}
-
-		self.len = new_len;
-
-		Ok(())
 	}
 }
 

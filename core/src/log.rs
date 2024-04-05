@@ -20,7 +20,7 @@ pub enum CommitErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::WriteErr),
 	TxnWriteBufHasNoEvents,
-	KeyIndex(fixvec::Overflow)
+	KeyIndex(fixvec::Overflow),
 }
 
 type WriteRes = Result<(), CommitErr>;
@@ -28,7 +28,7 @@ type WriteRes = Result<(), CommitErr>;
 #[derive(Debug)]
 pub struct Read<'a> {
 	pub cache_hit: bool,
-	pub event: Event<'a>
+	pub event: Event<'a>,
 }
 
 /// A fixed sized structure that caches the latest entries in the log
@@ -64,7 +64,7 @@ struct ReadCache {
 	/// Everything above this is in this cache
 	pub logical_start: usize,
 	a: Region,
-	b: Region // pos is always 0 but it's just easier
+	b: Region, // pos is always 0 but it's just easier
 }
 
 impl ReadCache {
@@ -79,7 +79,7 @@ impl ReadCache {
 	pub fn extend(
 		region: &mut Region,
 		dest: &mut [u8],
-		src: &[u8]
+		src: &[u8],
 	) -> Result<(), region::WriteErr> {
 		let extension = Region::new(region.len, src.len());
 
@@ -101,9 +101,9 @@ impl ReadCache {
 			(false, true) => match Self::extend(&mut self.a, &mut self.mem, es)
 			{
 				Ok(()) => Ok(()),
-				Err(region::WriteErr) => self.wrap_around(es)
+				Err(region::WriteErr) => self.wrap_around(es),
 			},
-			(_, false) => self.wrap_around(es)
+			(_, false) => self.wrap_around(es),
 		};
 
 		// Post conditions
@@ -175,10 +175,10 @@ impl ReadCache {
 }
 
 pub struct Config {
-	read_cache_capacity: usize,
-	key_index_capacity: usize,
-	txn_write_buf_capacity: usize,
-	disk_read_buf_capacity: usize
+	pub read_cache_capacity: usize,
+	pub key_index_capacity: usize,
+	pub txn_write_buf_capacity: usize,
+	pub disk_read_buf_capacity: usize,
 }
 
 pub struct Log {
@@ -196,14 +196,11 @@ pub struct Log {
 	/// one syscall is required to write to disk.
 	txn_write_buf: FixVec<u8>,
 	/// Written to when a value is not in the read_cache
-	disk_read_buf: FixVec<u8>
+	disk_read_buf: FixVec<u8>,
 }
 
 impl Log {
-	pub fn new<R: rand::Rng>(
-		dir_path: &str,
-		config: Config
-	) -> rustix::io::Result<Self> {
+	pub fn new(dir_path: &str, config: Config) -> rustix::io::Result<Self> {
 		let id = LogID::new(&mut rand::thread_rng());
 		let path = format!("{dir_path}/{id}");
 		let disk = disk::Log::open(&path)?;
@@ -216,7 +213,7 @@ impl Log {
 			read_cache: ReadCache::new(config.read_cache_capacity),
 			key_index: FixVec::new(config.key_index_capacity),
 			txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
-			disk_read_buf: FixVec::new(config.disk_read_buf_capacity)
+			disk_read_buf: FixVec::new(config.disk_read_buf_capacity),
 		})
 	}
 
@@ -265,12 +262,22 @@ impl Log {
 					.map(|event| Read { cache_hit: true, event })
 			}
 			None => {
-				panic!("implement reading from disk");
 				// read from disk
-				// - get byte_pos, and byte_pos of the next thing, to len
-				// - resize disk_read_buf
-				// - pass it into disk
-				// If it's not in the disk at this point, panic
+				let next_byte_pos =
+					self.key_index.get(logical_pos + 1).cloned()?;
+				let len = next_byte_pos
+					.checked_sub(byte_pos)
+					.expect("key index must always be in sorted order");
+				self.disk_read_buf
+					.resize(len)
+					.expect("disk read buf should fit event");
+				self.disk
+					.read(&mut self.disk_read_buf, byte_pos)
+					.expect("reading from disk failed");
+
+				let event = event::read(&self.disk_read_buf, 0)
+					.expect("Disk read buf did not contain a valid event");
+				Some(Read { cache_hit: false, event })
 			}
 		}
 	}
@@ -295,8 +302,8 @@ mod tests {
 				read_cache_capacity: 127,
 				key_index_capacity: 0x10000,
 				txn_write_buf_capacity: 512,
-				disk_read_buf_capacity: 256
-			}
+				disk_read_buf_capacity: 256,
+			},
 		)
 		.unwrap();
 

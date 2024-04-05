@@ -15,14 +15,16 @@
 extern crate alloc;
 mod disk;
 mod fixvec;
+mod log;
 mod log_id;
 #[cfg(test)]
 mod test_utils;
 
 pub mod event;
-pub mod log;
 pub mod region;
 
+pub use log::Config;
+pub use log::Log;
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("code assumes usize is u64");
 

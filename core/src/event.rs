@@ -24,7 +24,7 @@ pub struct ID {
 	pub origin: LogID,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
-	pub logical_pos: usize
+	pub logical_pos: usize,
 }
 
 /// This is written before every event in the log, and allows reading out
@@ -33,7 +33,7 @@ pub struct ID {
 #[repr(C)]
 struct Header {
 	id: ID,
-	byte_len: usize
+	byte_len: usize,
 }
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Header>();
@@ -44,7 +44,7 @@ pub const HEADER_SIZE: usize = core::mem::size_of::<Header>();
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
 	pub id: ID,
-	pub payload: &'a [u8]
+	pub payload: &'a [u8],
 }
 
 impl<'a> Event<'a> {
@@ -71,7 +71,7 @@ pub fn append(buf: &mut FixVec<u8>, event: &Event) -> fixvec::Res {
 	let header = Header { byte_len, id: event.id };
 	let payload_region = header_region.next(byte_len);
 	let next_offset = buf.len() + event.on_disk_size();
-	buf.resize(next_offset, 0)?;
+	buf.resize(next_offset)?;
 	let header_bytes = bytemuck::bytes_of(&header);
 
 	header_region.write(buf, header_bytes).expect("fixvec to be resized");
@@ -82,7 +82,7 @@ pub fn append(buf: &mut FixVec<u8>, event: &Event) -> fixvec::Res {
 
 pub struct View<'a> {
 	bytes: &'a [u8],
-	byte_index: usize
+	byte_index: usize,
 }
 
 impl<'a> View<'a> {

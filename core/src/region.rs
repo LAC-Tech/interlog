@@ -1,7 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Region {
 	pub pos: usize,
-	pub len: usize
+	pub len: usize,
 }
 
 #[derive(Debug)]
@@ -50,7 +50,7 @@ impl Region {
 			core::ptr::copy_nonoverlapping(
 				src.as_ptr(),
 				dest.as_mut_ptr(),
-				src.len()
+				src.len(),
 			);
 		}
 

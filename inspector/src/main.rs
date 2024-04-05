@@ -1,44 +1,5 @@
-use core::cmp::Ordering;
-
 use cursive::theme::{BorderStyle, Palette, Theme};
-use cursive::views::{Dialog, ListView, TextView};
-use cursive_table_view::{TableView, TableViewItem};
-
-// Provide a type for the table's columns
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum BasicColumn {
-	Origin,
-	LogicalPos,
-	ByteLen,
-	Payload
-}
-
-impl TableViewItem<BasicColumn> for interlog_core::event::Event<'_> {
-	fn to_column(&self, column: BasicColumn) -> String {
-		match column {
-			BasicColumn::Origin => self.id.origin.to_string(),
-			BasicColumn::LogicalPos => self.id.logical_pos.to_string(),
-			BasicColumn::ByteLen => self.payload.len().to_string(),
-			BasicColumn::Payload => {
-				self.payload.iter().map(|byte| format!("{:x}", byte)).collect()
-			}
-		}
-	}
-
-	fn cmp(&self, other: &Self, column: BasicColumn) -> Ordering
-	where
-		Self: Sized
-	{
-		match column {
-			BasicColumn::Origin => self.id.origin.cmp(&other.id.origin),
-			BasicColumn::LogicalPos => {
-				self.id.logical_pos.cmp(&other.id.logical_pos)
-			}
-			BasicColumn::ByteLen => self.payload.len().cmp(&self.payload.len()),
-			BasicColumn::Payload => self.payload.cmp(other.payload)
-		}
-	}
-}
+use cursive::views::{Dialog, ListView, SelectView, TextView};
 
 // Compact text representation of bytes to single braille characters
 fn u8_to_braille(n: u8) -> char {
@@ -46,22 +7,34 @@ fn u8_to_braille(n: u8) -> char {
 }
 
 fn main() {
+	let arg = std::env::args().skip(1).next();
+	let log = match arg.as_deref() {
+		Some("n") => {
+			let config = interlog_core::Config {
+				read_cache_capacity: 127,
+				key_index_capacity: 0x10000,
+				txn_write_buf_capacity: 512,
+				disk_read_buf_capacity: 256,
+			};
+			interlog_core::Log::new("/tmp/inspector", config).unwrap();
+		}
+		arg => {
+			println!("Please provide a valid argument, given {:?}", arg);
+			return;
+		}
+	};
 	// Creates the cursive root - required for every application.
 	let mut siv = cursive::default();
 
 	siv.set_theme(Theme {
 		shadow: false,
 		borders: BorderStyle::Simple,
-		palette: Palette::terminal_default()
+		palette: Palette::terminal_default(),
 	});
 
 	siv.add_global_callback('q', |s| s.quit());
 
-	siv.add_layer(
-		ListView::new()
-			.child("0", TextView::new("item"))
-			.child("1", TextView::new("item"))
-	);
+	siv.add_layer(SelectView::new().item("0", "item").item("1", "item"));
 
 	// Starts the event loop.
 	siv.run();
