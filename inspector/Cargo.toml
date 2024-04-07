@@ -5,6 +5,5 @@ authors = ["Lewis Campbell <info@lewiscampbell.tech>"]
 edition = "2021"
 
 [dependencies]
-cursive = "0.20"
-cursive_table_view = "0.14"
 interlog_core = { path = "../core" }
+ncurses = "*"
