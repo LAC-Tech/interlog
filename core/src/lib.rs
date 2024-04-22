@@ -39,10 +39,10 @@ use crate::log_id::LogID;
 use region::Region;
 
 #[derive(Debug)]
-struct EnqueueErr(fixvec::Overflow);
+pub struct EnqueueErr(fixvec::Overflow);
 
 #[derive(Debug)]
-enum CommitErr {
+pub enum CommitErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::WriteErr),
 	TxnWriteBufHasNoEvents,
@@ -195,7 +195,7 @@ impl ReadCache {
 	}
 }
 
-struct Config {
+pub struct Config {
 	pub read_cache_capacity: usize,
 	pub key_index_capacity: usize,
 	pub txn_write_buf_capacity: usize,
@@ -221,24 +221,24 @@ struct Log {
 	disk_read_buf: FixVec<u8>
 }
 
+pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
+	let id = LogID::new(&mut rand::thread_rng());
+	let path = format!("{dir_path}/{id}");
+	let disk = disk::Log::open(&path)?;
+
+	Ok(Log {
+		id,
+		path,
+		disk,
+		byte_len: 0,
+		read_cache: ReadCache::new(config.read_cache_capacity),
+		key_index: FixVec::new(config.key_index_capacity),
+		txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
+		disk_read_buf: FixVec::new(config.disk_read_buf_capacity)
+	})
+}
+
 impl Log {
-	fn new(dir_path: &str, config: Config) -> rustix::io::Result<Self> {
-		let id = LogID::new(&mut rand::thread_rng());
-		let path = format!("{dir_path}/{id}");
-		let disk = disk::Log::open(&path)?;
-
-		Ok(Self {
-			id,
-			path,
-			disk,
-			byte_len: 0,
-			read_cache: ReadCache::new(config.read_cache_capacity),
-			key_index: FixVec::new(config.key_index_capacity),
-			txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
-			disk_read_buf: FixVec::new(config.disk_read_buf_capacity)
-		})
-	}
-
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let logical_pos = self.key_index.len();
 		let e = event::Event {
@@ -318,7 +318,7 @@ mod tests {
 		let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
 		let tmp_dir_path = tmp_dir.path().to_string_lossy().into_owned();
 
-		let mut log = Log::new(
+		let mut log = create(
 			&tmp_dir_path,
 			Config {
 				read_cache_capacity: 127,
@@ -343,7 +343,7 @@ mod tests {
 		dbg!(&log);
 
 		assert_eq!(
-			log.read(0).unwrap().payload,
+			log.read(1).unwrap().payload,
 			b"On strange roads, such visions met"
 		);
 	}

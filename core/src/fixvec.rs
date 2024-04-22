@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::fmt;
 use core::ops;
 use core::slice::SliceIndex;
 
@@ -9,10 +10,15 @@ pub type Res = Result<(), Overflow>;
 
 /// Fixed Capacity Vector
 /// Tigerstyle: There IS a limit
-#[derive(Debug)]
 pub struct FixVec<T> {
 	elems: alloc::boxed::Box<[T]>,
 	len: usize
+}
+
+impl<T: fmt::Debug> fmt::Debug for FixVec<T> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_list().entries(self.elems.iter().take(self.len)).finish()
+	}
 }
 
 impl<T: core::default::Default + Clone> FixVec<T> {
