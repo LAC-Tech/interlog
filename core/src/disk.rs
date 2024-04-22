@@ -10,9 +10,10 @@ type O = OFlags;
 #[derive(Debug, PartialEq)]
 pub enum AppendErr {
 	OS(rustix::io::Errno),
-	NonAtomic { bytes_expected: usize, bytes_written: usize },
+	NonAtomic { bytes_expected: usize, bytes_written: usize }
 }
 
+#[derive(Debug)]
 pub struct Log(fd::OwnedFd);
 
 impl Log {
@@ -24,7 +25,7 @@ impl Log {
 
 	pub fn append<B>(&self, bytes: B) -> Result<usize, AppendErr>
 	where
-		B: AsRef<[u8]>,
+		B: AsRef<[u8]>
 	{
 		let bytes = bytes.as_ref();
 		let fd = self.0.as_fd();
@@ -43,7 +44,7 @@ impl Log {
 	pub fn read(
 		&self,
 		buf: &mut FixVec<u8>,
-		byte_offset: usize,
+		byte_offset: usize
 	) -> io::Result<()> {
 		let fd = self.0.as_fd();
 		let bytes_read = io::pread(fd, buf, byte_offset as u64)?;

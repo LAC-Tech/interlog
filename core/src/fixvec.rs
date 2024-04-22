@@ -9,9 +9,10 @@ pub type Res = Result<(), Overflow>;
 
 /// Fixed Capacity Vector
 /// Tigerstyle: There IS a limit
+#[derive(Debug)]
 pub struct FixVec<T> {
 	elems: alloc::boxed::Box<[T]>,
-	len: usize,
+	len: usize
 }
 
 impl<T: core::default::Default + Clone> FixVec<T> {
@@ -76,7 +77,7 @@ impl<T> FixVec<T> {
 
 	fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
 	where
-		I: SliceIndex<[T]>,
+		I: SliceIndex<[T]>
 	{
 		self.elems[..self.len].get(index)
 	}
