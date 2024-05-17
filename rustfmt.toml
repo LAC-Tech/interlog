@@ -1,4 +1,5 @@
 max_width = 80
 hard_tabs = true
 use_small_heuristics = "Max"
-trailing_comma = "Never"
+# Only works on nightly
+#railing_comma = "Never"

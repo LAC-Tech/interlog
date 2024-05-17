@@ -13,7 +13,7 @@ fn main() {
 				read_cache_capacity: 127,
 				key_index_capacity: 0x10000,
 				txn_write_buf_capacity: 512,
-				disk_read_buf_capacity: 256
+				disk_read_buf_capacity: 256,
 			};
 			interlog_core::Log::new("/tmp/inspector", config).unwrap()
 		}

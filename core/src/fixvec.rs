@@ -12,7 +12,7 @@ pub type Res = Result<(), Overflow>;
 /// Tigerstyle: There IS a limit
 pub struct FixVec<T> {
 	elems: alloc::boxed::Box<[T]>,
-	len: usize
+	len: usize,
 }
 
 impl<T: fmt::Debug> fmt::Debug for FixVec<T> {
@@ -83,7 +83,7 @@ impl<T> FixVec<T> {
 
 	fn get<I>(&self, index: I) -> Option<&<I as SliceIndex<[T]>>::Output>
 	where
-		I: SliceIndex<[T]>
+		I: SliceIndex<[T]>,
 	{
 		self.elems[..self.len].get(index)
 	}
