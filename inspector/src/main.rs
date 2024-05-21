@@ -25,7 +25,7 @@ fn main() {
 				txn_write_buf_capacity: 512,
 				disk_read_buf_capacity: 256,
 			};
-			interlog_core::Log::new("/tmp/inspector", config).unwrap()
+			//interlog_core::Log::new("/tmp/inspector", config).unwrap()
 		}
 		arg => {
 			println!("Please provide a valid argument, given {:?}", arg);
