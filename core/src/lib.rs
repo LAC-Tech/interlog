@@ -47,7 +47,7 @@ pub enum CommitErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::WriteErr),
 	TxnWriteBufHasNoEvents,
-	KeyIndex(fixvec::Overflow)
+	KeyIndex(fixvec::Overflow),
 }
 
 type WriteRes = Result<(), CommitErr>;
@@ -85,7 +85,7 @@ struct ReadCache {
 	/// Everything above this is in this cache
 	pub logical_start: usize,
 	a: Region,
-	b: Region // pos is always 0 but it's just easier
+	b: Region, // pos is always 0 but it's just easier
 }
 
 impl fmt::Debug for ReadCache {
@@ -110,7 +110,7 @@ impl ReadCache {
 	fn extend(
 		region: &mut Region,
 		dest: &mut [u8],
-		src: &[u8]
+		src: &[u8],
 	) -> Result<(), region::WriteErr> {
 		let extension = Region::new(region.len, src.len());
 
@@ -132,9 +132,9 @@ impl ReadCache {
 			(false, true) => match Self::extend(&mut self.a, &mut self.mem, es)
 			{
 				Ok(()) => Ok(()),
-				Err(region::WriteErr) => self.wrap_around(es)
+				Err(region::WriteErr) => self.wrap_around(es),
 			},
-			(_, false) => self.wrap_around(es)
+			(_, false) => self.wrap_around(es),
 		};
 
 		// Post conditions
@@ -209,7 +209,7 @@ pub struct Config {
 	pub read_cache_capacity: usize,
 	pub key_index_capacity: usize,
 	pub txn_write_buf_capacity: usize,
-	pub disk_read_buf_capacity: usize
+	pub disk_read_buf_capacity: usize,
 }
 
 #[derive(Debug)]
@@ -223,12 +223,13 @@ struct Log {
 	read_cache: ReadCache,
 	/// The entire index in memory, like bitcask's KeyDir
 	/// Maps logical indices to disk offsets
+	/// Eventully there will be a map of these, one per origin ID.
 	key_index: FixVec<usize>,
 	/// This stores all the events w/headers, contiguously, which means only
 	/// one syscall is required to write to disk.
 	txn_write_buf: FixVec<u8>,
 	/// Written to when a value is not in the read_cache
-	disk_read_buf: FixVec<u8>
+	disk_read_buf: FixVec<u8>,
 }
 
 pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
@@ -244,7 +245,7 @@ pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
 		read_cache: ReadCache::new(config.read_cache_capacity),
 		key_index: FixVec::new(config.key_index_capacity),
 		txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
-		disk_read_buf: FixVec::new(config.disk_read_buf_capacity)
+		disk_read_buf: FixVec::new(config.disk_read_buf_capacity),
 	})
 }
 
@@ -253,7 +254,7 @@ impl Log {
 		let logical_pos = self.key_index.len();
 		let e = event::Event {
 			id: event::ID { origin: self.id, logical_pos },
-			payload
+			payload,
 		};
 
 		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
@@ -334,8 +335,8 @@ mod tests {
 				read_cache_capacity: 127,
 				key_index_capacity: 0x10000,
 				txn_write_buf_capacity: 512,
-				disk_read_buf_capacity: 256
-			}
+				disk_read_buf_capacity: 256,
+			},
 		)
 		.unwrap();
 
