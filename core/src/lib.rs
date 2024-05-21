@@ -33,6 +33,7 @@ mod test_utils;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use core::fmt;
 
 use crate::fixvec::FixVec;
 use crate::log_id::LogID;
@@ -79,13 +80,22 @@ type WriteRes = Result<(), CommitErr>;
 /// X, Y and Z
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
-#[derive(Debug)]
 struct ReadCache {
 	mem: Box<[u8]>,
 	/// Everything above this is in this cache
 	pub logical_start: usize,
 	a: Region,
 	b: Region // pos is always 0 but it's just easier
+}
+
+impl fmt::Debug for ReadCache {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_struct("ReadCache")
+			.field("logical_start", &self.logical_start)
+			.field("a", &self.read_a())
+			.field("b", &self.read_b())
+			.finish()
+	}
 }
 
 impl ReadCache {
