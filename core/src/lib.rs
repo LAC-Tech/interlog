@@ -83,7 +83,7 @@ type WriteRes = Result<(), CommitErr>;
 struct ReadCache {
 	mem: Box<[u8]>,
 	/// Everything above this is in this cache
-	pub logical_start: usize,
+	logical_start: usize,
 	a: Region,
 	b: Region, // pos is always 0 but it's just easier
 }
@@ -205,6 +205,42 @@ impl ReadCache {
 	}
 }
 
+#[derive(Debug)]
+pub struct Storage {
+	disk: disk::Log,
+	read_cache: ReadCache,
+}
+
+impl Storage {
+	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<usize, CommitErr> {
+		let bytes_flushed =
+			self.disk.append(txn_write_buf).map_err(CommitErr::Disk)?;
+		self.read_cache.update(txn_write_buf)?;
+
+		Ok(bytes_flushed)
+	}
+}
+
+#[derive(Debug)]
+struct KeyIndex(FixVec<usize>);
+
+impl KeyIndex {
+	fn new(capacity: usize) -> Self {
+		// TODO: max number of origins to track
+		Self(FixVec::new(capacity))
+	}
+
+	fn event_count(&self) -> usize {
+		// TODO: sum for every origin
+		self.0.len()
+	}
+
+    fn add(&mut self, disk_offset: usize) -> fixvec::Res {
+        if 
+		self.0.push(disk_offset)
+	}
+}
+
 pub struct Config {
 	pub read_cache_capacity: usize,
 	pub key_index_capacity: usize,
@@ -217,14 +253,14 @@ struct Log {
 	id: LogID,
 	/// Still counts as "static allocation" as only allocating in constructor
 	path: String,
-	disk: disk::Log,
+	/// Abstract storage of log, hiding details of any caching
+	storage: Storage,
 	/// Keeps track of the disk
 	byte_len: usize,
-	read_cache: ReadCache,
 	/// The entire index in memory, like bitcask's KeyDir
 	/// Maps logical indices to disk offsets
 	/// Eventully there will be a map of these, one per origin ID.
-	key_index: FixVec<usize>,
+	key_index: KeyIndex,
 	/// This stores all the events w/headers, contiguously, which means only
 	/// one syscall is required to write to disk.
 	txn_write_buf: FixVec<u8>,
@@ -236,22 +272,23 @@ pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
 	let id = LogID::new(&mut rand::thread_rng());
 	let path = format!("{dir_path}/{id}");
 	let disk = disk::Log::open(&path)?;
+	let read_cache = ReadCache::new(config.read_cache_capacity);
 
 	Ok(Log {
 		id,
 		path,
-		disk,
+		storage: Storage { disk, read_cache },
 		byte_len: 0,
-		read_cache: ReadCache::new(config.read_cache_capacity),
-		key_index: FixVec::new(config.key_index_capacity),
+		key_index: KeyIndex::new(config.key_index_capacity),
 		txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
 		disk_read_buf: FixVec::new(config.disk_read_buf_capacity),
 	})
 }
 
 impl Log {
+	// Based on FasterLog API
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
-		let logical_pos = self.key_index.len();
+		let logical_pos = self.key_index.event_count();
 		let e = event::Event {
 			id: event::ID { origin: self.id, logical_pos },
 			payload,
@@ -260,6 +297,7 @@ impl Log {
 		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
 	}
 
+	// Based on FasterLog API
 	pub fn commit(&mut self) -> Result<(), CommitErr> {
 		assert_eq!(self.byte_len % 8, 0);
 
@@ -267,15 +305,12 @@ impl Log {
 			return Err(CommitErr::TxnWriteBufHasNoEvents);
 		}
 
-		let bytes_flushed =
-			self.disk.append(&self.txn_write_buf).map_err(CommitErr::Disk)?;
-
-		self.read_cache.update(&self.txn_write_buf)?;
+		let bytes_flushed = self.storage.persist(&self.txn_write_buf)?;
 
 		// Disk offsets recorded in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 		for e in event::View::new(&self.txn_write_buf) {
-			self.key_index.push(disk_offset).map_err(CommitErr::KeyIndex)?;
+			self.key_index.add(disk_offset).map_err(CommitErr::KeyIndex)?;
 			disk_offset += e.on_disk_size();
 		}
 
@@ -285,25 +320,28 @@ impl Log {
 	}
 
 	pub fn read(&mut self, logical_pos: usize) -> Option<event::Event<'_>> {
-		let byte_start = self.key_index[self.read_cache.logical_start];
+		let byte_cache_start =
+			self.key_index[self.storage.read_cache.logical_start];
+
 		let byte_pos = self.key_index.get(logical_pos).cloned()?;
 
-		match byte_pos.checked_sub(byte_start) {
+		let next_byte_pos = self.key_index.get(logical_pos + 1).cloned()?;
+
+		match byte_pos.checked_sub(byte_cache_start) {
 			Some(relative_byte_pos) => {
 				// If it's not in here, that means it doesn't exist at all
-				self.read_cache.read(relative_byte_pos)
+				self.storage.read_cache.read(relative_byte_pos)
 			}
 			None => {
 				// read from disk
-				let next_byte_pos =
-					self.key_index.get(logical_pos + 1).cloned()?;
 				let len = next_byte_pos
 					.checked_sub(byte_pos)
 					.expect("key index must always be in sorted order");
 				self.disk_read_buf
 					.resize(len)
 					.expect("disk read buf should fit event");
-				self.disk
+				self.storage
+					.disk
 					.read(&mut self.disk_read_buf, byte_pos)
 					.expect("reading from disk failed");
 
