@@ -235,8 +235,8 @@ impl KeyIndex {
 		self.0.len()
 	}
 
-    fn add(&mut self, disk_offset: usize) -> fixvec::Res {
-        if 
+	fn add(&mut self, disk_offset: usize) -> fixvec::Res {
+		//
 		self.0.push(disk_offset)
 	}
 }

@@ -87,6 +87,10 @@ impl<T> FixVec<T> {
 	{
 		self.elems[..self.len].get(index)
 	}
+
+	fn last(&self) -> Option<&T> {
+		self.len.checked_sub(1).and_then(|i| self.elems.get(i))
+	}
 }
 
 impl<T: Copy> FixVec<T> {
