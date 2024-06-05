@@ -222,23 +222,29 @@ impl Storage {
 }
 
 #[derive(Debug)]
-struct KeyIndex(FixVec<usize>);
+struct KeyIndex(FixVec<(LogID, FixVec<usize>)>)
 
 impl KeyIndex {
-	fn new(capacity: usize) -> Self {
-		// TODO: max number of origins to track
-		Self(FixVec::new(capacity))
-	}
+    fn new(max_origins: usize, max_events_per_origin: usize) -> Self {
 
-	fn event_count(&self) -> usize {
-		// TODO: sum for every origin
-		self.0.len()
-	}
+        Self((0..max_origins).map(|_| FixVec::new(max_events_per_origin)).collect())
+    }
 
-	fn add(&mut self, disk_offset: usize) -> fixvec::Res {
-		//
-		self.0.push(disk_offset)
-	}
+    fn event_count(&self) -> usize {
+        // TODO: sum for every origin
+        self.0.len()
+    }
+
+    fn add(&mut self, disk_offset: usize) -> fixvec::Res {
+        if self.0.last().is_some_and(|&last| last >= disk_offset) {
+            panic!("Expected this to be monotonic")
+        }
+        self.0.push(disk_offset)
+    }
+
+    fn get(&self, logical: usize) -> Option<usize> {
+        self.0.get(logical).cloned()
+    }
 }
 
 pub struct Config {
@@ -289,10 +295,8 @@ impl Log {
 	// Based on FasterLog API
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let logical_pos = self.key_index.event_count();
-		let e = event::Event {
-			id: event::ID { origin: self.id, logical_pos },
-			payload,
-		};
+		let id = event::ID { origin: self.id, logical_pos };
+		let e = event::Event { id, payload };
 
 		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
 	}
@@ -321,11 +325,11 @@ impl Log {
 
 	pub fn read(&mut self, logical_pos: usize) -> Option<event::Event<'_>> {
 		let byte_cache_start =
-			self.key_index[self.storage.read_cache.logical_start];
+			self.key_index.get(self.storage.read_cache.logical_start)?;
 
-		let byte_pos = self.key_index.get(logical_pos).cloned()?;
+		let byte_pos = self.key_index.get(logical_pos)?;
 
-		let next_byte_pos = self.key_index.get(logical_pos + 1).cloned()?;
+		let next_byte_pos = self.key_index.get(logical_pos + 1)?;
 
 		match byte_pos.checked_sub(byte_cache_start) {
 			Some(relative_byte_pos) => {

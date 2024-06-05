@@ -10,6 +10,7 @@ pub type Res = Result<(), Overflow>;
 
 /// Fixed Capacity Vector
 /// Tigerstyle: There IS a limit
+// TODO: why did I make this instead of just wrapping a regular vector?
 pub struct FixVec<T> {
 	elems: alloc::boxed::Box<[T]>,
 	len: usize,
@@ -88,8 +89,23 @@ impl<T> FixVec<T> {
 		self.elems[..self.len].get(index)
 	}
 
-	fn last(&self) -> Option<&T> {
+	fn last1(&self) -> Option<&T> {
 		self.len.checked_sub(1).and_then(|i| self.elems.get(i))
+	}
+
+	fn last2(&self) -> Option<&T> {
+		match self.len {
+			0 => None,
+			n => self.elems.get(n - 1),
+		}
+	}
+
+	fn last3(&self) -> Option<&T> {
+		if self.len == 0 {
+			None
+		} else {
+			self.elems.get(self.len - 1)
+		}
 	}
 }
 
