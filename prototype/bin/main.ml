@@ -1,6 +1,9 @@
 type addr = int
 type offset = int
 
+let (<<) f g x = f(g(x))
+let (>>) f g x = g(f(x))
+
 module Event = struct
   type id = { origin : addr; pos : int }
   type payload = string
@@ -38,16 +41,15 @@ end
 
 module Actor : sig
   type t
-
   val create : addr -> t
-  val add_acquaintances : t -> addr Seq.t -> unit
+  val add_acquaintances : t -> addr array -> unit
   val addr : t -> addr
   val recv : t -> msg -> unit
 end = struct
   type t = { addr : addr; log : Event.t Dynarray.t; index : Index.t }
 
   let create addr = { addr; log = Dynarray.create (); index = Index.create () }
-  let add_acquaintances actor = Index.add_addrs actor.index
+  let add_acquaintances actor = Array.to_seq >> Index.add_addrs actor.index
   let addr actor = actor.addr
 
   let recv actor = function
@@ -85,3 +87,6 @@ let () =
   let seed = int_of_float (Unix.time ()) in
   Random.init seed;
   Printf.printf "Seed: %d\n" seed
+  let a = Network.spawn ();;
+  let b = Network.spawn ();;
+  Actor.add_acquaintances b [|Actor.addr a|]
