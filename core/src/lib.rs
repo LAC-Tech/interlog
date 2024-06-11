@@ -26,6 +26,7 @@ compile_error!("code assumes linux");
 mod disk;
 mod event;
 mod fixvec;
+mod index;
 mod log_id;
 mod region;
 #[cfg(test)]
@@ -221,31 +222,36 @@ impl Storage {
 	}
 }
 
+/*
 #[derive(Debug)]
-struct KeyIndex(FixVec<(LogID, FixVec<usize>)>)
+struct KeyIndex(FixVec<usize>);
 
 impl KeyIndex {
-    fn new(max_origins: usize, max_events_per_origin: usize) -> Self {
+	fn new(max_origins: usize, max_events_per_origin: usize) -> Self {
+		Self(
+			(0..max_origins)
+				.map(|_| FixVec::new(max_events_per_origin))
+				.collect(),
+		)
+	}
 
-        Self((0..max_origins).map(|_| FixVec::new(max_events_per_origin)).collect())
-    }
+	fn event_count(&self) -> usize {
+		// TODO: sum for every origin
+		self.0.len()
+	}
 
-    fn event_count(&self) -> usize {
-        // TODO: sum for every origin
-        self.0.len()
-    }
+	fn add(&mut self, disk_offset: usize) -> fixvec::Res {
+		if self.0.last().is_some_and(|&last| last >= disk_offset) {
+			panic!("Expected this to be monotonic")
+		}
+		self.0.push(disk_offset)
+	}
 
-    fn add(&mut self, disk_offset: usize) -> fixvec::Res {
-        if self.0.last().is_some_and(|&last| last >= disk_offset) {
-            panic!("Expected this to be monotonic")
-        }
-        self.0.push(disk_offset)
-    }
-
-    fn get(&self, logical: usize) -> Option<usize> {
-        self.0.get(logical).cloned()
-    }
+	fn get(&self, logical: usize) -> Option<usize> {
+		self.0.get(logical).cloned()
+	}
 }
+*/
 
 pub struct Config {
 	pub read_cache_capacity: usize,
@@ -254,6 +260,7 @@ pub struct Config {
 	pub disk_read_buf_capacity: usize,
 }
 
+/*
 #[derive(Debug)]
 struct Log {
 	id: LogID,
@@ -435,3 +442,4 @@ mod tests {
 	}
 	*/
 }
+*/
