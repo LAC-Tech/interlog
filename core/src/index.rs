@@ -1,7 +1,5 @@
 use hashbrown::HashMap;
-use itertools::Itertools;
 
-use crate::event;
 use crate::fixvec::FixVec;
 use crate::log_id::LogID;
 
