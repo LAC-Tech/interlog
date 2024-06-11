@@ -1,12 +1,19 @@
 use hashbrown::HashMap;
+use itertools::Itertools;
 
+use crate::event;
 use crate::fixvec::FixVec;
 use crate::log_id::LogID;
 
 type DiskOffset = usize;
 
+// TODO: 'permanent' index, and 'staging' index I can use to calculate if I will commit or not
 #[derive(Debug)]
-struct Index(HashMap<LogID, FixVec<DiskOffset>>);
+struct Index {
+	// This way I can pre-allocate memory
+	txn_buf: HashMap<LogID, FixVec<DiskOffset>>,
+	actual: HashMap<LogID, FixVec<DiskOffset>>,
+}
 
 fn is_consecutive(ns: &[DiskOffset]) -> bool {
 	if ns.len() < 2 {
@@ -18,6 +25,17 @@ fn is_consecutive(ns: &[DiskOffset]) -> bool {
 		.try_fold(ns[0], |prev, &n| (n == prev + 1).then(|| n))
 		.is_some()
 }
+
+enum ParseErr {
+	NonConsecutive(LogID),
+	IndexWouldNotStartAtZero(LogID),
+}
+
+/*
+fn parse_event_ids(eids: &[event::ID]) -> ParseErr {
+	let by_origin = eids.iter().chunk_by(|e| e.origin);
+}
+*/
 
 #[cfg(test)]
 mod tests {
