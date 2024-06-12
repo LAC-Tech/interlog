@@ -1,4 +1,5 @@
-use crate::fixed_capacity::{HashMap, Vec};
+use crate::event;
+use crate::fixed_capacity::Vec;
 use crate::log_id::LogID;
 
 type DiskOffset = usize;
@@ -7,9 +8,11 @@ type DiskOffset = usize;
 #[derive(Debug)]
 struct Index {
 	// This way I can pre-allocate memory
-	txn_buf: HashMap<LogID, Vec<DiskOffset>>,
-	actual: HashMap<LogID, Vec<DiskOffset>>,
+	txn_buf: Vec<(LogID, Vec<DiskOffset>)>,
+	actual: Vec<(LogID, Vec<DiskOffset>)>,
 }
+
+impl Index {}
 
 fn is_consecutive(ns: &[DiskOffset]) -> bool {
 	if ns.len() < 2 {
@@ -27,11 +30,9 @@ enum ParseErr {
 	IndexWouldNotStartAtZero(LogID),
 }
 
-/*
 fn parse_event_ids(eids: &[event::ID]) -> ParseErr {
-	let by_origin = eids.iter().chunk_by(|e| e.origin);
+	panic!("TODO: implement me")
 }
-*/
 
 #[cfg(test)]
 mod tests {
