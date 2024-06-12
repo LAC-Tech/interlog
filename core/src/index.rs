@@ -1,15 +1,13 @@
 use crate::event;
 use crate::fixed_capacity::Vec;
-use crate::log_id::LogID;
-
-type DiskOffset = usize;
+use crate::pervasives::*;
 
 // TODO: 'permanent' index, and 'staging' index I can use to calculate if I will commit or not
 #[derive(Debug)]
 struct Index {
 	// This way I can pre-allocate memory
-	txn_buf: Vec<(LogID, Vec<DiskOffset>)>,
-	actual: Vec<(LogID, Vec<DiskOffset>)>,
+	txn_buf: Vec<(Address, Vec<DiskOffset>)>,
+	actual: Vec<(Address, Vec<DiskOffset>)>,
 }
 
 impl Index {}
@@ -26,8 +24,8 @@ fn is_consecutive(ns: &[DiskOffset]) -> bool {
 }
 
 enum ParseErr {
-	NonConsecutive(LogID),
-	IndexWouldNotStartAtZero(LogID),
+	NonConsecutive(Address),
+	IndexWouldNotStartAtZero(Address),
 }
 
 fn parse_event_ids(eids: &[event::ID]) -> ParseErr {

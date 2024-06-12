@@ -14,22 +14,24 @@ use rand::prelude::*;
 	Ord,
 )]
 #[repr(transparent)]
-pub struct LogID([u64; 2]);
+pub struct Address([u64; 2]);
 
-impl LogID {
+impl Address {
 	pub fn new<R: Rng>(rng: &mut R) -> Self {
 		Self(rng.gen())
 	}
 }
 
-impl fmt::Display for LogID {
+impl fmt::Display for Address {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{:x}{:x}", self.0[0], self.0[1])
 	}
 }
 
-impl fmt::Debug for LogID {
+impl fmt::Debug for Address {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "ReplicaID({:x}{:x})", self.0[0], self.0[1])
 	}
 }
+
+pub type DiskOffset = usize;

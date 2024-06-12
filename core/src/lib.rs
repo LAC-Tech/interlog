@@ -27,7 +27,7 @@ mod disk;
 mod event;
 mod fixed_capacity;
 mod index;
-mod log_id;
+mod pervasives;
 mod region;
 #[cfg(test)]
 mod test_utils;
@@ -37,7 +37,7 @@ use alloc::string::String;
 use core::fmt;
 
 use crate::fixed_capacity::Vec;
-use crate::log_id::LogID;
+use crate::pervasives::*;
 use region::Region;
 
 #[derive(Debug)]
