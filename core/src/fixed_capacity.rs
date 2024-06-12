@@ -16,22 +16,33 @@ pub type Res = Result<(), Overflow>;
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
  * This is so it could be used in a #[no_std] context
  */
-pub struct Vec<T> {
-	elems: alloc::boxed::Box<[T]>,
+#[derive(Clone)]
+pub struct Vec<T, const CAPACITY: usize> {
+	elems: alloc::boxed::Box<[T; CAPACITY]>,
 	len: usize,
 }
 
-impl<T: fmt::Debug> fmt::Debug for Vec<T> {
+impl<T: fmt::Debug, const CAPACITY: usize> fmt::Debug for Vec<T, CAPACITY> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_list().entries(self.elems.iter().take(self.len)).finish()
 	}
 }
 
-impl<T: core::default::Default + Clone> Vec<T> {
-	pub fn new(capacity: usize) -> Vec<T> {
-		let elems = vec![T::default(); capacity].into_boxed_slice();
-		assert_eq!(core::mem::size_of_val(&elems), 16);
+impl<T: core::default::Default + Copy, const CAPACITY: usize> Vec<T, CAPACITY> {
+	pub fn new() -> Self {
+		let elems = alloc::boxed::Box::new([T::default(); CAPACITY]);
+		assert_eq!(core::mem::size_of_val(&elems), 8);
 		Self { elems, len: 0 }
+	}
+
+	pub fn default() -> Self {
+		Self::new()
+	}
+
+	pub fn from_fn<T, const N: usize, F>(cb: F) -> Self
+	where
+		F: FnMut(usize) -> T,
+	{
 	}
 
 	pub fn resize(&mut self, new_len: usize) -> Res {
@@ -47,12 +58,7 @@ impl<T: core::default::Default + Clone> Vec<T> {
 	}
 }
 
-impl<T> Vec<T> {
-	#[inline]
-	pub fn capacity(&self) -> usize {
-		self.elems.len()
-	}
-
+impl<T, const CAPACITY: usize> Vec<T, CAPACITY> {
 	#[inline]
 	pub fn len(&self) -> usize {
 		self.len
@@ -64,7 +70,7 @@ impl<T> Vec<T> {
 	}
 
 	fn check_capacity(&self, new_len: usize) -> Res {
-		(self.capacity() >= new_len).then_some(()).ok_or(Overflow)
+		(CAPACITY >= new_len).then_some(()).ok_or(Overflow)
 	}
 
 	pub fn push(&mut self, value: T) -> Res {
@@ -114,7 +120,7 @@ impl<T> Vec<T> {
 	}
 }
 
-impl<T: Copy> Vec<T> {
+impl<T: Copy, const CAPACITY: usize> Vec<T, CAPACITY> {
 	pub fn extend_from_slice(&mut self, other: &[T]) -> Res {
 		let new_len = self.len + other.len();
 		self.check_capacity(new_len)?;
@@ -124,7 +130,7 @@ impl<T: Copy> Vec<T> {
 	}
 }
 
-impl<T> ops::Deref for Vec<T> {
+impl<T, const CAPACITY: usize> ops::Deref for Vec<T, CAPACITY> {
 	type Target = [T];
 
 	fn deref(&self) -> &Self::Target {
@@ -132,14 +138,14 @@ impl<T> ops::Deref for Vec<T> {
 	}
 }
 
-impl<T> ops::DerefMut for Vec<T> {
+impl<T, const CAPACITY: usize> ops::DerefMut for Vec<T, CAPACITY> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.elems[..self.len]
 	}
 }
 
-impl AsRef<[u8]> for Vec<u8> {
-	fn as_ref(&self) -> &[u8] {
+impl<const CAPACITY: usize> AsRef<[u8; CAPACITY]> for Vec<u8, CAPACITY> {
+	fn as_ref(&self) -> &[u8; CAPACITY] {
 		&self.elems
 	}
 }
@@ -162,8 +168,7 @@ mod test {
 
 	#[test]
 	fn fixvec_stuff() {
-		let mut fv = Vec::<u64>::new(8);
-		assert_eq!(fv.capacity(), 8);
+		let mut fv = Vec::<u64, 8>::new();
 		assert_eq!(fv.len(), 0);
 
 		fv.push(42).unwrap();

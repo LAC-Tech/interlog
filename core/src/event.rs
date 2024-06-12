@@ -21,10 +21,10 @@ use crate::region::Region;
 )]
 pub struct ID {
 	/// Replica the event was first recorded at.
-	pub origin: Address,
+	pub origin: Addr,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
-	pub logical_pos: usize,
+	pub log_pos: usize,
 }
 
 /// This is written before every event in the log, and allows reading out
@@ -65,7 +65,10 @@ pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
 	Some(Event { id, payload })
 }
 
-pub fn append(buf: &mut Vec<u8>, event: &Event) -> fixed_capacity::Res {
+pub fn append<const CAPACITY: usize>(
+	buf: &mut Vec<u8, CAPACITY>,
+	event: &Event,
+) -> fixed_capacity::Res {
 	let byte_len = event.payload.len();
 	let header_region = Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
@@ -114,9 +117,9 @@ mod tests {
 		) {
 			// Setup
 			let mut rng = rand::thread_rng();
-			let mut buf = Vec::new(256);
-			let origin = Address::new(&mut rng);
-			let id = ID { origin, logical_pos: 0 };
+			let mut buf = Vec::<_, 256>::new();
+			let origin = Addr::new(&mut rng);
+			let id = ID { origin, log_pos: 0 };
 			let event = Event {id, payload: &e};
 
 			// Pre conditions
