@@ -1,6 +1,4 @@
-use hashbrown::HashMap;
-
-use crate::fixvec::FixVec;
+use crate::fixed_capacity::{HashMap, Vec};
 use crate::log_id::LogID;
 
 type DiskOffset = usize;
@@ -9,8 +7,8 @@ type DiskOffset = usize;
 #[derive(Debug)]
 struct Index {
 	// This way I can pre-allocate memory
-	txn_buf: HashMap<LogID, FixVec<DiskOffset>>,
-	actual: HashMap<LogID, FixVec<DiskOffset>>,
+	txn_buf: HashMap<LogID, Vec<DiskOffset>>,
+	actual: HashMap<LogID, Vec<DiskOffset>>,
 }
 
 fn is_consecutive(ns: &[DiskOffset]) -> bool {

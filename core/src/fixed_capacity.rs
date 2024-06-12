@@ -1,29 +1,36 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use core::fmt;
 use core::ops;
 use core::slice::SliceIndex;
 
+/**
+ * Fixed Capacity Data Structures.
+ *
+ * Heavily inspired by Tigerbeetle:
+ * https://tigerbeetle.com/blog/a-database-without-dynamic-memory
+ */
 #[derive(Debug)]
 pub struct Overflow;
 pub type Res = Result<(), Overflow>;
 
-/// Fixed Capacity Vector
-/// Tigerstyle: There IS a limit
-// TODO: why did I make this instead of just wrapping a regular vector?
-pub struct FixVec<T> {
+pub struct HashMap<K, V>(hashbrown::raw::RawTable);
+
+/**
+ * I wrote a 'fresh' implementation, instead of wrapping the std vector.
+ * This is so it could be used in a #[no_std] context
+ */
+pub struct Vec<T> {
 	elems: alloc::boxed::Box<[T]>,
 	len: usize,
 }
 
-impl<T: fmt::Debug> fmt::Debug for FixVec<T> {
+impl<T: fmt::Debug> fmt::Debug for Vec<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_list().entries(self.elems.iter().take(self.len)).finish()
 	}
 }
 
-impl<T: core::default::Default + Clone> FixVec<T> {
-	pub fn new(capacity: usize) -> FixVec<T> {
+impl<T: core::default::Default + Clone> Vec<T> {
+	pub fn new(capacity: usize) -> Vec<T> {
 		let elems = vec![T::default(); capacity].into_boxed_slice();
 		assert_eq!(core::mem::size_of_val(&elems), 16);
 		Self { elems, len: 0 }
@@ -42,7 +49,7 @@ impl<T: core::default::Default + Clone> FixVec<T> {
 	}
 }
 
-impl<T> FixVec<T> {
+impl<T> Vec<T> {
 	#[inline]
 	pub fn capacity(&self) -> usize {
 		self.elems.len()
@@ -109,7 +116,7 @@ impl<T> FixVec<T> {
 	}
 }
 
-impl<T: Copy> FixVec<T> {
+impl<T: Copy> Vec<T> {
 	pub fn extend_from_slice(&mut self, other: &[T]) -> Res {
 		let new_len = self.len + other.len();
 		self.check_capacity(new_len)?;
@@ -119,7 +126,7 @@ impl<T: Copy> FixVec<T> {
 	}
 }
 
-impl<T> ops::Deref for FixVec<T> {
+impl<T> ops::Deref for Vec<T> {
 	type Target = [T];
 
 	fn deref(&self) -> &Self::Target {
@@ -127,17 +134,28 @@ impl<T> ops::Deref for FixVec<T> {
 	}
 }
 
-impl<T> ops::DerefMut for FixVec<T> {
+impl<T> ops::DerefMut for Vec<T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.elems[..self.len]
 	}
 }
 
-impl AsRef<[u8]> for FixVec<u8> {
+impl AsRef<[u8]> for Vec<u8> {
 	fn as_ref(&self) -> &[u8] {
 		&self.elems
 	}
 }
+
+/*
+macro_rules! vec {
+	($($x:expr),*) => {{
+		let len = 0 $(+ { let _ = $x; 1 })*;
+		let mut temp_vec = Vec::new(len);
+		$(temp_vec.push($x);)*
+		temp_vec
+	}};
+}
+*/
 
 #[cfg(test)]
 mod test {
@@ -146,7 +164,7 @@ mod test {
 
 	#[test]
 	fn fixvec_stuff() {
-		let mut fv = FixVec::<u64>::new(8);
+		let mut fv = Vec::<u64>::new(8);
 		assert_eq!(fv.capacity(), 8);
 		assert_eq!(fv.len(), 0);
 
@@ -159,7 +177,7 @@ mod test {
 		assert_eq!(fv.len, 4);
 
 		assert_eq!(
-			fv.into_iter().copied().collect::<Vec<_>>(),
+			fv.into_iter().copied().collect::<alloc::vec::Vec<_>>(),
 			vec![42, 6, 1, 9]
 		);
 	}

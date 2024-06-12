@@ -3,7 +3,7 @@ use fs::OFlags;
 use rustix::fd::AsFd;
 use rustix::{fd, fs, io};
 
-use crate::fixvec::FixVec;
+use crate::fixed_capacity::Vec;
 
 type O = OFlags;
 
@@ -43,7 +43,7 @@ impl Log {
 	/// Returns number of bytes read
 	pub fn read(
 		&self,
-		buf: &mut FixVec<u8>,
+		buf: &mut Vec<u8>,
 		byte_offset: usize,
 	) -> io::Result<()> {
 		let fd = self.0.as_fd();

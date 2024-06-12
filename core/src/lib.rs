@@ -25,7 +25,7 @@ compile_error!("code assumes linux");
 
 mod disk;
 mod event;
-mod fixvec;
+mod fixed_capacity;
 mod index;
 mod log_id;
 mod region;
@@ -36,19 +36,19 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use core::fmt;
 
-use crate::fixvec::FixVec;
+use crate::fixed_capacity::Vec;
 use crate::log_id::LogID;
 use region::Region;
 
 #[derive(Debug)]
-pub struct EnqueueErr(fixvec::Overflow);
+pub struct EnqueueErr(fixed_capacity::Overflow);
 
 #[derive(Debug)]
 pub enum CommitErr {
 	Disk(disk::AppendErr),
 	ReadCache(region::WriteErr),
 	TxnWriteBufHasNoEvents,
-	KeyIndex(fixvec::Overflow),
+	KeyIndex(fixed_capacity::Overflow),
 }
 
 type WriteRes = Result<(), CommitErr>;

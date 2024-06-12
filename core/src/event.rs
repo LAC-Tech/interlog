@@ -1,6 +1,6 @@
 //! Structs for reading and writing events from contiguous bytes.
-use crate::fixvec;
-use crate::fixvec::FixVec;
+use crate::fixed_capacity;
+use crate::fixed_capacity::Vec;
 use crate::log_id::LogID;
 use crate::region::Region;
 
@@ -65,7 +65,7 @@ pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
 	Some(Event { id, payload })
 }
 
-pub fn append(buf: &mut FixVec<u8>, event: &Event) -> fixvec::Res {
+pub fn append(buf: &mut Vec<u8>, event: &Event) -> fixed_capacity::Res {
 	let byte_len = event.payload.len();
 	let header_region = Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
@@ -114,7 +114,7 @@ mod tests {
 		) {
 			// Setup
 			let mut rng = rand::thread_rng();
-			let mut buf = FixVec::new(256);
+			let mut buf = Vec::new(256);
 			let origin = LogID::new(&mut rng);
 			let id = ID { origin, logical_pos: 0 };
 			let event = Event {id, payload: &e};
