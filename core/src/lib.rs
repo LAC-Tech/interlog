@@ -11,7 +11,7 @@
 //! server is out of scope.
 #![feature(iterator_try_reduce)]
 #![cfg_attr(not(test), no_std)]
-
+#![feature(iterator_try_reduce)]
 #[macro_use]
 extern crate alloc;
 
@@ -158,7 +158,7 @@ impl ReadCache {
 
 	fn set_logical_start(&mut self, es: &[u8]) {
 		let first_event = event::read(es, 0).expect("no event found at 0");
-		self.logical_start = first_event.id.logical_pos;
+		self.logical_start = first_event.id.log_pos;
 	}
 
 	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::WriteErr> {

@@ -1,3 +1,5 @@
+use rand::prelude::*;
+
 use crate::event;
 use crate::fixed_capacity::Vec;
 use crate::pervasives::*;
@@ -66,4 +68,13 @@ mod tests {
 	fn positive_consecutive() {
 		assert_eq!(is_consecutive(&[50, 49, 48, 47]), false);
 	}
+
+	#[test]
+	fn f() {
+		let mut rng = thread_rng();
+		let addrs: [Addr; 2] = core::array::from_fn(|_| Addr::new(&mut rng));
+		let eids = [event::ID { origin: addrs[0], log_pos: 0 }];
+	}
+
+	//let index = Index::new();
 }
