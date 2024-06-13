@@ -21,7 +21,7 @@ use crate::region::Region;
 )]
 pub struct ID {
 	/// Replica the event was first recorded at.
-	pub origin: Address,
+	pub origin: Addr,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
 	pub logical_pos: usize,
@@ -115,7 +115,7 @@ mod tests {
 			// Setup
 			let mut rng = rand::thread_rng();
 			let mut buf = Vec::new(256);
-			let origin = Address::new(&mut rng);
+			let origin = Addr::new(&mut rng);
 			let id = ID { origin, logical_pos: 0 };
 			let event = Event {id, payload: &e};
 

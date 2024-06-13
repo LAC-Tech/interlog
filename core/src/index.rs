@@ -2,34 +2,40 @@ use crate::event;
 use crate::fixed_capacity::Vec;
 use crate::pervasives::*;
 
+use hashbrown::HashMap;
+
 // TODO: 'permanent' index, and 'staging' index I can use to calculate if I will commit or not
 #[derive(Debug)]
-struct Index {
-	// This way I can pre-allocate memory
-	txn_buf: Vec<(Address, Vec<DiskOffset>)>,
-	actual: Vec<(Address, Vec<DiskOffset>)>,
-}
+struct Index(HashMap<Addr, Elem>);
 
-impl Index {}
-
-fn is_consecutive(ns: &[DiskOffset]) -> bool {
-	if ns.len() < 2 {
-		return true;
+impl Index {
+	fn new() -> Self {
+		Self(HashMap::new())
 	}
 
-	ns[1..]
-		.iter()
-		.try_fold(ns[0], |prev, &n| (n == prev + 1).then(|| n))
-		.is_some()
+	fn enqueue(&mut self, event_id: event::ID) -> Result<(), ParseErr> {
+		panic!("TODO: implement me")
+	}
+
+	fn commit(&mut self) {
+		panic!("TODO: implement me")
+	}
+}
+
+#[derive(Debug)]
+struct Elem {
+	// This way I can pre-allocate memory
+	txn_buf: Vec<DiskOffset>,
+	actual: Vec<DiskOffset>,
+}
+
+fn is_consecutive(ns: &[LogicalPos]) -> bool {
+	ns.iter().try_reduce(|prev, n| prev.consecutive(*n).then(|| n)).is_some()
 }
 
 enum ParseErr {
-	NonConsecutive(Address),
-	IndexWouldNotStartAtZero(Address),
-}
-
-fn parse_event_ids(eids: &[event::ID]) -> ParseErr {
-	panic!("TODO: implement me")
+	NonConsecutive(Addr),
+	IndexWouldNotStartAtZero(Addr),
 }
 
 #[cfg(test)]

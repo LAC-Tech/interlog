@@ -30,7 +30,6 @@ impl<T: fmt::Debug> fmt::Debug for Vec<T> {
 impl<T: core::default::Default + Clone> Vec<T> {
 	pub fn new(capacity: usize) -> Vec<T> {
 		let elems = vec![T::default(); capacity].into_boxed_slice();
-		assert_eq!(core::mem::size_of_val(&elems), 16);
 		Self { elems, len: 0 }
 	}
 
@@ -51,6 +50,17 @@ impl<T> Vec<T> {
 	#[inline]
 	pub fn capacity(&self) -> usize {
 		self.elems.len()
+	}
+
+	pub fn from_fn<F>(capacity: usize, cb: F) -> Self
+	where
+		F: FnMut(usize) -> T,
+	{
+		let elems = (0..capacity)
+			.map(cb)
+			.collect::<alloc::vec::Vec<_>>()
+			.into_boxed_slice();
+		Self { elems, len: 0 }
 	}
 
 	#[inline]
