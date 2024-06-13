@@ -17,12 +17,12 @@ pub type Res = Result<(), Overflow>;
  * This is so it could be used in a #[no_std] context
  */
 #[derive(Clone)]
-pub struct Vec<T, const CAPACITY: usize> {
-	elems: alloc::boxed::Box<[T; CAPACITY]>,
+pub struct Vec<T> {
+	elems: alloc::boxed::Box<[T]>,
 	len: usize,
 }
 
-impl<T: fmt::Debug, const CAPACITY: usize> fmt::Debug for Vec<T, CAPACITY> {
+impl<T: fmt::Debug> fmt::Debug for Vec<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_list().entries(self.elems.iter().take(self.len)).finish()
 	}
@@ -32,12 +32,6 @@ impl<T: core::default::Default + Clone> Vec<T> {
 	pub fn new(capacity: usize) -> Vec<T> {
 		let elems = vec![T::default(); capacity].into_boxed_slice();
 		Self { elems, len: 0 }
-	}
-
-	pub fn from_fn<T, const N: usize, F>(cb: F) -> Self
-	where
-		F: FnMut(usize) -> T,
-	{
 	}
 
 	pub fn resize(&mut self, new_len: usize) -> Res {
@@ -81,7 +75,7 @@ impl<T> Vec<T> {
 	}
 
 	fn check_capacity(&self, new_len: usize) -> Res {
-		(CAPACITY >= new_len).then_some(()).ok_or(Overflow)
+		(self.capacity() >= new_len).then_some(()).ok_or(Overflow)
 	}
 
 	pub fn push(&mut self, value: T) -> Res {
@@ -131,7 +125,7 @@ impl<T> Vec<T> {
 	}
 }
 
-impl<T: Copy, const CAPACITY: usize> Vec<T, CAPACITY> {
+impl<T: Copy> Vec<T> {
 	pub fn extend_from_slice(&mut self, other: &[T]) -> Res {
 		let new_len = self.len + other.len();
 		self.check_capacity(new_len)?;
@@ -141,7 +135,7 @@ impl<T: Copy, const CAPACITY: usize> Vec<T, CAPACITY> {
 	}
 }
 
-impl<T, const CAPACITY: usize> ops::Deref for Vec<T, CAPACITY> {
+impl<T> ops::Deref for Vec<T> {
 	type Target = [T];
 
 	fn deref(&self) -> &Self::Target {
@@ -149,14 +143,14 @@ impl<T, const CAPACITY: usize> ops::Deref for Vec<T, CAPACITY> {
 	}
 }
 
-impl<T, const CAPACITY: usize> ops::DerefMut for Vec<T, CAPACITY> {
+impl<T> ops::DerefMut for Vec<T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.elems[..self.len]
 	}
 }
 
-impl<const CAPACITY: usize> AsRef<[u8; CAPACITY]> for Vec<u8, CAPACITY> {
-	fn as_ref(&self) -> &[u8; CAPACITY] {
+impl AsRef<[u8]> for Vec<u8> {
+	fn as_ref(&self) -> &[u8] {
 		&self.elems
 	}
 }

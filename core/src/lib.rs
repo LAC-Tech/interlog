@@ -11,7 +11,6 @@
 //! server is out of scope.
 #![feature(iterator_try_reduce)]
 #![cfg_attr(not(test), no_std)]
-#![feature(iterator_try_reduce)]
 #[macro_use]
 extern crate alloc;
 

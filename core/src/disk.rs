@@ -41,9 +41,9 @@ impl Log {
 	}
 
 	/// Returns number of bytes read
-	pub fn read<const CAPACITY: usize>(
+	pub fn read(
 		&self,
-		buf: &mut Vec<u8, CAPACITY>,
+		buf: &mut Vec<u8>,
 		byte_offset: usize,
 	) -> io::Result<()> {
 		let fd = self.0.as_fd();

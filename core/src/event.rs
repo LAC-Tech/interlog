@@ -65,10 +65,7 @@ pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
 	Some(Event { id, payload })
 }
 
-pub fn append<const CAPACITY: usize>(
-	buf: &mut Vec<u8, CAPACITY>,
-	event: &Event,
-) -> fixed_capacity::Res {
+pub fn append(buf: &mut Vec<u8>, event: &Event) -> fixed_capacity::Res {
 	let byte_len = event.payload.len();
 	let header_region = Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
