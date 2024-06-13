@@ -1,7 +1,7 @@
 //! Module exists purely to prevent circular dependency.
 
 use core::fmt;
-use derive_more::Add;
+use derive_more::{Add, Into};
 use rand::prelude::*;
 
 /// This was originally u128, but I changed it to keep the alignment to 0x8
@@ -12,6 +12,7 @@ use rand::prelude::*;
 	Copy,
 	Default,
 	Eq,
+	Hash,
 	PartialEq,
 	PartialOrd,
 	Ord,
@@ -37,8 +38,14 @@ impl fmt::Debug for Addr {
 	}
 }
 
-#[derive(Add, Debug, PartialEq)]
+#[derive(Add, Clone, Debug, Default, Into, PartialEq)]
 pub struct DiskOffset(usize);
+
+impl DiskOffset {
+	pub fn is_initial(&self) -> bool {
+		self.0 == 0
+	}
+}
 
 #[derive(Add, Clone, Copy, Debug, PartialEq)]
 pub struct LogicalPos(usize);

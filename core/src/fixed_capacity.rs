@@ -47,6 +47,13 @@ impl<T: core::default::Default + Clone> Vec<T> {
 	}
 }
 
+impl<T: Clone> Vec<T> {
+	pub fn from_elem(elem: T, capacity: usize) -> Self {
+		let elems = vec![elem; capacity].into_boxed_slice();
+		Self { elems, len: 1 }
+	}
+}
+
 impl<T> Vec<T> {
 	#[inline]
 	pub fn capacity(&self) -> usize {
