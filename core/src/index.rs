@@ -26,7 +26,7 @@ pub struct Index {
 /// In-memory mapping of event IDs to disk offsets
 /// This keeps the following invariants:
 /// - events must be stored consecutively per address
-/// This effectively stores the Causal Histories over every addr
+/// This effectively stores the causal histories over every addr
 impl Index {
 	pub fn new(capacities: Capacities) -> Self {
 		// TODO: HOW MANY ADDRS WILL I HAVE?
@@ -90,6 +90,15 @@ impl Index {
 		for Elem { txn, .. } in self.map.values_mut() {
 			txn.clear()
 		}
+	}
+
+	pub fn get(&self, event_id: event::ID) -> Option<DiskOffset> {
+		let result = self.map.get(&event_id.origin).and_then(|elem| {
+			let i: usize = event_id.log_pos.into();
+			elem.actual.get(i)
+		});
+
+		result.cloned()
 	}
 }
 

@@ -35,6 +35,7 @@ use alloc::string::String;
 use core::fmt;
 
 use crate::fixed_capacity::Vec;
+use crate::index::*;
 use crate::pervasives::*;
 use region::Region;
 
@@ -220,37 +221,6 @@ impl Storage {
 	}
 }
 
-/*
-#[derive(Debug)]
-struct KeyIndex(FixVec<usize>);
-
-impl KeyIndex {
-	fn new(max_origins: usize, max_events_per_origin: usize) -> Self {
-		Self(
-			(0..max_origins)
-				.map(|_| FixVec::new(max_events_per_origin))
-				.collect(),
-		)
-	}
-
-	fn event_count(&self) -> usize {
-		// TODO: sum for every origin
-		self.0.len()
-	}
-
-	fn add(&mut self, disk_offset: usize) -> fixvec::Res {
-		if self.0.last().is_some_and(|&last| last >= disk_offset) {
-			panic!("Expected this to be monotonic")
-		}
-		self.0.push(disk_offset)
-	}
-
-	fn get(&self, logical: usize) -> Option<usize> {
-		self.0.get(logical).cloned()
-	}
-}
-*/
-
 pub struct Config {
 	pub read_cache_capacity: usize,
 	pub key_index_capacity: usize,
@@ -258,10 +228,9 @@ pub struct Config {
 	pub disk_read_buf_capacity: usize,
 }
 
-/*
 #[derive(Debug)]
 struct Log {
-	id: LogID,
+	addr: Addr,
 	/// Still counts as "static allocation" as only allocating in constructor
 	path: String,
 	/// Abstract storage of log, hiding details of any caching
@@ -271,28 +240,28 @@ struct Log {
 	/// The entire index in memory, like bitcask's KeyDir
 	/// Maps logical indices to disk offsets
 	/// Eventully there will be a map of these, one per origin ID.
-	key_index: KeyIndex,
+	index: Index,
 	/// This stores all the events w/headers, contiguously, which means only
 	/// one syscall is required to write to disk.
-	txn_write_buf: FixVec<u8>,
+	txn_write_buf: Vec<u8>,
 	/// Written to when a value is not in the read_cache
-	disk_read_buf: FixVec<u8>,
+	disk_read_buf: Vec<u8>,
 }
 
 pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
-	let id = LogID::new(&mut rand::thread_rng());
+	let id = Log::new(&mut rand::thread_rng());
 	let path = format!("{dir_path}/{id}");
 	let disk = disk::Log::open(&path)?;
 	let read_cache = ReadCache::new(config.read_cache_capacity);
 
 	Ok(Log {
-		id,
+		addr: id,
 		path,
 		storage: Storage { disk, read_cache },
 		byte_len: 0,
-		key_index: KeyIndex::new(config.key_index_capacity),
-		txn_write_buf: FixVec::new(config.txn_write_buf_capacity),
-		disk_read_buf: FixVec::new(config.disk_read_buf_capacity),
+		key_index: Index::new(config.key_index_capacity),
+		txn_write_buf: Vec::new(config.txn_write_buf_capacity),
+		disk_read_buf: Vec::new(config.disk_read_buf_capacity),
 	})
 }
 
@@ -300,7 +269,7 @@ impl Log {
 	// Based on FasterLog API
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let logical_pos = self.key_index.event_count();
-		let id = event::ID { origin: self.id, logical_pos };
+		let id = event::ID { origin: self.addr, logical_pos };
 		let e = event::Event { id, payload };
 
 		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
@@ -330,11 +299,11 @@ impl Log {
 
 	pub fn read(&mut self, logical_pos: usize) -> Option<event::Event<'_>> {
 		let byte_cache_start =
-			self.key_index.get(self.storage.read_cache.logical_start)?;
+			self.index.get(self.storage.read_cache.logical_start)?;
 
-		let byte_pos = self.key_index.get(logical_pos)?;
+		let byte_pos = self.index.get(logical_pos)?;
 
-		let next_byte_pos = self.key_index.get(logical_pos + 1)?;
+		let next_byte_pos = self.index.get(logical_pos + 1)?;
 
 		match byte_pos.checked_sub(byte_cache_start) {
 			Some(relative_byte_pos) => {
@@ -406,7 +375,6 @@ mod tests {
 		);
 	}
 
-	/*
 	proptest! {
 		// TODO: change stream max to reveal bugs
 		#[test]
@@ -438,6 +406,4 @@ mod tests {
 			}
 		}
 	}
-	*/
 }
-*/
