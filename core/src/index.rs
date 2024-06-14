@@ -139,52 +139,52 @@ mod tests {
 	#[test]
 	fn non_consecutive() {
 		let mut rng = thread_rng();
-		let addrs: [Addr; 1] = addresses(&mut rng);
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(2, 8);
 
-		let res = index.enqueue(event::ID::new(addrs[0], 0), 0);
-		assert_eq!(res, Ok(()));
+		let actual = index.enqueue(event::ID::new(addr, 0), 0);
+		assert_eq!(actual, Ok(()));
 
-		let res = index.enqueue(event::ID::new(addrs[0], 34), 0);
-		assert_eq!(res, Err(EnqueueErr::NonConsecutivePos));
+		let actual = index.enqueue(event::ID::new(addr, 34), 0);
+		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
 	}
 
 	#[test]
 	fn index_would_not_start_at_zero() {
 		let mut rng = thread_rng();
-		let addrs: [Addr; 1] = addresses(&mut rng);
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(2, 8);
 
-		let res = index.enqueue(event::ID::new(addrs[0], 42), 0);
-		assert_eq!(res, Err(EnqueueErr::IndexWouldNotStartAtZero));
+		let actual = index.enqueue(event::ID::new(addr, 42), 0);
+		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
 	}
 
 	#[test]
 	fn overlow() {
 		let mut rng = thread_rng();
-		let addrs: [Addr; 1] = addresses(&mut rng);
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(1, 8);
 
-		let res = index.enqueue(event::ID::new(addrs[0], 0), 0);
-		assert_eq!(res, Ok(()));
+		let actual = index.enqueue(event::ID::new(addr, 0), 0);
+		assert_eq!(actual, Ok(()));
 
-		let res = index.enqueue(event::ID::new(addrs[0], 1), 1);
-		assert_eq!(res, Err(EnqueueErr::Overflow));
+		let actual = index.enqueue(event::ID::new(addr, 1), 1);
+		assert_eq!(actual, Err(EnqueueErr::Overflow));
 	}
 
 	#[test]
 	fn not_enough_space() {
 		let mut rng = thread_rng();
-		let addrs: [Addr; 1] = addresses(&mut rng);
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(2, 1);
 
-		let res = index.enqueue(event::ID::new(addrs[0], 0), 0);
-		assert_eq!(res, Ok(()));
+		let actual = index.enqueue(event::ID::new(addr, 0), 0);
+		assert_eq!(actual, Ok(()));
 
-		let res = index.enqueue(event::ID::new(addrs[0], 1), 1);
-		assert_eq!(res, Ok(()));
+		let actual = index.enqueue(event::ID::new(addr, 1), 1);
+		assert_eq!(actual, Ok(()));
 
-		let res = index.commit();
-		assert_eq!(res, Err(CommitErr::NotEnoughSpace))
+		let actual = index.commit();
+		assert_eq!(actual, Err(CommitErr::NotEnoughSpace))
 	}
 }
