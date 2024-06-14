@@ -27,5 +27,5 @@ pub fn arb_local_events_stream(
 }
 
 pub fn addresses<R: Rng, const LEN: usize>(rng: &mut R) -> [Addr; LEN] {
-	core::array::from_fn(|_| Addr::new(rng))
+	core::array::from_fn(|_| Addr::new(rng.gen()))
 }

@@ -21,8 +21,8 @@ use rand::prelude::*;
 pub struct Addr([u64; 2]);
 
 impl Addr {
-	pub fn new<R: Rng>(rng: &mut R) -> Self {
-		Self(rng.gen())
+	pub fn new(rand_data: [u64; 2]) -> Self {
+		Self(rand_data)
 	}
 }
 

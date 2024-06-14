@@ -121,7 +121,7 @@ mod tests {
 			// Setup
 			let mut rng = rand::thread_rng();
 			let mut buf = Vec::new(256);
-			let origin = Addr::new(&mut rng);
+			let origin = Addr::new(rng.gen());
 			let id = ID::new(origin, LogPos(0));
 			let event = Event {id, payload: &e};
 

@@ -139,7 +139,7 @@ mod tests {
 	#[test]
 	fn non_consecutive() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(&mut rng);
+		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
 		let actual = index.enqueue(event::ID::new(addr, 0), 0);
@@ -152,7 +152,7 @@ mod tests {
 	#[test]
 	fn index_would_not_start_at_zero() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(&mut rng);
+		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
 		let actual = index.enqueue(event::ID::new(addr, 42), 0);
@@ -162,7 +162,7 @@ mod tests {
 	#[test]
 	fn overlow() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(&mut rng);
+		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(1, 8);
 
 		let actual = index.enqueue(event::ID::new(addr, 0), 0);
@@ -175,7 +175,7 @@ mod tests {
 	#[test]
 	fn not_enough_space() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(&mut rng);
+		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 1);
 
 		let actual = index.enqueue(event::ID::new(addr, 0), 0);
