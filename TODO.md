@@ -1,8 +1,6 @@
 # Top = TODO first
 
-- new fixed capacity module
-- HashMap written in terms of RawTable from hashbrown
-- validate IDs in Index
+- Write 'sanity check' tests for Index, try and trigger every error
 - Group all "storage" operations in one struct
 - In memory storage implementation
 - Start doing deterministic simulation testing

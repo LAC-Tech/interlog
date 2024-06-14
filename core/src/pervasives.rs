@@ -38,6 +38,7 @@ impl fmt::Debug for Addr {
 	}
 }
 
+/// Byte position of an event, on disk
 #[derive(Add, Clone, Copy, Debug, Default, Into, PartialEq)]
 pub struct DiskOffset(usize);
 
@@ -47,6 +48,7 @@ impl DiskOffset {
 	}
 }
 
+/// Logical Position of the event on the log, ie the 'nth' event
 #[derive(Add, Clone, Copy, Debug, From, PartialEq)]
 pub struct LogPos(usize);
 

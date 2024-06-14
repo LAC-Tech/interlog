@@ -288,7 +288,7 @@ impl Log {
 		// Disk offsets recorded in the Key Index always lag behind by one
 		let mut disk_offset = self.byte_len;
 		for e in event::View::new(&self.txn_write_buf) {
-			self.key_index.add(disk_offset).map_err(CommitErr::KeyIndex)?;
+			self.index.add(disk_offset).map_err(CommitErr::KeyIndex)?;
 			disk_offset += e.on_disk_size();
 		}
 
