@@ -187,4 +187,24 @@ mod tests {
 		let actual = index.commit();
 		assert_eq!(actual, Err(CommitErr::NotEnoughSpace))
 	}
+
+	proptest! {
+		#[test]
+		fn txn_either_succeeds_or_fails(
+			vs in proptest::collection::vec(
+				(arb_addr(), arb_log_pos(), arb_disk_offset()),
+				0..1000),
+			txn_events_per_addr in any::<usize>(),
+			actual_events_per_addr in any::<usize>()
+
+		){
+			let mut index = Index::new(txn_events_per_addr, actual_events_per_addr);
+
+			for (addr, log_pos, disk_offset) in vs {
+				index.enqueue(event::ID::new(addr, log_pos), disk_offset);
+			}
+
+		}
+
+	}
 }
