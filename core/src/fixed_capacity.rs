@@ -8,7 +8,7 @@ use core::slice::SliceIndex;
  * Heavily inspired by Tigerbeetle:
  * https://tigerbeetle.com/blog/a-database-without-dynamic-memory
  */
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Overflow;
 pub type Res = Result<(), Overflow>;
 

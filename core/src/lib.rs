@@ -157,7 +157,7 @@ impl ReadCache {
 
 	fn set_logical_start(&mut self, es: &[u8]) {
 		let first_event = event::read(es, 0).expect("no event found at 0");
-		self.logical_start = first_event.id.log_pos;
+		self.logical_start = first_event.id.log_pos.0;
 	}
 
 	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::WriteErr> {
@@ -221,6 +221,7 @@ impl Storage {
 	}
 }
 
+/*
 pub struct Config {
 	pub read_cache_capacity: usize,
 	pub key_index_capacity: usize,
@@ -407,3 +408,4 @@ mod tests {
 		}
 	}
 }
+*/

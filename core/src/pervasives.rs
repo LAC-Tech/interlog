@@ -39,8 +39,8 @@ impl fmt::Debug for Addr {
 }
 
 /// Byte position of an event, on disk
-#[derive(Add, Clone, Copy, Debug, Default, Into, PartialEq)]
-pub struct DiskOffset(usize);
+#[derive(Add, Clone, Copy, Debug, Default, From, PartialEq, PartialOrd)]
+pub struct DiskOffset(pub usize);
 
 impl DiskOffset {
 	pub fn is_initial(&self) -> bool {
@@ -49,8 +49,21 @@ impl DiskOffset {
 }
 
 /// Logical Position of the event on the log, ie the 'nth' event
-#[derive(Add, Clone, Copy, Debug, From, PartialEq)]
-pub struct LogPos(usize);
+#[derive(
+	Add,
+	Clone,
+	Copy,
+	Debug,
+	Eq,
+	From,
+	PartialOrd,
+	Ord,
+	PartialEq,
+	bytemuck::Pod,
+	bytemuck::Zeroable,
+)]
+#[repr(transparent)]
+pub struct LogPos(pub usize);
 
 impl LogPos {
 	pub fn consecutive(self, n: Self) -> bool {

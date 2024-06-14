@@ -2,6 +2,8 @@
 use alloc::vec::Vec;
 use proptest::prelude::*;
 
+use crate::pervasives::*;
+
 // TODO: too many allocations. Make a liffe vector implementation
 pub fn arb_local_events(
 	outer_max: usize,
@@ -22,4 +24,8 @@ pub fn arb_local_events_stream(
 		arb_local_events(outer_max, inner_max),
 		0..=stream_max,
 	)
+}
+
+pub fn addresses<R: Rng, const LEN: usize>(rng: &mut R) -> [Addr; LEN] {
+	core::array::from_fn(|_| Addr::new(rng))
 }

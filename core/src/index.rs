@@ -7,9 +7,7 @@ use hashbrown::HashMap;
 
 #[derive(Debug)]
 pub struct Capacities {
-	pub addrs: usize,
-	pub txn_events_per_addr: usize,
-	pub actual_events_per_addr: usize,
+	// pub addrs: usize,
 }
 
 #[derive(Debug)]
@@ -20,44 +18,58 @@ struct Elem {
 
 #[derive(Debug)]
 pub struct Index {
+	// TODO: fixed size hashmap
 	map: HashMap<Addr, Elem>,
-	capacities: Capacities,
+	txn_events_per_addr: usize,
+	actual_events_per_addr: usize,
 }
 /// In-memory mapping of event IDs to disk offsets
 /// This keeps the following invariants:
 /// - events must be stored consecutively per address
 /// This effectively stores the causal histories over every addr
 impl Index {
-	pub fn new(capacities: Capacities) -> Self {
+	pub fn new(
+		txn_events_per_addr: usize,
+		actual_events_per_addr: usize,
+	) -> Self {
 		// TODO: HOW MANY ADDRS WILL I HAVE?
-		Self { map: HashMap::new(), capacities }
+		Self {
+			map: HashMap::new(),
+			txn_events_per_addr,
+			actual_events_per_addr,
+		}
 	}
 
-	pub fn enqueue(
+	pub fn enqueue<D: Into<DiskOffset>>(
 		&mut self,
 		event_id: event::ID,
-		disk_offset: DiskOffset,
+		disk_offset: D,
 	) -> Result<(), EnqueueErr> {
+		let disk_offset: DiskOffset = disk_offset.into();
 		match self.map.get_mut(&event_id.origin) {
 			Some(existing) => {
-				if existing.txn.len() == event_id.log_pos.into() {
-					existing.txn.push(disk_offset).map_err(EnqueueErr::Overflow)
-				} else {
-					Err(EnqueueErr::NonConsecutive)
+				if existing.txn.len() != event_id.log_pos.0 {
+					return Err(EnqueueErr::NonConsecutivePos);
 				}
+
+				if let Some(last_offset) = existing.txn.last() {
+					if *last_offset >= disk_offset {
+						panic!("non-monotonic disk offset")
+					}
+				}
+
+				existing.txn.push(disk_offset).map_err(|err| match err {
+					fixed_capacity::Overflow => EnqueueErr::Overflow,
+				})
 			}
 			None => {
-				if !disk_offset.is_initial() {
+				if event_id.log_pos.0 != 0 {
 					return Err(EnqueueErr::IndexWouldNotStartAtZero);
 				}
 
 				let new_elem = Elem {
-					txn: Vec::from_elem(
-						disk_offset,
-						self.capacities.txn_events_per_addr,
-					),
-
-					actual: Vec::new(self.capacities.actual_events_per_addr),
+					txn: Vec::from_elem(disk_offset, self.txn_events_per_addr),
+					actual: Vec::new(self.actual_events_per_addr),
 				};
 
 				self.map.insert(event_id.origin, new_elem);
@@ -93,21 +105,23 @@ impl Index {
 	}
 
 	pub fn get(&self, event_id: event::ID) -> Option<DiskOffset> {
-		let result = self.map.get(&event_id.origin).and_then(|elem| {
-			let i: usize = event_id.log_pos.into();
-			elem.actual.get(i)
-		});
+		let result = self
+			.map
+			.get(&event_id.origin)
+			.and_then(|elem| elem.actual.get(event_id.log_pos.0));
 
 		result.cloned()
 	}
 }
 
+#[derive(Debug, PartialEq)]
 pub enum EnqueueErr {
-	NonConsecutive,
+	NonConsecutivePos,
 	IndexWouldNotStartAtZero,
-	Overflow(fixed_capacity::Overflow),
+	Overflow,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum CommitErr {
 	NotEnoughSpace,
 }
@@ -115,15 +129,62 @@ pub enum CommitErr {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	//use crate::test_utils::*;
+	use crate::test_utils::*;
 	use pretty_assertions::assert_eq;
 	use proptest::prelude::*;
+	use rand::prelude::*;
+
+	// Sanity check unit tests - trigger every error
 
 	#[test]
-	fn f() {
+	fn non_consecutive() {
 		let mut rng = thread_rng();
-		let addrs: [Addr; 2] = core::array::from_fn(|_| Addr::new(&mut rng));
+		let addrs: [Addr; 1] = addresses(&mut rng);
+		let mut index = Index::new(2, 8);
+
+		let res = index.enqueue(event::ID::new(addrs[0], 0), 0);
+		assert_eq!(res, Ok(()));
+
+		let res = index.enqueue(event::ID::new(addrs[0], 34), 0);
+		assert_eq!(res, Err(EnqueueErr::NonConsecutivePos));
 	}
 
-	//let index = Index::new();
+	#[test]
+	fn index_would_not_start_at_zero() {
+		let mut rng = thread_rng();
+		let addrs: [Addr; 1] = addresses(&mut rng);
+		let mut index = Index::new(2, 8);
+
+		let res = index.enqueue(event::ID::new(addrs[0], 42), 0);
+		assert_eq!(res, Err(EnqueueErr::IndexWouldNotStartAtZero));
+	}
+
+	#[test]
+	fn overlow() {
+		let mut rng = thread_rng();
+		let addrs: [Addr; 1] = addresses(&mut rng);
+		let mut index = Index::new(1, 8);
+
+		let res = index.enqueue(event::ID::new(addrs[0], 0), 0);
+		assert_eq!(res, Ok(()));
+
+		let res = index.enqueue(event::ID::new(addrs[0], 1), 1);
+		assert_eq!(res, Err(EnqueueErr::Overflow));
+	}
+
+	#[test]
+	fn not_enough_space() {
+		let mut rng = thread_rng();
+		let addrs: [Addr; 1] = addresses(&mut rng);
+		let mut index = Index::new(2, 1);
+
+		let res = index.enqueue(event::ID::new(addrs[0], 0), 0);
+		assert_eq!(res, Ok(()));
+
+		let res = index.enqueue(event::ID::new(addrs[0], 1), 1);
+		assert_eq!(res, Ok(()));
+
+		let res = index.commit();
+		assert_eq!(res, Err(CommitErr::NotEnoughSpace))
+	}
 }

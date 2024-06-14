@@ -24,7 +24,13 @@ pub struct ID {
 	pub origin: Addr,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
-	pub log_pos: usize,
+	pub log_pos: LogPos,
+}
+
+impl ID {
+	pub fn new<LP: Into<LogPos>>(origin: Addr, log_pos: LP) -> Self {
+		Self { origin, log_pos: log_pos.into() }
+	}
 }
 
 /// This is written before every event in the log, and allows reading out
@@ -116,7 +122,7 @@ mod tests {
 			let mut rng = rand::thread_rng();
 			let mut buf = Vec::new(256);
 			let origin = Addr::new(&mut rng);
-			let id = ID { origin, logical_pos: 0 };
+			let id = ID::new(origin, LogPos(0));
 			let event = Event {id, payload: &e};
 
 			// Pre conditions
