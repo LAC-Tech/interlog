@@ -26,6 +26,18 @@ pub fn arb_local_events_stream(
 	)
 }
 
+pub fn arb_addr() -> impl Strategy<Value = Addr> {
+	(any::<u64>(), any::<u64>()).prop_map(|(a, b)| Addr::new([a, b]))
+}
+
+pub fn arb_log_pos() -> impl Strategy<Value = LogPos> {
+	any::<usize>().prop_map(|n| LogPos(n))
+}
+
+pub fn arb_disk_offset() -> impl Strategy<Value = DiskOffset> {
+	any::<usize>().prop_map(|n| DiskOffset(n))
+}
+
 pub fn addresses<R: Rng, const LEN: usize>(rng: &mut R) -> [Addr; LEN] {
 	core::array::from_fn(|_| Addr::new(rng.gen()))
 }
