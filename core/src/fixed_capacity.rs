@@ -112,23 +112,13 @@ impl<T> Vec<T> {
 		self.elems[..self.len].get(index)
 	}
 
-	fn last1(&self) -> Option<&T> {
+	fn last(&self) -> Option<&T> {
 		self.len.checked_sub(1).and_then(|i| self.elems.get(i))
 	}
 
-	fn last2(&self) -> Option<&T> {
-		match self.len {
-			0 => None,
-			n => self.elems.get(n - 1),
-		}
-	}
-
-	fn last3(&self) -> Option<&T> {
-		if self.len == 0 {
-			None
-		} else {
-			self.elems.get(self.len - 1)
-		}
+	pub fn can_be_extended_by(&self, other: &[T]) -> bool {
+		let new_len = self.len + other.len();
+		self.check_capacity(new_len).is_ok()
 	}
 }
 

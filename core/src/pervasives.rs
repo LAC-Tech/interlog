@@ -38,7 +38,7 @@ impl fmt::Debug for Addr {
 	}
 }
 
-#[derive(Add, Clone, Debug, Default, Into, PartialEq)]
+#[derive(Add, Clone, Copy, Debug, Default, Into, PartialEq)]
 pub struct DiskOffset(usize);
 
 impl DiskOffset {
