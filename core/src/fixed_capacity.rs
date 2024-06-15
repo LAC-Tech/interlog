@@ -16,7 +16,7 @@ pub type Res = Result<(), Overflow>;
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
  * This is so it could be used in a #[no_std] context
  */
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Vec<T> {
 	elems: alloc::boxed::Box<[T]>,
 	len: usize,

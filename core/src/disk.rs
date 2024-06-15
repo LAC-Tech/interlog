@@ -4,6 +4,7 @@ use rustix::fd::AsFd;
 use rustix::{fd, fs, io};
 
 use crate::fixed_capacity::Vec;
+use crate::mem;
 
 type O = OFlags;
 
@@ -25,7 +26,7 @@ impl Log {
 
 	pub fn append<B>(&self, bytes: B) -> Result<usize, AppendErr>
 	where
-		B: AsRef<[u8]>,
+		B: AsRef<[mem::Word]>,
 	{
 		let bytes = bytes.as_ref();
 		let fd = self.0.as_fd();
@@ -43,7 +44,7 @@ impl Log {
 	/// Returns number of bytes read
 	pub fn read(
 		&self,
-		buf: &mut Vec<u8>,
+		buf: &mut Vec<mem::Word>,
 		byte_offset: usize,
 	) -> io::Result<()> {
 		let fd = self.0.as_fd();

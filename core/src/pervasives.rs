@@ -39,7 +39,19 @@ impl fmt::Debug for Addr {
 }
 
 /// Byte position of an event, on disk
-#[derive(Add, Clone, Copy, Debug, Default, From, PartialEq, PartialOrd)]
+#[derive(
+	Add,
+	Clone,
+	Copy,
+	Debug,
+	Default,
+	From,
+	PartialEq,
+	PartialOrd,
+	bytemuck::Pod,
+	bytemuck::Zeroable,
+)]
+#[repr(transparent)]
 pub struct DiskOffset(pub usize);
 
 impl DiskOffset {

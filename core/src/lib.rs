@@ -21,12 +21,13 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
+mod actor;
 mod disk;
 mod event;
 mod fixed_capacity;
 mod index;
+mod mem;
 mod pervasives;
-mod region;
 #[cfg(test)]
 mod test_utils;
 
@@ -37,7 +38,7 @@ use core::fmt;
 use crate::fixed_capacity::Vec;
 use crate::index::*;
 use crate::pervasives::*;
-use region::Region;
+use mem::Region;
 
 #[derive(Debug)]
 pub struct EnqueueErr(fixed_capacity::Overflow);
@@ -45,7 +46,7 @@ pub struct EnqueueErr(fixed_capacity::Overflow);
 #[derive(Debug)]
 pub enum CommitErr {
 	Disk(disk::AppendErr),
-	ReadCache(region::WriteErr),
+	ReadCache(mem::WriteErr),
 	TxnWriteBufHasNoEvents,
 	KeyIndex(fixed_capacity::Overflow),
 }
@@ -81,7 +82,7 @@ type WriteRes = Result<(), CommitErr>;
 /// As more events are added, they will be appended after B, overwriting the
 /// bottom segment, til it wraps round again.
 struct ReadCache {
-	mem: Box<[u8]>,
+	mem: Box<[mem::Word]>,
 	/// Everything above this is in this cache
 	logical_start: usize,
 	a: Region,
@@ -109,9 +110,9 @@ impl ReadCache {
 
 	fn extend(
 		region: &mut Region,
-		dest: &mut [u8],
-		src: &[u8],
-	) -> Result<(), region::WriteErr> {
+		dest: &mut [mem::Word],
+		src: &[mem::Word],
+	) -> Result<(), mem::WriteErr> {
 		let extension = Region::new(region.len, src.len());
 
 		extension.write(dest, src)?;
@@ -123,7 +124,7 @@ impl ReadCache {
 		self.b.end() > self.a.pos
 	}
 
-	fn update(&mut self, es: &[u8]) -> WriteRes {
+	fn update(&mut self, es: &[mem::Word]) -> WriteRes {
 		let result = match (self.a.empty(), self.b.empty()) {
 			(true, true) => {
 				self.set_logical_start(es);
@@ -132,7 +133,7 @@ impl ReadCache {
 			(false, true) => match Self::extend(&mut self.a, &mut self.mem, es)
 			{
 				Ok(()) => Ok(()),
-				Err(region::WriteErr) => self.wrap_around(es),
+				Err(mem::WriteErr) => self.wrap_around(es),
 			},
 			(_, false) => self.wrap_around(es),
 		};
@@ -155,12 +156,12 @@ impl ReadCache {
 		return event::read(self.read_b(), relative_byte_pos);
 	}
 
-	fn set_logical_start(&mut self, es: &[u8]) {
+	fn set_logical_start(&mut self, es: &[mem::Word]) {
 		let first_event = event::read(es, 0).expect("no event found at 0");
 		self.logical_start = first_event.id.log_pos.0;
 	}
 
-	fn wrap_around(&mut self, es: &[u8]) -> Result<(), region::WriteErr> {
+	fn wrap_around(&mut self, es: &[mem::Word]) -> Result<(), mem::WriteErr> {
 		match self.new_a_pos(es) {
 			// Truncate A and write to B
 			Some(new_a_pos) => {
@@ -176,7 +177,7 @@ impl ReadCache {
 					Ok(()) => Ok(()),
 					// the new A cannot fit, erase it.
 					// would not occur with buf size 2x or more max event size
-					Err(region::WriteErr) => {
+					Err(mem::WriteErr) => {
 						self.a = Region::ZERO;
 						self.set_logical_start(es);
 						Self::extend(&mut self.a, self.mem.as_mut(), es)
@@ -186,7 +187,7 @@ impl ReadCache {
 		}
 	}
 
-	fn new_a_pos(&self, es: &[u8]) -> Option<usize> {
+	fn new_a_pos(&self, es: &[mem::Word]) -> Option<usize> {
 		let new_b_end = self.b.end() + es.len();
 		event::View::new(self.read_a())
 			.scan(0, |offset, e| {
@@ -196,11 +197,11 @@ impl ReadCache {
 			.find(|&offset| offset > new_b_end)
 	}
 
-	fn read_a(&self) -> &[u8] {
+	fn read_a(&self) -> &[mem::Word] {
 		self.a.read(&self.mem).expect("a range to be correct")
 	}
 
-	fn read_b(&self) -> &[u8] {
+	fn read_b(&self) -> &[mem::Word] {
 		self.b.read(&self.mem).expect("b range to be correct")
 	}
 }
@@ -212,7 +213,10 @@ pub struct Storage {
 }
 
 impl Storage {
-	fn persist(&mut self, txn_write_buf: &[u8]) -> Result<usize, CommitErr> {
+	fn persist(
+		&mut self,
+		txn_write_buf: &[mem::Word],
+	) -> Result<usize, CommitErr> {
 		let bytes_flushed =
 			self.disk.append(txn_write_buf).map_err(CommitErr::Disk)?;
 		self.read_cache.update(txn_write_buf)?;

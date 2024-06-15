@@ -7,6 +7,8 @@ pub struct Region {
 #[derive(Debug)]
 pub struct WriteErr;
 
+pub type Word = u8;
+
 impl Region {
 	pub fn new(pos: usize, len: usize) -> Self {
 		Self { pos, len }
@@ -32,11 +34,15 @@ impl Region {
 		Self::new(self.end(), len)
 	}
 
-	pub fn read<'a>(&self, bytes: &'a [u8]) -> Option<&'a [u8]> {
+	pub fn read<'a>(&self, bytes: &'a [Word]) -> Option<&'a [Word]> {
 		bytes.get(self.pos..self.end())
 	}
 
-	pub fn write(&self, dest: &mut [u8], src: &[u8]) -> Result<(), WriteErr> {
+	pub fn write(
+		&self,
+		dest: &mut [Word],
+		src: &[Word],
+	) -> Result<(), WriteErr> {
 		// I tried using_copy_from slice, but it panics on overflow
 		// I need an error, so I basically reimplemented it
 		if self.end() > dest.len() {

@@ -1,8 +1,8 @@
 //! Structs for reading and writing events from contiguous bytes.
 use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
+use crate::mem;
 use crate::pervasives::*;
-use crate::region::Region;
 
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
@@ -50,7 +50,7 @@ pub const HEADER_SIZE: usize = core::mem::size_of::<Header>();
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
 	pub id: ID,
-	pub payload: &'a [u8],
+	pub payload: &'a [mem::Word],
 }
 
 impl<'a> Event<'a> {
@@ -62,8 +62,8 @@ impl<'a> Event<'a> {
 	}
 }
 
-pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
-	let header_region = Region::new(byte_offset, HEADER_SIZE);
+pub fn read(bytes: &[mem::Word], byte_offset: usize) -> Option<Event<'_>> {
+	let header_region = mem::Region::new(byte_offset, HEADER_SIZE);
 	let header_bytes = header_region.read(bytes)?;
 	let &Header { id, byte_len } = bytemuck::from_bytes(header_bytes);
 	let payload_region = header_region.next(byte_len);
@@ -71,9 +71,9 @@ pub fn read(bytes: &[u8], byte_offset: usize) -> Option<Event<'_>> {
 	Some(Event { id, payload })
 }
 
-pub fn append(buf: &mut Vec<u8>, event: &Event) -> fixed_capacity::Res {
+pub fn append(buf: &mut Vec<mem::Word>, event: &Event) -> fixed_capacity::Res {
 	let byte_len = event.payload.len();
-	let header_region = Region::new(buf.len(), HEADER_SIZE);
+	let header_region = mem::Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
 	let payload_region = header_region.next(byte_len);
 	let next_offset = buf.len() + event.on_disk_size();
@@ -86,13 +86,22 @@ pub fn append(buf: &mut Vec<u8>, event: &Event) -> fixed_capacity::Res {
 	Ok(())
 }
 
+/*
+#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct Batch<const N_INDICES: usize, const N_BYTES: usize> {
+	indices: [DiskOffset; N_INDICES],
+	bytes: [u8; N_BYTES],
+}
+*/
+
 pub struct View<'a> {
-	bytes: &'a [u8],
+	bytes: &'a [mem::Word],
 	byte_index: usize,
 }
 
 impl<'a> View<'a> {
-	pub fn new(bytes: &'a [u8]) -> Self {
+	pub fn new(bytes: &'a [mem::Word]) -> Self {
 		Self { bytes, byte_index: 0 }
 	}
 }
@@ -116,7 +125,7 @@ mod tests {
 	proptest! {
 		#[test]
 		fn rw_single_event(
-			e in prop::collection::vec(any::<u8>(), 0..=8)
+			e in prop::collection::vec(any::<mem::Word>(), 0..=8)
 		) {
 			// Setup
 			let mut rng = rand::thread_rng();

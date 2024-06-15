@@ -10,13 +10,13 @@ pub struct Capacities {
 	// pub addrs: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Elem {
 	txn: Vec<DiskOffset>,
 	actual: Vec<DiskOffset>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Index {
 	// TODO: fixed size hashmap
 	map: HashMap<Addr, Elem>,
@@ -100,7 +100,7 @@ impl Index {
 
 	pub fn rollback(&mut self) {
 		for Elem { txn, .. } in self.map.values_mut() {
-			txn.clear()
+			//txn.clear()
 		}
 	}
 
@@ -188,31 +188,52 @@ mod tests {
 		assert_eq!(actual, Err(CommitErr::NotEnoughSpace))
 	}
 
+	#[test]
+	fn enqueue_and_get() {
+		let mut rng = thread_rng();
+		let addr = Addr::new(rng.gen());
+		let mut index = Index::new(2, 8);
+		let event_id = event::ID::new(addr, 0);
+		index.enqueue(event_id, 0).unwrap();
+		index.commit().unwrap();
+
+		assert_eq!(index.get(event_id), Some(DiskOffset(0)));
+	}
+
 	proptest! {
 		#[test]
 		fn txn_either_succeeds_or_fails(
 			vs in proptest::collection::vec(
 				(arb_event_id(), arb_disk_offset()),
 				0..1000),
-			txn_events_per_addr in any::<usize>(),
-			actual_events_per_addr in any::<usize>()
+			txn_events_per_addr in 0usize..10usize,
+			actual_events_per_addr in 0usize..200usize
 
-		){
+		) {
 			let mut index =
 				Index::new(txn_events_per_addr, actual_events_per_addr);
 
+			let original_index = index.clone();
+
 			let res: Result<(), EnqueueErr> = vs
-				.into_iter()
-				.map(|(event_id, disk_offset)| {
+				.iter()
+				.map(|&(event_id, disk_offset)| {
 					index.enqueue(event_id, disk_offset)
 				})
 				.collect();
 
-			match res {
-				Ok(()) => {
-					let _ = index.commit();
-				}
-				Err(_) => index.rollback()
+			if let Err(_) = res {
+				index.rollback();
+				assert_eq!(original_index, index);
+			} else if let Err(_) = index.commit() {
+				index.rollback();
+				assert_eq!(original_index, index);
+			} else {
+				let all_there = vs.iter()
+					.map(|&(event_id, _)| index.get(event_id))
+					.all(|d| d.is_some());
+
+				assert!(all_there);
 			}
 		}
 
