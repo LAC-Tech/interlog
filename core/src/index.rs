@@ -192,18 +192,28 @@ mod tests {
 		#[test]
 		fn txn_either_succeeds_or_fails(
 			vs in proptest::collection::vec(
-				(arb_addr(), arb_log_pos(), arb_disk_offset()),
+				(arb_event_id(), arb_disk_offset()),
 				0..1000),
 			txn_events_per_addr in any::<usize>(),
 			actual_events_per_addr in any::<usize>()
 
 		){
-			let mut index = Index::new(txn_events_per_addr, actual_events_per_addr);
+			let mut index =
+				Index::new(txn_events_per_addr, actual_events_per_addr);
 
-			for (addr, log_pos, disk_offset) in vs {
-				index.enqueue(event::ID::new(addr, log_pos), disk_offset);
+			let res: Result<(), EnqueueErr> = vs
+				.into_iter()
+				.map(|(event_id, disk_offset)| {
+					index.enqueue(event_id, disk_offset)
+				})
+				.collect();
+
+			match res {
+				Ok(()) => {
+					let _ = index.commit();
+				}
+				Err(_) => index.rollback()
 			}
-
 		}
 
 	}

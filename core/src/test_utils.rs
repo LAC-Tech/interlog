@@ -2,6 +2,7 @@
 use alloc::vec::Vec;
 use proptest::prelude::*;
 
+use crate::event;
 use crate::pervasives::*;
 
 // TODO: too many allocations. Make a liffe vector implementation
@@ -32,6 +33,11 @@ pub fn arb_addr() -> impl Strategy<Value = Addr> {
 
 pub fn arb_log_pos() -> impl Strategy<Value = LogPos> {
 	any::<usize>().prop_map(|n| LogPos(n))
+}
+
+pub fn arb_event_id() -> impl Strategy<Value = event::ID> {
+	(arb_addr(), arb_log_pos())
+		.prop_map(|(addr, log_pos)| event::ID::new(addr, log_pos))
 }
 
 pub fn arb_disk_offset() -> impl Strategy<Value = DiskOffset> {
