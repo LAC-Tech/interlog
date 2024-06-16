@@ -49,6 +49,7 @@ impl<T: core::default::Default + Clone> Vec<T> {
 
 impl<T: Clone> Vec<T> {
 	pub fn from_elem(elem: T, capacity: usize) -> Self {
+		assert!(capacity >= 1, "capacity for a single element vec must be at least one, given = {}", capacity);
 		let elems = vec![elem; capacity].into_boxed_slice();
 		Self { elems, len: 1 }
 	}

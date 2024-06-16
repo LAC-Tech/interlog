@@ -1,7 +1,7 @@
 //! Module exists purely to prevent circular dependency.
 
 use core::fmt;
-use derive_more::{Add, From, Into};
+use derive_more::{Add, From};
 use rand::prelude::*;
 
 /// This was originally u128, but I changed it to keep the alignment to 0x8
@@ -72,9 +72,6 @@ pub struct DiskOffset(pub usize);
 pub struct LogPos(pub usize);
 
 impl LogPos {
-	pub fn consecutive(self, n: Self) -> bool {
-		self.0 + 1 == n.0
-	}
 	pub fn is_initial(&self) -> bool {
 		self.0 == 0
 	}

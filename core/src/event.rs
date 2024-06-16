@@ -110,22 +110,30 @@ impl<'a> Iterator for View<'a> {
 	}
 }
 
-struct Buf(Vec<mem::Word>);
+pub struct Buf(Vec<mem::Word>);
 
 impl Buf {
-	fn push(&mut self, event: &Event) -> fixed_capacity::Res {
+	pub fn new(capacity: usize) -> Self {
+		Self(Vec::new(capacity))
+	}
+
+	pub fn push(&mut self, event: &Event) -> fixed_capacity::Res {
 		append(&mut self.0, event)
+	}
+
+	pub fn as_slice(&self) -> Slice {
+		Slice(&self.0)
 	}
 }
 
-struct Batch(alloc::boxed::Box<[mem::Word]>);
+pub struct Slice<'a>(&'a [mem::Word]);
 
-impl<'a> IntoIterator for &'a Batch {
+impl<'a> IntoIterator for Slice<'a> {
 	type Item = Event<'a>;
 	type IntoIter = View<'a>;
 
 	fn into_iter(self) -> Self::IntoIter {
-		View::new(&self.0)
+		View::new(self.0)
 	}
 }
 

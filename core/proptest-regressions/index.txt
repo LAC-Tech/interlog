@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 886030b2ab8960bd0d4965a6bbe7c98557a5d941cc6d56fffc1e74179df2cae6 # shrinks to vs = [], txn_events_per_addr = 0, actual_events_per_addr = 0
+cc ff60f1203db671301c9157afb3c94f3072c55cd5d06a485e5b350daa4d5fee5b # shrinks to vs = [(ID { origin: ReplicaID(00), log_pos: LogPos(0) }, DiskOffset(0))], txn_events_per_addr = 0, actual_events_per_addr = 0

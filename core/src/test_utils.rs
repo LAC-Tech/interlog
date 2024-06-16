@@ -32,16 +32,16 @@ pub fn arb_addr() -> impl Strategy<Value = Addr> {
 }
 
 pub fn arb_log_pos() -> impl Strategy<Value = LogPos> {
-	any::<usize>().prop_map(|n| LogPos(n))
+	(0usize..1000usize).prop_map(|n| LogPos(n))
+}
+
+pub fn arb_disk_offset() -> impl Strategy<Value = DiskOffset> {
+	(0usize..1000usize).prop_map(|n| DiskOffset(n))
 }
 
 pub fn arb_event_id() -> impl Strategy<Value = event::ID> {
 	(arb_addr(), arb_log_pos())
 		.prop_map(|(addr, log_pos)| event::ID::new(addr, log_pos))
-}
-
-pub fn arb_disk_offset() -> impl Strategy<Value = DiskOffset> {
-	any::<usize>().prop_map(|n| DiskOffset(n))
 }
 
 pub fn addresses<R: Rng, const LEN: usize>(rng: &mut R) -> [Addr; LEN] {

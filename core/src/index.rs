@@ -40,12 +40,11 @@ impl Index {
 		}
 	}
 
-	pub fn enqueue<D: Into<DiskOffset>>(
+	pub fn enqueue(
 		&mut self,
 		event_id: event::ID,
-		disk_offset: D,
+		disk_offset: DiskOffset,
 	) -> Result<(), EnqueueErr> {
-		let disk_offset: DiskOffset = disk_offset.into();
 		match self.map.get_mut(&event_id.origin) {
 			Some(existing) => {
 				if existing.txn.len() != event_id.log_pos.0 {
@@ -63,7 +62,7 @@ impl Index {
 				})
 			}
 			None => {
-				if event_id.log_pos.is_initial() {
+				if !event_id.log_pos.is_initial() {
 					return Err(EnqueueErr::IndexWouldNotStartAtZero);
 				}
 
@@ -82,7 +81,7 @@ impl Index {
 		let enough_space = self
 			.map
 			.values()
-			.all(|Elem { txn, actual }| actual.can_be_extended_by(&txn));
+			.all(|Elem { txn, actual }| actual.can_be_extended_by(txn));
 
 		if !enough_space {
 			return Err(CommitErr::NotEnoughSpace);
@@ -90,7 +89,7 @@ impl Index {
 
 		for Elem { txn, actual } in self.map.values_mut() {
 			actual
-				.extend_from_slice(&txn)
+				.extend_from_slice(txn)
 				.expect("FATAL ERR: partially committed transaction");
 			txn.clear();
 		}
@@ -146,10 +145,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
-		let actual = index.enqueue(event::ID::new(addr, 0), 0);
+		let actual = index.enqueue(event::ID::new(addr, 0), DiskOffset(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(event::ID::new(addr, 34), 0);
+		let actual = index.enqueue(event::ID::new(addr, 34), DiskOffset(0));
 		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
 	}
 
@@ -159,7 +158,7 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
-		let actual = index.enqueue(event::ID::new(addr, 42), 0);
+		let actual = index.enqueue(event::ID::new(addr, 42), DiskOffset(0));
 		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
 	}
 
@@ -169,10 +168,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(1, 8);
 
-		let actual = index.enqueue(event::ID::new(addr, 0), 0);
+		let actual = index.enqueue(event::ID::new(addr, 0), DiskOffset(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(event::ID::new(addr, 1), 1);
+		let actual = index.enqueue(event::ID::new(addr, 1), DiskOffset(1));
 		assert_eq!(actual, Err(EnqueueErr::Overflow));
 	}
 
@@ -182,10 +181,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 1);
 
-		let actual = index.enqueue(event::ID::new(addr, 0), 0);
+		let actual = index.enqueue(event::ID::new(addr, 0), DiskOffset(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(event::ID::new(addr, 1), 1);
+		let actual = index.enqueue(event::ID::new(addr, 1), DiskOffset(1));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
@@ -198,7 +197,7 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 		let event_id = event::ID::new(addr, 0);
-		index.enqueue(event_id, 0).unwrap();
+		index.enqueue(event_id, DiskOffset(0)).unwrap();
 		index.commit().unwrap();
 
 		assert_eq!(index.get(event_id), Some(DiskOffset(0)));
@@ -233,11 +232,13 @@ mod tests {
 				index.rollback();
 				assert_eq!(original_index, index);
 			} else {
-				let all_there = vs.iter()
-					.map(|&(event_id, _)| index.get(event_id))
-					.all(|d| d.is_some());
+				let actual: alloc::vec::Vec<(event::ID, DiskOffset)> =
+					vs.iter()
+						.filter(|&(event_id, _)| index.get(*event_id).is_some())
+						.copied()
+						.collect();
 
-				assert!(all_there);
+				assert_eq!(vs, actual);
 			}
 		}
 
