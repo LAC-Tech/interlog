@@ -16,7 +16,9 @@ impl<L: Log> Actor<L> {
 	}
 }
 
-enum Msg {
+// The 'body' of each message will just be a pointer/
+// It must come from some buffer somewhere (ie, TCP buffer)
+enum Msg<'a> {
 	SyncResponse(),
 }
 
