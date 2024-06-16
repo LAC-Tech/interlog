@@ -50,6 +50,7 @@ pub const HEADER_SIZE: usize = core::mem::size_of::<Header>();
 #[derive(Clone, Debug)]
 pub struct Event<'a> {
 	pub id: ID,
+	/// Pointer because single event payload points to some block of memory
 	pub payload: &'a [mem::Word],
 }
 
@@ -86,16 +87,8 @@ pub fn append(buf: &mut Vec<mem::Word>, event: &Event) -> fixed_capacity::Res {
 	Ok(())
 }
 
-/*
-#[derive(bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub struct Batch<const N_INDICES: usize, const N_BYTES: usize> {
-	indices: [DiskOffset; N_INDICES],
-	bytes: [u8; N_BYTES],
-}
-*/
-
-/// Event Iterator
+// Event Iterator
+// Didn't just call it "Iterator" because then it would conflict
 pub struct View<'a> {
 	words: &'a [mem::Word],
 	index: usize,
@@ -114,6 +107,25 @@ impl<'a> Iterator for View<'a> {
 		let result = read(self.words, self.index)?;
 		self.index += result.on_disk_size();
 		Some(result)
+	}
+}
+
+struct Buf(Vec<mem::Word>);
+
+impl Buf {
+	fn push(&mut self, event: &Event) -> fixed_capacity::Res {
+		append(&mut self.0, event)
+	}
+}
+
+struct Batch(alloc::boxed::Box<[mem::Word]>);
+
+impl<'a> IntoIterator for &'a Batch {
+	type Item = Event<'a>;
+	type IntoIter = View<'a>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		View::new(&self.0)
 	}
 }
 
