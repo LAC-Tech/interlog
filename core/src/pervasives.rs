@@ -54,12 +54,6 @@ impl fmt::Debug for Addr {
 #[repr(transparent)]
 pub struct DiskOffset(pub usize);
 
-impl DiskOffset {
-	pub fn is_initial(&self) -> bool {
-		self.0 == 0
-	}
-}
-
 /// Logical Position of the event on the log, ie the 'nth' event
 #[derive(
 	Add,
@@ -80,5 +74,8 @@ pub struct LogPos(pub usize);
 impl LogPos {
 	pub fn consecutive(self, n: Self) -> bool {
 		self.0 + 1 == n.0
+	}
+	pub fn is_initial(&self) -> bool {
+		self.0 == 0
 	}
 }

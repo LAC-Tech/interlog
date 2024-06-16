@@ -63,7 +63,7 @@ impl Index {
 				})
 			}
 			None => {
-				if event_id.log_pos.0 != 0 {
+				if event_id.log_pos.is_initial() {
 					return Err(EnqueueErr::IndexWouldNotStartAtZero);
 				}
 
@@ -111,6 +111,10 @@ impl Index {
 			.and_then(|elem| elem.actual.get(event_id.log_pos.0));
 
 		result.cloned()
+	}
+
+	pub fn event_count(&self) -> usize {
+		self.map.values().map(|elem| elem.actual.len()).sum()
 	}
 }
 

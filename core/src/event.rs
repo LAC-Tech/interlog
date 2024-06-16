@@ -95,14 +95,15 @@ pub struct Batch<const N_INDICES: usize, const N_BYTES: usize> {
 }
 */
 
+/// Event Iterator
 pub struct View<'a> {
-	bytes: &'a [mem::Word],
-	byte_index: usize,
+	words: &'a [mem::Word],
+	index: usize,
 }
 
 impl<'a> View<'a> {
-	pub fn new(bytes: &'a [mem::Word]) -> Self {
-		Self { bytes, byte_index: 0 }
+	pub fn new(words: &'a [mem::Word]) -> Self {
+		Self { words, index: 0 }
 	}
 }
 
@@ -110,8 +111,8 @@ impl<'a> Iterator for View<'a> {
 	type Item = Event<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		let result = read(self.bytes, self.byte_index)?;
-		self.byte_index += result.on_disk_size();
+		let result = read(self.words, self.index)?;
+		self.index += result.on_disk_size();
 		Some(result)
 	}
 }

@@ -22,7 +22,6 @@ compile_error!("code assumes little-endian");
 compile_error!("code assumes linux");
 
 mod actor;
-mod disk;
 mod event;
 mod fixed_capacity;
 mod index;
@@ -31,9 +30,12 @@ mod pervasives;
 #[cfg(test)]
 mod test_utils;
 
+/*
 use alloc::boxed::Box;
 use alloc::string::String;
 use core::fmt;
+
+use rand::prelude::*;
 
 use crate::fixed_capacity::Vec;
 use crate::index::*;
@@ -225,7 +227,6 @@ impl Storage {
 	}
 }
 
-/*
 pub struct Config {
 	pub read_cache_capacity: usize,
 	pub key_index_capacity: usize,
@@ -254,17 +255,18 @@ struct Log {
 }
 
 pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
-	let id = Log::new(&mut rand::thread_rng());
-	let path = format!("{dir_path}/{id}");
+	let mut rng = rand::thread_rng();
+	let addr = Addr::new(rng.gen());
+	let path = format!("{dir_path}/{addr}");
 	let disk = disk::Log::open(&path)?;
 	let read_cache = ReadCache::new(config.read_cache_capacity);
 
 	Ok(Log {
-		addr: id,
+		addr,
 		path,
 		storage: Storage { disk, read_cache },
 		byte_len: 0,
-		key_index: Index::new(config.key_index_capacity),
+		index: Index::new(config.key_index_capacity),
 		txn_write_buf: Vec::new(config.txn_write_buf_capacity),
 		disk_read_buf: Vec::new(config.disk_read_buf_capacity),
 	})
@@ -273,8 +275,7 @@ pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
 impl Log {
 	// Based on FasterLog API
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
-		let logical_pos = self.key_index.event_count();
-		let id = event::ID { origin: self.addr, logical_pos };
+		let id = event::ID::new(self.addr, self.index.event_count());
 		let e = event::Event { id, payload };
 
 		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)

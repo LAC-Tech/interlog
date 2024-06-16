@@ -3,7 +3,7 @@ use crate::fixed_capacity::Vec;
 use crate::index::Index;
 use crate::pervasives::*;
 
-struct Actor {
+pub struct Actor {
 	addr: Addr,
 	//log: Vec<event::Event>,
 	index: Index,
