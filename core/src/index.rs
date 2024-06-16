@@ -16,6 +16,12 @@ struct Elem {
 	actual: Vec<DiskOffset>,
 }
 
+impl Elem {
+	fn is_empty(&self) -> bool {
+		self.actual.is_empty()
+	}
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Index {
 	// TODO: fixed size hashmap
@@ -57,21 +63,27 @@ impl Index {
 					}
 				}
 
-				existing.txn.push(disk_offset).map_err(|err| match err {
-					fixed_capacity::Overflow => EnqueueErr::Overflow,
-				})
+				if let Err(fixed_capacity::Overflow) =
+					existing.txn.push(disk_offset)
+				{
+					return Err(EnqueueErr::Overflow);
+				}
+
+				Ok(())
 			}
 			None => {
 				if !event_id.log_pos.is_initial() {
 					return Err(EnqueueErr::IndexWouldNotStartAtZero);
 				}
 
-				let new_elem = Elem {
-					txn: Vec::from_elem(disk_offset, self.txn_events_per_addr),
-					actual: Vec::new(self.actual_events_per_addr),
-				};
+				let mut txn = Vec::new(self.txn_events_per_addr);
+				if let Err(fixed_capacity::Overflow) = txn.push(disk_offset) {
+					return Err(EnqueueErr::Overflow);
+				}
 
-				self.map.insert(event_id.origin, new_elem);
+				let actual = Vec::new(self.actual_events_per_addr);
+
+				self.map.insert(event_id.origin, Elem { txn, actual });
 				Ok(())
 			}
 		}
@@ -88,9 +100,10 @@ impl Index {
 		}
 
 		for Elem { txn, actual } in self.map.values_mut() {
-			actual
-				.extend_from_slice(txn)
-				.expect("FATAL ERR: partially committed transaction");
+			if let Err(fixed_capacity::Overflow) = actual.extend_from_slice(txn)
+			{
+				return Err(CommitErr::Overflow);
+			}
 			txn.clear();
 		}
 
@@ -98,8 +111,11 @@ impl Index {
 	}
 
 	pub fn rollback(&mut self) {
+		// remove empty elems left behind by a failed transaction
+		self.map.retain(|_, v| !v.is_empty());
+		// remove items from txn buffers
 		for Elem { txn, .. } in self.map.values_mut() {
-			//txn.clear()
+			txn.clear()
 		}
 	}
 
@@ -127,6 +143,7 @@ pub enum EnqueueErr {
 #[derive(Debug, PartialEq)]
 pub enum CommitErr {
 	NotEnoughSpace,
+	Overflow,
 }
 
 #[cfg(test)]
