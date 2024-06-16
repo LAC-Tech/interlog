@@ -37,6 +37,12 @@ struct Storage<L: Log> {
 	txn_buffer: Vec<mem::Word>,
 }
 
+impl<L: Log> Storage<L> {
+	fn enqueue(&mut self, e: event::ID) {}
+	fn commit(&mut self) {}
+	fn rollback(&mut self) {}
+}
+
 pub trait Log {
 	//pub fn push(&mut self, )
 }

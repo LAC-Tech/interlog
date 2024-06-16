@@ -31,12 +31,12 @@ pub fn arb_addr() -> impl Strategy<Value = Addr> {
 	(any::<u64>(), any::<u64>()).prop_map(|(a, b)| Addr::new([a, b]))
 }
 
-pub fn arb_log_pos() -> impl Strategy<Value = LogPos> {
-	(0usize..1000usize).prop_map(|n| LogPos(n))
+pub fn arb_log_pos() -> impl Strategy<Value = LogicalPos> {
+	(0usize..1000usize).prop_map(LogicalPos)
 }
 
-pub fn arb_disk_offset() -> impl Strategy<Value = DiskOffset> {
-	(0usize..1000usize).prop_map(|n| DiskOffset(n))
+pub fn arb_storage_pos() -> impl Strategy<Value = StoragePos> {
+	(0usize..1000usize).prop_map(StoragePos)
 }
 
 pub fn arb_event_id() -> impl Strategy<Value = event::ID> {

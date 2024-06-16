@@ -38,21 +38,20 @@ impl fmt::Debug for Addr {
 	}
 }
 
-/// Byte position of an event, on disk
+/// Position of a word, in either memory or disk
 #[derive(
 	Add,
 	Clone,
 	Copy,
 	Debug,
 	Default,
-	From,
 	PartialEq,
 	PartialOrd,
 	bytemuck::Pod,
 	bytemuck::Zeroable,
 )]
 #[repr(transparent)]
-pub struct DiskOffset(pub usize);
+pub struct StoragePos(pub usize);
 
 /// Logical Position of the event on the log, ie the 'nth' event
 #[derive(
@@ -61,7 +60,6 @@ pub struct DiskOffset(pub usize);
 	Copy,
 	Debug,
 	Eq,
-	From,
 	PartialOrd,
 	Ord,
 	PartialEq,
@@ -69,9 +67,9 @@ pub struct DiskOffset(pub usize);
 	bytemuck::Zeroable,
 )]
 #[repr(transparent)]
-pub struct LogPos(pub usize);
+pub struct LogicalPos(pub usize);
 
-impl LogPos {
+impl LogicalPos {
 	pub fn is_initial(&self) -> bool {
 		self.0 == 0
 	}

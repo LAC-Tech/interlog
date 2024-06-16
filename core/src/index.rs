@@ -12,8 +12,8 @@ pub struct Capacities {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Elem {
-	txn: Vec<DiskOffset>,
-	actual: Vec<DiskOffset>,
+	txn: Vec<StoragePos>,
+	actual: Vec<StoragePos>,
 }
 
 impl Elem {
@@ -46,11 +46,12 @@ impl Index {
 		}
 	}
 
-	pub fn enqueue(
+	pub fn enqueue<EID: Into<event::ID>>(
 		&mut self,
-		event_id: event::ID,
-		disk_offset: DiskOffset,
+		event_id: EID,
+		disk_offset: StoragePos,
 	) -> Result<(), EnqueueErr> {
+		let event_id: event::ID = event_id.into();
 		match self.map.get_mut(&event_id.origin) {
 			Some(existing) => {
 				if existing.txn.len() != event_id.log_pos.0 {
@@ -119,7 +120,7 @@ impl Index {
 		}
 	}
 
-	pub fn get(&self, event_id: event::ID) -> Option<DiskOffset> {
+	pub fn get(&self, event_id: event::ID) -> Option<StoragePos> {
 		let result = self
 			.map
 			.get(&event_id.origin)
@@ -162,10 +163,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
-		let actual = index.enqueue(event::ID::new(addr, 0), DiskOffset(0));
+		let actual = index.enqueue((addr, LogicalPos(0)), StoragePos(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(event::ID::new(addr, 34), DiskOffset(0));
+		let actual = index.enqueue((addr, LogicalPos(34)), StoragePos(0));
 		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
 	}
 
@@ -175,7 +176,7 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
-		let actual = index.enqueue(event::ID::new(addr, 42), DiskOffset(0));
+		let actual = index.enqueue((addr, LogicalPos(42)), StoragePos(0));
 		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
 	}
 
@@ -185,10 +186,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(1, 8);
 
-		let actual = index.enqueue(event::ID::new(addr, 0), DiskOffset(0));
+		let actual = index.enqueue((addr, LogicalPos(0)), StoragePos(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(event::ID::new(addr, 1), DiskOffset(1));
+		let actual = index.enqueue((addr, LogicalPos(1)), StoragePos(1));
 		assert_eq!(actual, Err(EnqueueErr::Overflow));
 	}
 
@@ -198,10 +199,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 1);
 
-		let actual = index.enqueue(event::ID::new(addr, 0), DiskOffset(0));
+		let actual = index.enqueue((addr, LogicalPos(0)), StoragePos(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(event::ID::new(addr, 1), DiskOffset(1));
+		let actual = index.enqueue((addr, LogicalPos(1)), StoragePos(1));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
@@ -213,18 +214,18 @@ mod tests {
 		let mut rng = thread_rng();
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
-		let event_id = event::ID::new(addr, 0);
-		index.enqueue(event_id, DiskOffset(0)).unwrap();
+		let event_id: event::ID = (addr, LogicalPos(0)).into();
+		index.enqueue(event_id, StoragePos(0)).unwrap();
 		index.commit().unwrap();
 
-		assert_eq!(index.get(event_id), Some(DiskOffset(0)));
+		assert_eq!(index.get(event_id), Some(StoragePos(0)));
 	}
 
 	proptest! {
 		#[test]
 		fn txn_either_succeeds_or_fails(
 			vs in proptest::collection::vec(
-				(arb_event_id(), arb_disk_offset()),
+				(arb_event_id(), arb_storage_pos()),
 				0..1000),
 			txn_events_per_addr in 0usize..10usize,
 			actual_events_per_addr in 0usize..200usize
@@ -249,7 +250,7 @@ mod tests {
 				index.rollback();
 				assert_eq!(original_index, index);
 			} else {
-				let actual: alloc::vec::Vec<(event::ID, DiskOffset)> =
+				let actual: alloc::vec::Vec<(event::ID, StoragePos)> =
 					vs.iter()
 						.filter(|&(event_id, _)| index.get(*event_id).is_some())
 						.copied()
