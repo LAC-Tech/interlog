@@ -52,12 +52,12 @@ impl Index {
 		&mut self,
 		event_id: EID,
 		disk_offset: StoragePos,
-	) -> Result<(), EnqueueErr> {
+	) -> Result<(), InsertErr> {
 		let event_id: event::ID = event_id.into();
 		match self.map.get_mut(&event_id.origin) {
 			Some(existing) => {
 				if existing.txn.len() != event_id.log_pos.0 {
-					return Err(EnqueueErr::NonConsecutivePos);
+					return Err(InsertErr::NonConsecutivePos);
 				}
 
 				if let Some(last_offset) = existing.txn.last() {
@@ -66,22 +66,22 @@ impl Index {
 					}
 				}
 
-				if let Err(fixed_capacity::NoCapacity) =
+				if let Err(fixed_capacity::Overrun) =
 					existing.txn.push(disk_offset)
 				{
-					return Err(EnqueueErr::NoCapacity);
+					return Err(InsertErr::Overrun);
 				}
 
 				Ok(())
 			}
 			None => {
 				if !event_id.log_pos.is_initial() {
-					return Err(EnqueueErr::IndexWouldNotStartAtZero);
+					return Err(InsertErr::IndexWouldNotStartAtZero);
 				}
 
 				let mut txn = Vec::new(self.txn_events_per_addr);
-				if let Err(fixed_capacity::NoCapacity) = txn.push(disk_offset) {
-					return Err(EnqueueErr::NoCapacity);
+				if let Err(fixed_capacity::Overrun) = txn.push(disk_offset) {
+					return Err(InsertErr::Overrun);
 				}
 
 				let actual = Vec::new(self.actual_events_per_addr);
@@ -103,10 +103,9 @@ impl Index {
 		}
 
 		for Elem { txn, actual } in self.map.values_mut() {
-			if let Err(fixed_capacity::NoCapacity) =
-				actual.extend_from_slice(txn)
+			if let Err(fixed_capacity::Overrun) = actual.extend_from_slice(txn)
 			{
-				return Err(CommitErr::NoCapacity);
+				return Err(CommitErr::Overrun);
 			}
 			txn.clear();
 		}
@@ -138,16 +137,16 @@ impl Index {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum EnqueueErr {
+pub enum InsertErr {
 	NonConsecutivePos,
 	IndexWouldNotStartAtZero,
-	NoCapacity,
+	Overrun,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum CommitErr {
 	NotEnoughSpace,
-	NoCapacity,
+	Overrun,
 }
 
 #[cfg(test)]
@@ -170,7 +169,7 @@ mod tests {
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.insert((addr, LogicalPos(34)), StoragePos(0));
-		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
+		assert_eq!(actual, Err(InsertErr::NonConsecutivePos));
 	}
 
 	#[test]
@@ -180,7 +179,7 @@ mod tests {
 		let mut index = Index::new(2, 8);
 
 		let actual = index.insert((addr, LogicalPos(42)), StoragePos(0));
-		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
+		assert_eq!(actual, Err(InsertErr::IndexWouldNotStartAtZero));
 	}
 
 	#[test]
@@ -193,7 +192,7 @@ mod tests {
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.insert((addr, LogicalPos(1)), StoragePos(1));
-		assert_eq!(actual, Err(EnqueueErr::NoCapacity));
+		assert_eq!(actual, Err(InsertErr::Overrun));
 	}
 
 	#[test]
@@ -239,7 +238,7 @@ mod tests {
 
 			let original_index = index.clone();
 
-			let res: Result<(), EnqueueErr> = vs
+			let res: Result<(), InsertErr> = vs
 				.iter()
 				.map(|&(event_id, disk_offset)| {
 					index.insert(event_id, disk_offset)

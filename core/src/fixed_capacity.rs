@@ -9,8 +9,8 @@ use core::slice::SliceIndex;
  * https://tigerbeetle.com/blog/a-database-without-dynamic-memory
  */
 #[derive(Debug, PartialEq)]
-pub struct NoCapacity;
-pub type Res = Result<(), NoCapacity>;
+pub struct Overrun;
+pub type Res = Result<(), Overrun>;
 
 /**
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
@@ -75,7 +75,7 @@ impl<T> Vec<T> {
 	}
 
 	fn check_capacity(&self, new_len: usize) -> Res {
-		(self.capacity() >= new_len).then_some(()).ok_or(NoCapacity)
+		(self.capacity() >= new_len).then_some(()).ok_or(Overrun)
 	}
 
 	pub fn push(&mut self, value: T) -> Res {

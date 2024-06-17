@@ -130,6 +130,14 @@ impl Buf {
 	pub fn as_slice(&self) -> Slice {
 		Slice(&self.0)
 	}
+
+	pub fn len(&self) -> StoragePos {
+		StoragePos(self.0.len())
+	}
+
+	pub fn clear(&mut self) {
+		self.0.clear();
+	}
 }
 
 pub struct Slice<'a>(&'a [mem::Word]);
