@@ -2,6 +2,7 @@ use crate::event;
 use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
 use crate::pervasives::*;
+use crate::txn;
 
 use hashbrown::HashMap;
 
@@ -29,6 +30,7 @@ pub struct Index {
 	txn_events_per_addr: usize,
 	actual_events_per_addr: usize,
 }
+
 /// In-memory mapping of event IDs to disk offsets
 /// This keeps the following invariants:
 /// - events must be stored consecutively per address
@@ -46,7 +48,7 @@ impl Index {
 		}
 	}
 
-	pub fn enqueue<EID: Into<event::ID>>(
+	pub fn insert<EID: Into<event::ID>>(
 		&mut self,
 		event_id: EID,
 		disk_offset: StoragePos,
@@ -64,10 +66,10 @@ impl Index {
 					}
 				}
 
-				if let Err(fixed_capacity::Overflow) =
+				if let Err(fixed_capacity::NoCapacity) =
 					existing.txn.push(disk_offset)
 				{
-					return Err(EnqueueErr::Overflow);
+					return Err(EnqueueErr::NoCapacity);
 				}
 
 				Ok(())
@@ -78,8 +80,8 @@ impl Index {
 				}
 
 				let mut txn = Vec::new(self.txn_events_per_addr);
-				if let Err(fixed_capacity::Overflow) = txn.push(disk_offset) {
-					return Err(EnqueueErr::Overflow);
+				if let Err(fixed_capacity::NoCapacity) = txn.push(disk_offset) {
+					return Err(EnqueueErr::NoCapacity);
 				}
 
 				let actual = Vec::new(self.actual_events_per_addr);
@@ -101,9 +103,10 @@ impl Index {
 		}
 
 		for Elem { txn, actual } in self.map.values_mut() {
-			if let Err(fixed_capacity::Overflow) = actual.extend_from_slice(txn)
+			if let Err(fixed_capacity::NoCapacity) =
+				actual.extend_from_slice(txn)
 			{
-				return Err(CommitErr::Overflow);
+				return Err(CommitErr::NoCapacity);
 			}
 			txn.clear();
 		}
@@ -138,13 +141,13 @@ impl Index {
 pub enum EnqueueErr {
 	NonConsecutivePos,
 	IndexWouldNotStartAtZero,
-	Overflow,
+	NoCapacity,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum CommitErr {
 	NotEnoughSpace,
-	Overflow,
+	NoCapacity,
 }
 
 #[cfg(test)]
@@ -163,10 +166,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
-		let actual = index.enqueue((addr, LogicalPos(0)), StoragePos(0));
+		let actual = index.insert((addr, LogicalPos(0)), StoragePos(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalPos(34)), StoragePos(0));
+		let actual = index.insert((addr, LogicalPos(34)), StoragePos(0));
 		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
 	}
 
@@ -176,7 +179,7 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 
-		let actual = index.enqueue((addr, LogicalPos(42)), StoragePos(0));
+		let actual = index.insert((addr, LogicalPos(42)), StoragePos(0));
 		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
 	}
 
@@ -186,11 +189,11 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(1, 8);
 
-		let actual = index.enqueue((addr, LogicalPos(0)), StoragePos(0));
+		let actual = index.insert((addr, LogicalPos(0)), StoragePos(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalPos(1)), StoragePos(1));
-		assert_eq!(actual, Err(EnqueueErr::Overflow));
+		let actual = index.insert((addr, LogicalPos(1)), StoragePos(1));
+		assert_eq!(actual, Err(EnqueueErr::NoCapacity));
 	}
 
 	#[test]
@@ -199,10 +202,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 1);
 
-		let actual = index.enqueue((addr, LogicalPos(0)), StoragePos(0));
+		let actual = index.insert((addr, LogicalPos(0)), StoragePos(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalPos(1)), StoragePos(1));
+		let actual = index.insert((addr, LogicalPos(1)), StoragePos(1));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
@@ -215,7 +218,7 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(2, 8);
 		let event_id: event::ID = (addr, LogicalPos(0)).into();
-		index.enqueue(event_id, StoragePos(0)).unwrap();
+		index.insert(event_id, StoragePos(0)).unwrap();
 		index.commit().unwrap();
 
 		assert_eq!(index.get(event_id), Some(StoragePos(0)));
@@ -239,7 +242,7 @@ mod tests {
 			let res: Result<(), EnqueueErr> = vs
 				.iter()
 				.map(|&(event_id, disk_offset)| {
-					index.enqueue(event_id, disk_offset)
+					index.insert(event_id, disk_offset)
 				})
 				.collect();
 
