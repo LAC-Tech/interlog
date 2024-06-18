@@ -51,7 +51,7 @@ impl fmt::Debug for Addr {
 	bytemuck::Zeroable,
 )]
 #[repr(transparent)]
-pub struct StoragePos(pub usize);
+pub struct StorageQty(pub usize);
 
 /// Logical Position of the event on the log, ie the 'nth' event
 #[derive(
@@ -67,9 +67,9 @@ pub struct StoragePos(pub usize);
 	bytemuck::Zeroable,
 )]
 #[repr(transparent)]
-pub struct LogicalPos(pub usize);
+pub struct LogicalQty(pub usize);
 
-impl LogicalPos {
+impl LogicalQty {
 	pub fn is_initial(&self) -> bool {
 		self.0 == 0
 	}

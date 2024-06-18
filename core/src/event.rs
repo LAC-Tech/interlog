@@ -24,18 +24,18 @@ pub struct ID {
 	pub origin: Addr,
 	/// This can be thought of as a lamport clock, or the sequence number of
 	/// the log.
-	pub log_pos: LogicalPos,
+	pub pos: LogicalQty,
 }
 
-impl From<(Addr, LogicalPos)> for ID {
-	fn from((origin, log_pos): (Addr, LogicalPos)) -> Self {
-		Self { origin, log_pos }
+impl From<(Addr, LogicalQty)> for ID {
+	fn from((origin, pos): (Addr, LogicalQty)) -> Self {
+		Self { origin, pos }
 	}
 }
 
 impl ID {
-	pub fn new(origin: Addr, log_pos: LogicalPos) -> Self {
-		Self { origin, log_pos: log_pos.into() }
+	pub fn new(origin: Addr, pos: LogicalQty) -> Self {
+		Self { origin, pos: pos.into() }
 	}
 }
 
@@ -131,8 +131,8 @@ impl Buf {
 		Slice(&self.0)
 	}
 
-	pub fn len(&self) -> StoragePos {
-		StoragePos(self.0.len())
+	pub fn len(&self) -> StorageQty {
+		StorageQty(self.0.len())
 	}
 
 	pub fn clear(&mut self) {
@@ -166,7 +166,7 @@ mod tests {
 			let mut rng = rand::thread_rng();
 			let mut buf = Vec::new(256);
 			let origin = Addr::new(rng.gen());
-			let id = ID::new(origin, LogicalPos(0));
+			let id = ID::new(origin, LogicalQty(0));
 			let event = Event {id, payload: &e};
 
 			// Pre conditions

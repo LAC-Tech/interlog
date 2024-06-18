@@ -12,8 +12,8 @@ pub struct Capacities {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Elem {
-	txn: Vec<StoragePos>,
-	actual: Vec<StoragePos>,
+	txn: Vec<StorageQty>,
+	actual: Vec<StorageQty>,
 }
 
 impl Elem {
@@ -26,8 +26,8 @@ impl Elem {
 pub struct Index {
 	// TODO: fixed size hashmap
 	map: HashMap<Addr, Elem>,
-	txn_events_per_addr: usize,
-	actual_events_per_addr: usize,
+	txn_events_per_addr: LogicalQty,
+	actual_events_per_addr: LogicalQty,
 }
 
 /// In-memory mapping of event IDs to disk offsets
@@ -36,8 +36,8 @@ pub struct Index {
 /// This effectively stores the causal histories over every addr
 impl Index {
 	pub fn new(
-		txn_events_per_addr: usize,
-		actual_events_per_addr: usize,
+		txn_events_per_addr: LogicalQty,
+		actual_events_per_addr: LogicalQty,
 	) -> Self {
 		// TODO: HOW MANY ADDRS WILL I HAVE?
 		Self {
@@ -50,17 +50,17 @@ impl Index {
 	pub fn insert<EID: Into<event::ID>>(
 		&mut self,
 		event_id: EID,
-		disk_offset: StoragePos,
+		disk_offset: StorageQty,
 	) -> Result<(), InsertErr> {
 		let event_id: event::ID = event_id.into();
 		match self.map.get_mut(&event_id.origin) {
 			Some(existing) => {
-				if existing.txn.len() != event_id.log_pos.0 {
+				if existing.txn.len() != event_id.pos.0 {
 					return Err(InsertErr::NonConsecutivePos);
 				}
 
-				if let Some(last_offset) = existing.txn.last() {
-					if *last_offset >= disk_offset {
+				if let Some(&last_offset) = existing.txn.last() {
+					if last_offset >= disk_offset {
 						panic!("non-monotonic disk offset")
 					}
 				}
@@ -74,16 +74,16 @@ impl Index {
 				Ok(())
 			}
 			None => {
-				if !event_id.log_pos.is_initial() {
+				if !event_id.pos.is_initial() {
 					return Err(InsertErr::IndexWouldNotStartAtZero);
 				}
 
-				let mut txn = Vec::new(self.txn_events_per_addr);
+				let mut txn = Vec::new(self.txn_events_per_addr.0);
 				if let Err(fixed_capacity::Overrun) = txn.push(disk_offset) {
 					return Err(InsertErr::Overrun);
 				}
 
-				let actual = Vec::new(self.actual_events_per_addr);
+				let actual = Vec::new(self.actual_events_per_addr.0);
 
 				self.map.insert(event_id.origin, Elem { txn, actual });
 				Ok(())
@@ -121,11 +121,11 @@ impl Index {
 		}
 	}
 
-	pub fn get(&self, event_id: event::ID) -> Option<StoragePos> {
+	pub fn get(&self, event_id: event::ID) -> Option<StorageQty> {
 		let result = self
 			.map
 			.get(&event_id.origin)
-			.and_then(|elem| elem.actual.get(event_id.log_pos.0));
+			.and_then(|elem| elem.actual.get(event_id.pos.0));
 
 		result.cloned()
 	}
@@ -162,12 +162,12 @@ mod tests {
 	fn non_consecutive() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(rng.gen());
-		let mut index = Index::new(2, 8);
+		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.insert((addr, LogicalPos(0)), StoragePos(0));
+		let actual = index.insert((addr, LogicalQty(0)), StorageQty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.insert((addr, LogicalPos(34)), StoragePos(0));
+		let actual = index.insert((addr, LogicalQty(34)), StorageQty(0));
 		assert_eq!(actual, Err(InsertErr::NonConsecutivePos));
 	}
 
@@ -175,9 +175,9 @@ mod tests {
 	fn index_would_not_start_at_zero() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(rng.gen());
-		let mut index = Index::new(2, 8);
+		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.insert((addr, LogicalPos(42)), StoragePos(0));
+		let actual = index.insert((addr, LogicalQty(42)), StorageQty(0));
 		assert_eq!(actual, Err(InsertErr::IndexWouldNotStartAtZero));
 	}
 
@@ -187,10 +187,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(1, 8);
 
-		let actual = index.insert((addr, LogicalPos(0)), StoragePos(0));
+		let actual = index.insert((addr, LogicalQty(0)), StorageQty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.insert((addr, LogicalPos(1)), StoragePos(1));
+		let actual = index.insert((addr, LogicalQty(1)), StorageQty(1));
 		assert_eq!(actual, Err(InsertErr::Overrun));
 	}
 
@@ -198,12 +198,12 @@ mod tests {
 	fn not_enough_space() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(rng.gen());
-		let mut index = Index::new(2, 1);
+		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
 
-		let actual = index.insert((addr, LogicalPos(0)), StoragePos(0));
+		let actual = index.insert((addr, LogicalQty(0)), StorageQty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.insert((addr, LogicalPos(1)), StoragePos(1));
+		let actual = index.insert((addr, LogicalQty(1)), StorageQty(1));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
@@ -214,12 +214,12 @@ mod tests {
 	fn enqueue_and_get() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(rng.gen());
-		let mut index = Index::new(2, 8);
-		let event_id: event::ID = (addr, LogicalPos(0)).into();
-		index.insert(event_id, StoragePos(0)).unwrap();
+		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
+		let event_id: event::ID = (addr, LogicalQty(0)).into();
+		index.insert(event_id, StorageQty(0)).unwrap();
 		index.commit().unwrap();
 
-		assert_eq!(index.get(event_id), Some(StoragePos(0)));
+		assert_eq!(index.get(event_id), Some(StorageQty(0)));
 	}
 
 	proptest! {
@@ -251,7 +251,7 @@ mod tests {
 				index.rollback();
 				assert_eq!(original_index, index);
 			} else {
-				let actual: alloc::vec::Vec<(event::ID, StoragePos)> =
+				let actual: alloc::vec::Vec<(event::ID, StorageQty)> =
 					vs.iter()
 						.filter(|&(event_id, _)| index.get(*event_id).is_some())
 						.copied()

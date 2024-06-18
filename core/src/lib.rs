@@ -21,7 +21,6 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
-mod actor;
 mod event;
 mod fixed_capacity;
 mod index;
@@ -29,10 +28,125 @@ mod mem;
 mod pervasives;
 #[cfg(test)]
 mod test_utils;
-//mod txn;
 
-pub use actor::*;
+use crate::index::Index;
+use crate::pervasives::*;
 
+pub struct Actor<N: Network> {
+	addr: N::Addr,
+	log: log::Log,
+	index: Index,
+}
+
+impl<N: Network> Actor<N> {
+	pub fn new(
+		addr: N::Addr,
+		txn_size: StorageQty,
+		actual_size: StorageQty,
+		txn_events_per_addr: LogicalQty,
+		actual_events_per_addr: LogicalQty,
+	) -> Self {
+		Self {
+			addr,
+			log: log::Log::new(txn_size, actual_size),
+			index: Index::new(txn_events_per_addr, actual_events_per_addr),
+		}
+	}
+
+	pub fn recv(&mut self, src: N::Addr, msg: Msg, network: &mut N) {
+		match msg {
+			Msg::SyncRes(es) => {
+				let txn_result = es
+					.into_iter()
+					.map(|e| {
+						let new_pos = self
+							.log
+							.append(&e)
+							.map_err(AppendErr::LogAppend)?;
+						self.index
+							.insert(e.id, new_pos)
+							.map_err(AppendErr::IndexInsert)
+					})
+					.collect::<Result<(), AppendErr>>()
+					.and_then(|()| {
+						self.index.commit().map_err(AppendErr::IndexCommit)?;
+						self.log.commit().map_err(AppendErr::LogCommit)
+					});
+
+				if let Err(err) = txn_result {
+					self.index.rollback();
+					self.log.rollback();
+					network.send(Msg::Err(err), self.addr.clone(), src);
+				}
+			}
+			Msg::Err(err) => {
+				panic!("TODO: implement error logging. {:?}", err)
+			}
+		}
+	}
+}
+
+pub trait Network {
+	type Addr: Clone;
+
+	// Fire and forget message passing semantics
+	fn send(&mut self, msg: Msg, src: Self::Addr, dest: Self::Addr);
+}
+
+#[derive(Debug)]
+pub enum AppendErr {
+	LogAppend(fixed_capacity::Overrun),
+	IndexInsert(index::InsertErr),
+	LogCommit(log::CommitErr),
+	IndexCommit(index::CommitErr),
+}
+
+// The 'body' of each message will just be a pointer/
+// It must come from some buffer somewhere (ie, TCP buffer)
+pub enum Msg<'a> {
+	SyncRes(event::Slice<'a>),
+	Err(AppendErr),
+}
+
+mod log {
+	use crate::event;
+	use crate::fixed_capacity;
+	use crate::pervasives::*;
+
+	// Can't think of any yet but I am sure there are LOADS
+	#[derive(Debug)]
+	pub struct CommitErr;
+
+	pub struct Log {
+		txn: event::Buf,
+		actual: event::Buf,
+	}
+
+	impl Log {
+		pub fn new(txn_size: StorageQty, actual_size: StorageQty) -> Self {
+			Self {
+				txn: event::Buf::new(txn_size.0),
+				actual: event::Buf::new(actual_size.0),
+			}
+		}
+		pub fn append(
+			&mut self,
+			e: &event::Event,
+		) -> Result<StorageQty, fixed_capacity::Overrun> {
+			let result = self.actual.len() + self.txn.len();
+			self.txn.push(e)?;
+			Ok(result)
+		}
+
+		pub fn commit(&mut self) -> Result<(), CommitErr> {
+			panic!("TODO")
+		}
+
+		pub fn rollback(&mut self) {
+			self.txn.clear();
+		}
+	}
+}
 /*
 use alloc::boxed::Box;
 use alloc::string::String;
