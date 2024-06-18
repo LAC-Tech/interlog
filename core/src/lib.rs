@@ -29,7 +29,9 @@ mod mem;
 mod pervasives;
 #[cfg(test)]
 mod test_utils;
-mod txn;
+//mod txn;
+
+pub use actor::*;
 
 /*
 use alloc::boxed::Box;

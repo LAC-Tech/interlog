@@ -2,7 +2,6 @@ use crate::event;
 use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
 use crate::pervasives::*;
-use crate::txn;
 
 use hashbrown::HashMap;
 
