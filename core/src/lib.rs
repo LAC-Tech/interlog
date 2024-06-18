@@ -59,18 +59,16 @@ impl<N: Network> Actor<N> {
 				let txn_result = es
 					.into_iter()
 					.map(|e| {
-						let new_pos = self
-							.log
-							.append(&e)
-							.map_err(AppendErr::LogAppend)?;
+						let new_pos =
+							self.log.append(&e).map_err(Err::LogAppend)?;
 						self.index
 							.insert(e.id, new_pos)
-							.map_err(AppendErr::IndexInsert)
+							.map_err(Err::IndexInsert)
 					})
-					.collect::<Result<(), AppendErr>>()
+					.collect::<Result<(), Err>>()
 					.and_then(|()| {
-						self.index.commit().map_err(AppendErr::IndexCommit)?;
-						self.log.commit().map_err(AppendErr::LogCommit)
+						self.index.commit().map_err(Err::IndexCommit)?;
+						self.log.commit().map_err(Err::LogCommit)
 					});
 
 				if let Err(err) = txn_result {
@@ -94,7 +92,7 @@ pub trait Network {
 }
 
 #[derive(Debug)]
-pub enum AppendErr {
+pub enum Err {
 	LogAppend(fixed_capacity::Overrun),
 	IndexInsert(index::InsertErr),
 	LogCommit(log::CommitErr),
@@ -105,7 +103,7 @@ pub enum AppendErr {
 // It must come from some buffer somewhere (ie, TCP buffer)
 pub enum Msg<'a> {
 	SyncRes(event::Slice<'a>),
-	Err(AppendErr),
+	Err(Err),
 }
 
 mod log {
