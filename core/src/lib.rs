@@ -46,17 +46,15 @@ impl<N: Network> Actor<N> {
 		txn_events_per_addr: LogicalQty,
 		actual_events_per_addr: LogicalQty,
 	) -> Self {
-		Self {
-			addr,
-			log: log::Log::new(txn_size, actual_size),
-			index: Index::new(txn_events_per_addr, actual_events_per_addr),
-		}
+		let log = log::Log::new(txn_size, actual_size);
+		let index = Index::new(txn_events_per_addr, actual_events_per_addr);
+		Self { addr, log, index }
 	}
 
-	pub fn recv(&mut self, src: N::Addr, msg: Msg, network: &mut N) {
-		match msg {
-			Msg::SyncRes(es) => {
-				let txn_result = es
+	pub fn recv(&mut self, msg: Msg<N::Addr>, network: &mut N) {
+		match msg.inner {
+			InnerMsg::SyncRes(events) => {
+				let txn_result = events
 					.into_iter()
 					.map(|e| {
 						let new_pos =
@@ -74,10 +72,14 @@ impl<N: Network> Actor<N> {
 				if let Err(err) = txn_result {
 					self.index.rollback();
 					self.log.rollback();
-					network.send(Msg::Err(err), self.addr.clone(), src);
+					let outgoing_msg = Msg {
+						inner: InnerMsg::Err(err),
+						origin: self.addr.clone(),
+					};
+					network.send(outgoing_msg, msg.origin);
 				}
 			}
-			Msg::Err(err) => {
+			InnerMsg::Err(err) => {
 				panic!("TODO: implement error logging. {:?}", err)
 			}
 		}
@@ -88,7 +90,7 @@ pub trait Network {
 	type Addr: Clone;
 
 	// Fire and forget message passing semantics
-	fn send(&mut self, msg: Msg, src: Self::Addr, dest: Self::Addr);
+	fn send(&mut self, msg: Msg<Self::Addr>, dest: Self::Addr);
 }
 
 #[derive(Debug)]
@@ -99,9 +101,14 @@ pub enum Err {
 	IndexCommit(index::CommitErr),
 }
 
+pub struct Msg<'a, Addr> {
+	inner: InnerMsg<'a>,
+	origin: Addr,
+}
+
 // The 'body' of each message will just be a pointer/
 // It must come from some buffer somewhere (ie, TCP buffer)
-pub enum Msg<'a> {
+pub enum InnerMsg<'a> {
 	SyncRes(event::Slice<'a>),
 	Err(Err),
 }
