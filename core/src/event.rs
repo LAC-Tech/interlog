@@ -35,7 +35,7 @@ impl From<(Addr, LogicalQty)> for ID {
 
 impl ID {
 	pub fn new(origin: Addr, pos: LogicalQty) -> Self {
-		Self { origin, pos: pos.into() }
+		Self { origin, pos }
 	}
 }
 

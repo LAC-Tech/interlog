@@ -5,11 +5,6 @@ use crate::pervasives::*;
 
 use hashbrown::HashMap;
 
-#[derive(Debug)]
-pub struct Capacities {
-	// pub addrs: usize,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct Elem {
 	txn: Vec<StorageQty>,
@@ -32,7 +27,8 @@ pub struct Index {
 
 /// In-memory mapping of event IDs to disk offsets
 /// This keeps the following invariants:
-/// - events must be stored consecutively per address
+/// - events must be stored consecutively per address,
+///
 /// This effectively stores the causal histories over every addr
 impl Index {
 	pub fn new(

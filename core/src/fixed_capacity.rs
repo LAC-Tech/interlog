@@ -81,7 +81,8 @@ impl<T> Vec<T> {
 	pub fn push(&mut self, value: T) -> Res {
 		self.check_capacity(self.len + 1)?;
 		self.elems[self.len] = value;
-		Ok(self.len += 1)
+		self.len += 1;
+		Ok(())
 	}
 
 	pub fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> Res {

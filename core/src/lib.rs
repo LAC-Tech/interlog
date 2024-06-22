@@ -7,8 +7,7 @@
 //! - Direct I/O append only file, with KeyIndex that maps ID's to log offsets
 //! - Storage engine Works at libc level (rustix), so you can follow man pages.
 //! - Assumes linux, 64 bit, little endian - for now at least.
-//! - Will orovide hooks to sync in the future, but actual HTTP (or whatever)
-//! server is out of scope.
+//! - Will orovide hooks to sync in the future, but actual HTTP (or whatever) server is out of scope.
 #![cfg_attr(not(test), no_std)]
 #[macro_use]
 extern crate alloc;
@@ -56,14 +55,13 @@ impl<N: Network> Actor<N> {
 			InnerMsg::SyncRes(events) => {
 				let txn_result = events
 					.into_iter()
-					.map(|e| {
+					.try_for_each(|e| {
 						let new_pos =
 							self.log.append(&e).map_err(Err::LogAppend)?;
 						self.index
 							.insert(e.id, new_pos)
 							.map_err(Err::IndexInsert)
 					})
-					.collect::<Result<(), Err>>()
 					.and_then(|()| {
 						self.index.commit().map_err(Err::IndexCommit)?;
 						self.log.commit().map_err(Err::LogCommit)
