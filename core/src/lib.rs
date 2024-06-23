@@ -23,7 +23,7 @@ compile_error!("code assumes linux");
 mod event;
 mod fixed_capacity;
 mod index;
-mod mem;
+pub mod mem;
 mod pervasives;
 #[cfg(test)]
 mod test_utils;
