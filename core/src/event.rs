@@ -131,7 +131,7 @@ impl Buf {
 		Slice(&self.0)
 	}
 
-	pub fn len(&self) -> StorageQty {
+	pub fn used(&self) -> StorageQty {
 		StorageQty(self.0.len())
 	}
 
