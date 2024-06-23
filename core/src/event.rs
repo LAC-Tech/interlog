@@ -95,18 +95,18 @@ pub fn append(buf: &mut Vec<mem::Word>, event: &Event) -> fixed_capacity::Res {
 
 // Event Iterator
 // Didn't just call it "Iterator" because then it would conflict
-pub struct View<'a> {
+pub struct Iter<'a> {
 	words: &'a [mem::Word],
 	index: usize,
 }
 
-impl<'a> View<'a> {
+impl<'a> Iter<'a> {
 	pub fn new(words: &'a [mem::Word]) -> Self {
 		Self { words, index: 0 }
 	}
 }
 
-impl<'a> Iterator for View<'a> {
+impl<'a> Iterator for Iter<'a> {
 	type Item = Event<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -144,10 +144,10 @@ pub struct Slice<'a>(&'a [mem::Word]);
 
 impl<'a> IntoIterator for Slice<'a> {
 	type Item = Event<'a>;
-	type IntoIter = View<'a>;
+	type IntoIter = Iter<'a>;
 
 	fn into_iter(self) -> Self::IntoIter {
-		View::new(self.0)
+		Iter::new(self.0)
 	}
 }
 

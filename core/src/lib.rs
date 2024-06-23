@@ -39,7 +39,7 @@ pub trait AppendOnlyStorage {
 }
 
 pub struct Actor<AOS: AppendOnlyStorage> {
-	addr: Addr,
+	pub addr: Addr,
 	log: log::Log<AOS>,
 	index: Index,
 }
@@ -57,29 +57,15 @@ impl<AOS: AppendOnlyStorage> Actor<AOS> {
 		Self { addr, log, index }
 	}
 
-	pub fn recv(&mut self, msg: Msg, send: impl Fn(Msg, Addr) -> ()) {
+	pub fn recv(&mut self, msg: Msg, send: impl Fn(Msg, Addr)) {
 		match msg.inner {
 			InnerMsg::SyncRes(events) => {
-				let txn_result = events
-					.into_iter()
-					.try_for_each(|e| {
-						let new_pos =
-							self.log.append(&e).map_err(Err::LogAppend)?;
-						self.index
-							.insert(e.id, new_pos)
-							.map_err(Err::IndexInsert)
-					})
-					.and_then(|()| {
-						self.index.commit().map_err(Err::IndexCommit)?;
-						self.log.commit().map_err(Err::LogCommit)
-					});
-
-				if let Err(err) = txn_result {
+				if let Err(err) = self.write(events) {
 					self.index.rollback();
 					self.log.rollback();
 					let outgoing_msg = Msg {
 						inner: InnerMsg::Err(err),
-						origin: self.addr.clone(),
+						origin: self.addr,
 					};
 					send(outgoing_msg, msg.origin);
 				}
@@ -88,6 +74,22 @@ impl<AOS: AppendOnlyStorage> Actor<AOS> {
 				panic!("TODO: implement error logging. {:?}", err)
 			}
 		}
+	}
+
+	fn write<'a, I>(&mut self, events: I) -> Result<(), Err>
+	where
+		I: IntoIterator<Item = event::Event<'a>>,
+	{
+		events
+			.into_iter()
+			.try_for_each(|e| {
+				let new_pos = self.log.append(&e).map_err(Err::LogAppend)?;
+				self.index.insert(e.id, new_pos).map_err(Err::IndexInsert)
+			})
+			.and_then(|()| {
+				self.index.commit().map_err(Err::IndexCommit)?;
+				self.log.commit().map_err(Err::LogCommit)
+			})
 	}
 }
 
