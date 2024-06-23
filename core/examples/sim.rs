@@ -1,11 +1,28 @@
-use hashbrown::HashMap;
+use std::collections::HashMap;
 use interlog_core::*;
+use rand::prelude::*;
 
-fn main() {
-	let xs = vec![1, 2, 3];
-	dbg!(xs);
+mod config {
+	struct Max(usize);
+
+	impl Max {
+		fn gen<R: rand::Rng>(&self, rng: &mut R) -> usize {
+			rng.gen_range(0..self.0)
+		}
+	}
+	pub const N_ACTORS: Max = Max(256);
 }
 
-type Addr = u64;
+fn main() {
+	let mut rng = rand::thread_rng();
+	let args: Vec<String> = std::env::args().collect();
+	let seed: u64 = args.get(1)
+		.map(|s| s.parse::<u64>().expect(""))
+		.unwrap_or_else(|| rng.gen());
 
-struct FaultyNetwork(HashMap<Addr, Box<dyn Msg<Addr>>>);
+	let actors = HashMap::from([
+
+	]);
+
+
+}
