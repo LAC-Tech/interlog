@@ -29,28 +29,35 @@ mod pervasives;
 mod test_utils;
 
 use crate::index::Index;
-use crate::pervasives::*;
+pub use crate::pervasives::*;
 
-pub struct Actor<N: Network> {
-	addr: N::Addr,
-	log: log::Log,
+/// Where the events are persisted.
+/// Written right now so I can simulate faulty storage.
+/// (Only concrete implementation I can think of is an append only file)
+pub trait AppendOnlyStorage {
+	fn used(&self) -> StorageQty;
+}
+
+pub struct Actor<AOS: AppendOnlyStorage> {
+	addr: Addr,
+	log: log::Log<AOS>,
 	index: Index,
 }
 
-impl<N: Network> Actor<N> {
+impl<AOS: AppendOnlyStorage> Actor<AOS> {
 	pub fn new(
-		addr: N::Addr,
+		addr: Addr,
 		txn_size: StorageQty,
-		actual_size: StorageQty,
 		txn_events_per_addr: LogicalQty,
 		actual_events_per_addr: LogicalQty,
+		aos: AOS,
 	) -> Self {
-		let log = log::Log::new(txn_size, actual_size);
+		let log = log::Log::new(txn_size, aos);
 		let index = Index::new(txn_events_per_addr, actual_events_per_addr);
 		Self { addr, log, index }
 	}
 
-	pub fn recv(&mut self, msg: Msg<N::Addr>, network: &mut N) {
+	pub fn recv(&mut self, msg: Msg, send: impl Fn(Msg, Addr) -> ()) {
 		match msg.inner {
 			InnerMsg::SyncRes(events) => {
 				let txn_result = events
@@ -74,7 +81,7 @@ impl<N: Network> Actor<N> {
 						inner: InnerMsg::Err(err),
 						origin: self.addr.clone(),
 					};
-					network.send(outgoing_msg, msg.origin);
+					send(outgoing_msg, msg.origin);
 				}
 			}
 			InnerMsg::Err(err) => {
@@ -82,13 +89,6 @@ impl<N: Network> Actor<N> {
 			}
 		}
 	}
-}
-
-pub trait Network {
-	type Addr: Clone;
-
-	// Fire and forget message passing semantics
-	fn send(&mut self, msg: Msg<Self::Addr>, dest: Self::Addr);
 }
 
 #[derive(Debug)]
@@ -99,7 +99,7 @@ pub enum Err {
 	IndexCommit(index::CommitErr),
 }
 
-pub struct Msg<'a, Addr> {
+pub struct Msg<'a> {
 	inner: InnerMsg<'a>,
 	origin: Addr,
 }
@@ -112,6 +112,7 @@ pub enum InnerMsg<'a> {
 }
 
 mod log {
+	use super::AppendOnlyStorage;
 	use crate::event;
 	use crate::fixed_capacity;
 	use crate::pervasives::*;
@@ -120,23 +121,20 @@ mod log {
 	#[derive(Debug)]
 	pub struct CommitErr;
 
-	pub struct Log {
+	pub struct Log<AOS: AppendOnlyStorage> {
 		txn: event::Buf,
-		actual: event::Buf,
+		actual: AOS,
 	}
 
-	impl Log {
-		pub fn new(txn_size: StorageQty, actual_size: StorageQty) -> Self {
-			Self {
-				txn: event::Buf::new(txn_size.0),
-				actual: event::Buf::new(actual_size.0),
-			}
+	impl<AOS: AppendOnlyStorage> Log<AOS> {
+		pub fn new(txn_size: StorageQty, aos: AOS) -> Self {
+			Self { txn: event::Buf::new(txn_size.0), actual: aos }
 		}
 		pub fn append(
 			&mut self,
 			e: &event::Event,
 		) -> Result<StorageQty, fixed_capacity::Overrun> {
-			let result = self.actual.len() + self.txn.len();
+			let result = self.actual.used() + self.txn.used();
 			self.txn.push(e)?;
 			Ok(result)
 		}

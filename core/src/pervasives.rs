@@ -2,6 +2,7 @@
 
 use core::fmt;
 use derive_more::Add;
+use derive_more::Constructor;
 
 /// This was originally u128, but I changed it to keep the alignment to 0x8
 #[derive(
@@ -9,6 +10,7 @@ use derive_more::Add;
 	bytemuck::Zeroable,
 	Clone,
 	Copy,
+	Constructor,
 	Default,
 	Eq,
 	Hash,
@@ -18,12 +20,6 @@ use derive_more::Add;
 )]
 #[repr(transparent)]
 pub struct Addr([u64; 2]);
-
-impl Addr {
-	pub fn new(rand_data: [u64; 2]) -> Self {
-		Self(rand_data)
-	}
-}
 
 impl fmt::Display for Addr {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
