@@ -37,21 +37,6 @@ impl fmt::Debug for Addr {
 	}
 }
 
-/// Position of a word, in either memory or disk
-#[derive(
-	Add,
-	Clone,
-	Copy,
-	Debug,
-	Default,
-	PartialEq,
-	PartialOrd,
-	bytemuck::Pod,
-	bytemuck::Zeroable,
-)]
-#[repr(transparent)]
-pub struct StorageQty(pub usize);
-
 /// Logical Position of the event on the log, ie the 'nth' event
 #[derive(
 	Add,

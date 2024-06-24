@@ -2,13 +2,14 @@ use crate::event;
 use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
 use crate::pervasives::*;
+use crate::storage;
 
 use hashbrown::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Elem {
-	txn: Vec<StorageQty>,
-	actual: Vec<StorageQty>,
+	txn: Vec<storage::Qty>,
+	actual: Vec<storage::Qty>,
 }
 
 impl Elem {
@@ -46,7 +47,7 @@ impl Index {
 	pub fn insert<EID: Into<event::ID>>(
 		&mut self,
 		event_id: EID,
-		disk_offset: StorageQty,
+		offset: storage::Qty,
 	) -> Result<(), InsertErr> {
 		let event_id: event::ID = event_id.into();
 		match self.map.get_mut(&event_id.origin) {
@@ -56,13 +57,13 @@ impl Index {
 				}
 
 				if let Some(&last_offset) = existing.txn.last() {
-					if last_offset >= disk_offset {
-						panic!("non-monotonic disk offset")
+					if last_offset >= offset {
+						panic!("non-monotonic storage offset")
 					}
 				}
 
 				if let Err(fixed_capacity::Overrun) =
-					existing.txn.push(disk_offset)
+					existing.txn.push(offset)
 				{
 					return Err(InsertErr::Overrun);
 				}
@@ -75,7 +76,7 @@ impl Index {
 				}
 
 				let mut txn = Vec::new(self.txn_events_per_addr.0);
-				if let Err(fixed_capacity::Overrun) = txn.push(disk_offset) {
+				if let Err(fixed_capacity::Overrun) = txn.push(offset) {
 					return Err(InsertErr::Overrun);
 				}
 
@@ -117,13 +118,12 @@ impl Index {
 		}
 	}
 
-	pub fn get(&self, event_id: event::ID) -> Option<StorageQty> {
-		let result = self
+	pub fn get(&self, event_id: event::ID) -> Option<storage::Qty> {
+		self
 			.map
 			.get(&event_id.origin)
-			.and_then(|elem| elem.actual.get(event_id.pos.0));
-
-		result.cloned()
+			.and_then(|elem| elem.actual.get(event_id.pos.0))
+			.cloned()
 	}
 
 	pub fn event_count(&self) -> usize {

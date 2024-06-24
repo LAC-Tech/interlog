@@ -20,10 +20,11 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
-mod event;
 mod fixed_capacity;
 mod index;
+mod storage;
 pub mod mem;
+pub mod event;
 mod pervasives;
 #[cfg(test)]
 mod test_utils;
@@ -31,23 +32,16 @@ mod test_utils;
 use crate::index::Index;
 pub use crate::pervasives::*;
 
-/// Where the events are persisted.
-/// Written right now so I can simulate faulty storage.
-/// (Only concrete implementation I can think of is an append only file)
-pub trait AppendOnlyStorage {
-	fn used(&self) -> StorageQty;
-}
-
-pub struct Actor<AOS: AppendOnlyStorage> {
+pub struct Actor<AOS: storage::AppendOnly> {
 	pub addr: Addr,
 	log: log::Log<AOS>,
 	index: Index,
 }
 
-impl<AOS: AppendOnlyStorage> Actor<AOS> {
+impl<AOS: storage::AppendOnly> Actor<AOS> {
 	pub fn new(
 		addr: Addr,
-		txn_size: StorageQty,
+		txn_size: storage::Qty,
 		txn_events_per_addr: LogicalQty,
 		actual_events_per_addr: LogicalQty,
 		aos: AOS,
@@ -63,10 +57,8 @@ impl<AOS: AppendOnlyStorage> Actor<AOS> {
 				if let Err(err) = self.write(events) {
 					self.index.rollback();
 					self.log.rollback();
-					let outgoing_msg = Msg {
-						inner: InnerMsg::Err(err),
-						origin: self.addr,
-					};
+					let outgoing_msg =
+						Msg { inner: InnerMsg::Err(err), origin: self.addr };
 					send(outgoing_msg, msg.origin);
 				}
 			}
@@ -91,6 +83,14 @@ impl<AOS: AppendOnlyStorage> Actor<AOS> {
 				self.log.commit().map_err(Err::LogCommit)
 			})
 	}
+
+	pub fn local_Write<'a, I>(&mut self, payloads: I) -> Result<(), Err>
+	where
+		I: IntoIterator<Item = &'a [mem::Word]>,
+	{
+		//self.write(payloads.map(|p| ))
+		Ok(())
+	}
 }
 
 #[derive(Debug)]
@@ -114,7 +114,7 @@ pub enum InnerMsg<'a> {
 }
 
 mod log {
-	use super::AppendOnlyStorage;
+	use super::storage;
 	use crate::event;
 	use crate::fixed_capacity;
 	use crate::pervasives::*;
@@ -123,26 +123,31 @@ mod log {
 	#[derive(Debug)]
 	pub struct CommitErr;
 
-	pub struct Log<AOS: AppendOnlyStorage> {
+	pub struct Log<AOS: storage::AppendOnly> {
+		last: LogicalQty,
 		txn: event::Buf,
 		actual: AOS,
 	}
 
-	impl<AOS: AppendOnlyStorage> Log<AOS> {
-		pub fn new(txn_size: StorageQty, aos: AOS) -> Self {
-			Self { txn: event::Buf::new(txn_size.0), actual: aos }
+	impl<AOS: storage::AppendOnly> Log<AOS> {
+		pub fn new(txn_size: storage::Qty, aos: AOS) -> Self {
+			Self {
+				last: LogicalQty(0),
+				txn: event::Buf::new(txn_size),
+				actual: aos,
+			}
 		}
 		pub fn append(
 			&mut self,
 			e: &event::Event,
-		) -> Result<StorageQty, fixed_capacity::Overrun> {
+		) -> Result<storage::Qty, fixed_capacity::Overrun> {
 			let result = self.actual.used() + self.txn.used();
 			self.txn.push(e)?;
 			Ok(result)
 		}
 
 		pub fn commit(&mut self) -> Result<(), CommitErr> {
-			panic!("TODO")
+			panic!("TODO: drain txn into actual, then update last")
 		}
 
 		pub fn rollback(&mut self) {

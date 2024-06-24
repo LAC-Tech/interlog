@@ -3,6 +3,7 @@ use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
 use crate::mem;
 use crate::pervasives::*;
+use crate::storage;
 
 /// This ID is globally unique.
 /// TODO: is it worth trying to fit this into, say 128 bits? 80 bit replica ID,
@@ -119,8 +120,8 @@ impl<'a> Iterator for Iter<'a> {
 pub struct Buf(Vec<mem::Word>);
 
 impl Buf {
-	pub fn new(capacity: usize) -> Self {
-		Self(Vec::new(capacity))
+	pub fn new(capacity: storage::Qty) -> Self {
+		Self(Vec::new(capacity.0))
 	}
 
 	pub fn push(&mut self, event: &Event) -> fixed_capacity::Res {
@@ -131,8 +132,8 @@ impl Buf {
 		Slice(&self.0)
 	}
 
-	pub fn used(&self) -> StorageQty {
-		StorageQty(self.0.len())
+	pub fn used(&self) -> storage::Qty {
+		storage::Qty(self.0.len())
 	}
 
 	pub fn clear(&mut self) {
