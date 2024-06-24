@@ -5,7 +5,7 @@ use std::collections::HashMap;
 const ONE_DAY_IN_MS: u64 = 1000 * 60 * 60 * 24;
 
 mod config {
-    use interlog_core::{LogicalQty, StorageQty};
+    use interlog_core::storage;
 
 	pub struct Range(usize, usize);
 
@@ -26,12 +26,13 @@ mod config {
 	pub const ACTORS: Range = max(256);
 	pub const LOCAL_EVENTS_PER_ACTOR: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
+	pub const EVENTS_PER_MSG: Range = Range(0, 50);
 
 	// Currently just something "big enough", later handle disk overflow
-	pub const DISK_CAPACITY: StorageQty = StorageQty(1000);
+	pub const DISK_CAPACITY: storage::Qty = storage::Qty(1000);
 }
 
-const TXN_SIZE: StorageQty = StorageQty(10);
+const TXN_SIZE: storage::Qty = storage::Qty(10);
 const TXN_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
 const ACTUAL_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
 
@@ -45,13 +46,13 @@ impl AppendOnlyMemory {
 	}
 }
 
-impl AppendOnlyStorage for AppendOnlyMemory {
-	fn used(&self) -> StorageQty {
-		self.used()
+impl storage::AppendOnly for AppendOnlyMemory {
+	fn used(&self) -> storage::Qty {
+		self.0.used()
 	}
 
-	fn write(&mut self, events: event::Slice<'_>) -> R {
-
+	fn write(&mut self, data: &[u8]) -> Result<(), storage::WriteErr> {
+		panic!("TODO");
 	}
 }
 

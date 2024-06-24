@@ -22,8 +22,8 @@ compile_error!("code assumes linux");
 
 mod fixed_capacity;
 mod index;
-mod storage;
-pub mod mem;
+pub mod storage;
+mod mem;
 pub mod event;
 mod pervasives;
 #[cfg(test)]
@@ -84,12 +84,19 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 			})
 	}
 
-	pub fn local_Write<'a, I>(&mut self, payloads: I) -> Result<(), Err>
+	pub fn local_write<'a, I>(&mut self, payloads: I) -> Result<(), Err>
 	where
 		I: IntoIterator<Item = &'a [mem::Word]>,
 	{
-		//self.write(payloads.map(|p| ))
-		Ok(())
+		let origin = self.addr;
+		let last = self.log.last;
+		// First, transform payloads into events
+		let events = payloads.into_iter().enumerate().map(|(i, payload)| {
+			let pos = last + LogicalQty(i);
+			let id = event::ID{origin, pos};
+			event::Event{id, payload}
+		});
+		self.write(events)
 	}
 }
 
@@ -124,7 +131,7 @@ mod log {
 	pub struct CommitErr;
 
 	pub struct Log<AOS: storage::AppendOnly> {
-		last: LogicalQty,
+		pub last: LogicalQty,
 		txn: event::Buf,
 		actual: AOS,
 	}
