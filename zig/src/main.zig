@@ -65,8 +65,8 @@ const sim = struct {
     // An environment, representing some source of messages, and an actor
     const Env = struct {
         actor: Actor,
-        msg_lens: std.ArrayList(usize),
-        payload_sizes: std.ArrayList(usize),
+        msg_lens: std.ArrayListUnmanaged(usize),
+        payload_sizes: std.ArrayListUnmanaged(usize),
 
         fn init(
             comptime R: anytype,
@@ -75,24 +75,28 @@ const sim = struct {
         ) !@This() {
             const msg_lens = try allocator.alloc(
                 u64,
-                config.source_msgs_per_actor.gen(R, &rng),
+                config.source_msgs_per_actor.gen(R, rng),
             );
             for (msg_lens) |*msg_len| {
-                msg_len.* = config.msg_len.gen(R, &rng);
+                msg_len.* = config.msg_len.gen(R, rng);
             }
 
             const payload_sizes = try allocator.alloc(
                 u64,
-                config.payload_size.gen(R, &rng),
+                config.payload_size.gen(R, rng),
             );
             for (payload_sizes) |*payload_size| {
-                payload_size.* = config.payload_size.gen(R, &rng);
+                payload_size.* = config.payload_size.gen(R, rng);
             }
 
             const result = .{
-                .actor = Actor.init(Addr.init(rng)),
-                .msg_lens = std.ArrayList.fromOwnedSlice(msg_lens),
-                .payload_sizes = std.ArrayList.fromOwnedSlice(payload_sizes),
+                .actor = Actor.init(Addr.init(R, rng)),
+                .msg_lens = std.ArrayListUnmanaged(usize).fromOwnedSlice(
+                    msg_lens,
+                ),
+                .payload_sizes = std.ArrayListUnmanaged(usize).fromOwnedSlice(
+                    payload_sizes,
+                ),
             };
 
             return result;
@@ -128,6 +132,6 @@ pub fn main() !void {
 test "set up and tear down sim env" {
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.rand.DefaultPrng.init(seed);
-    const env = sim.Env.init(std.Random.Xoshiro256, &rng, std.testing.allocator);
+    var env = try sim.Env.init(std.Random.Xoshiro256, &rng, std.testing.allocator);
     defer env.deinit(std.testing.allocator);
 }
