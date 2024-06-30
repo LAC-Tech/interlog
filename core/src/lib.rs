@@ -20,12 +20,12 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
+pub mod event;
 mod fixed_capacity;
 mod index;
-pub mod storage;
 mod mem;
-pub mod event;
 mod pervasives;
+pub mod storage;
 #[cfg(test)]
 mod test_utils;
 
@@ -93,8 +93,8 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		// First, transform payloads into events
 		let events = payloads.into_iter().enumerate().map(|(i, payload)| {
 			let pos = last + LogicalQty(i);
-			let id = event::ID{origin, pos};
-			event::Event{id, payload}
+			let id = event::ID { origin, pos };
+			event::Event { id, payload }
 		});
 		self.write(events)
 	}
