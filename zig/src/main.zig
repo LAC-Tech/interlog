@@ -1,4 +1,5 @@
 const std = @import("std");
+const RNG = std.Random.Xoshiro256;
 
 const mem = struct {
     pub const Word = u64;
@@ -71,8 +72,8 @@ const sim = struct {
             comptime R: anytype,
             rng: *R,
             allocator: std.mem.Allocator,
-        ) @This() {
-            const msg_lens = allocator.alloc(
+        ) !@This() {
+            const msg_lens = try allocator.alloc(
                 u64,
                 config.source_msgs_per_actor.gen(R, &rng),
             );
@@ -80,7 +81,7 @@ const sim = struct {
                 msg_len.* = config.msg_len.gen(R, &rng);
             }
 
-            const payload_sizes = allocator.alloc(
+            const payload_sizes = try allocator.alloc(
                 u64,
                 config.payload_size.gen(R, &rng),
             );
@@ -105,36 +106,28 @@ const sim = struct {
 };
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const RNG = std.Random.Xoshiro256;
-
-    const allocator = arena.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.rand.DefaultPrng.init(seed);
 
     const n_actors = sim.config.n_actors.gen(RNG, &rng);
 
-    var actors = std.AutoHashMap(Addr, Actor).init(allocator);
+    var envs = std.AutoHashMap(Addr, sim.Env).init(allocator);
 
     for (0..n_actors) |_| {
-        const env = sim.Env.init(
-            std.Random.Xoshiro256,
-            &rng,
-            std.testing.allocator,
-        );
-        try actors.putNoClobber(env.addr, env);
+        const env = try sim.Env.init(RNG, &rng, allocator);
+        try envs.putNoClobber(env.actor.addr, env);
     }
 
     std.debug.print("seed = {d}\n", .{seed});
     std.debug.print("Running simulation with:\n", .{});
-    std.debug.print("- {d} actors\n", .{actors.count()});
+    std.debug.print("- {d} actors\n", .{envs.count()});
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit();
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+test "set up and tear down sim env" {
+    const seed: u64 = std.crypto.random.int(u64);
+    var rng = std.rand.DefaultPrng.init(seed);
+    const env = sim.Env.init(std.Random.Xoshiro256, &rng, std.testing.allocator);
+    defer env.deinit(std.testing.allocator);
 }
