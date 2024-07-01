@@ -11,6 +11,18 @@ pub const Addr = struct {
             .words = .{ rng.random().int(u64), rng.random().int(u64) },
         };
     }
+
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.print("{x}{x}", .{ self.words[0], self.words[1] });
+    }
 };
 
 comptime {

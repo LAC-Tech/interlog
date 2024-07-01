@@ -3,7 +3,7 @@ const lib = @import("lib.zig");
 const std = @import("std");
 const RNG = std.Random.Xoshiro256;
 
-const ONE_DAY_IN_MS: u64 = 1000 * 60 * 60 * 24;
+const MAX_SIM_TIME: u64 = 1000 * 60 * 60 * 24; // One day in MS
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -24,26 +24,39 @@ pub fn main() !void {
     std.debug.print("Running simulation with:\n", .{});
     std.debug.print("- {d} actors\n", .{envs.count()});
 
-    //var payload_buf: [sim.config.payload_size.at_most]u8 = undefined;
+    var payload_buf: [sim.config.payload_size.at_most]u8 = undefined;
     var payload_lens = try std.ArrayListUnmanaged(usize).initCapacity(
         allocator,
         sim.config.msg_len.at_most,
     );
     var i: u64 = 0;
-    while (i < ONE_DAY_IN_MS) : (i += 10) {
+    while (i < MAX_SIM_TIME) : (i += 10) {
         var it = envs.iterator();
 
-        while (it.next()) |entry| {
+        while (it.next()) |env_entry| {
             payload_lens.clearRetainingCapacity();
-            try entry.value_ptr.payload_src.popPayloadLens(&payload_lens);
-            std.debug.print("{}", .{payload_lens});
+            env_entry.value_ptr.popPayloadLens(&payload_lens);
+
+            std.debug.print(
+                "Sending actor {s} the following\n",
+                .{env_entry.key_ptr},
+            );
+            for (payload_lens.items) |payload_len| {
+                const payload = payload_buf[0..payload_len];
+                rng.fill(payload);
+                std.debug.print("\t{}\n", .{std.fmt.fmtSliceHexLower(payload)});
+            }
         }
+
+        //std.debug.print("done", .{});
 
         // for each env, generate payload lens
         // loop over payload lens, fillin the payload buffer every time
         // as you fill the pay load buffer, enqueue it on the actor
         // once the loop is done, commit
     }
+
+    std.debug.print("simulation has successfully completed!\n", .{});
 }
 
 test "set up and tear down sim env" {

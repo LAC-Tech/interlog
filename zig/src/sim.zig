@@ -62,17 +62,6 @@ const PayloadSrc = struct {
         };
     }
 
-    pub fn popPayloadLens(
-        self: *@This(),
-        buf: *std.ArrayListUnmanaged(usize),
-    ) !void {
-        const msg_len = self.msg_lens.pop();
-
-        for (msg_len) |_| {
-            buf.appendAssumeCapacity(self.payload_sizes.pop());
-        }
-    }
-
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.msg_lens.deinit(allocator);
         self.payload_sizes.deinit(allocator);
@@ -93,6 +82,19 @@ pub const Env = struct {
             .actor = Actor.init(Addr.init(R, rng)),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
+    }
+
+    pub fn popPayloadLens(
+        self: *@This(),
+        buf: *std.ArrayListUnmanaged(usize),
+    ) void {
+        if (self.payload_src.msg_lens.popOrNull()) |msg_len| {
+            for (msg_len) |_| {
+                if (self.payload_src.payload_sizes.popOrNull()) |payload_size| {
+                    buf.appendAssumeCapacity(payload_size);
+                }
+            }
+        }
     }
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
