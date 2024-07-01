@@ -62,8 +62,7 @@ impl Index {
 					}
 				}
 
-				if let Err(fixed_capacity::Overrun) =
-					existing.txn.push(offset)
+				if let Err(fixed_capacity::Overrun) = existing.txn.push(offset)
 				{
 					return Err(InsertErr::Overrun);
 				}
@@ -119,8 +118,7 @@ impl Index {
 	}
 
 	pub fn get(&self, event_id: event::ID) -> Option<storage::Qty> {
-		self
-			.map
+		self.map
 			.get(&event_id.origin)
 			.and_then(|elem| elem.actual.get(event_id.pos.0))
 			.cloned()

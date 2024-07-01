@@ -23,6 +23,8 @@ pub const Addr = struct {
 
         try writer.print("{x}{x}", .{ self.words[0], self.words[1] });
     }
+
+    const max = Addr {.words = .{0, 0}};
 };
 
 comptime {
@@ -30,11 +32,74 @@ comptime {
     std.debug.assert(alignment == 8);
 }
 
+/// In-memory mapping of event IDs to disk offsets
+/// This keeps the following invariants:
+/// - events must be stored consecutively per address,
+///
+/// Effectively stores the causal histories over every addr
+const Index = struct {
+    // One elem per address
+    const Elem = struct {
+        addr: Addr,
+        // indices waiting to be written to the index
+        txn: std.ArrayListUnmanaged(usize),
+        // indices that already exist in the index
+        actual: std.ArrayListUnmanaged(usize),
+        fn init(
+            allocator: std.mem.Allocator,
+            addr: Addr,
+            config: Config,
+        ) @This() {
+            return .{
+                .addr = addr,
+                .txn = std.ArrayListUnmanaged(
+                    allocator,
+                    config.txn_events_per_addr,
+                ),
+                .actual = std.ArrayListUnmanaged(
+                    allocator,
+                    config.actual_events_per_addr,
+                ),
+            };
+        }
+    };
+
+    const Config = struct {
+        max_addrs: usize,
+        txn_events_per_addr: usize,
+        actual_events_per_addr: usize,
+    };
+    // TODO: how many addresses is a good upper bound? This means linear search
+    table: std.ArrayListUnmanaged(Elem),
+    config: Config,
+
+    fn init(allocator: std.mem.Allocator, config: Config) @This() {
+
+    }
+};
+
 pub const Actor = struct {
     addr: Addr,
 
     pub fn init(addr: Addr) @This() {
         return .{ .addr = addr };
+    }
+
+    pub fn recv(self: *@This(), msg: Msg) void {
+        _ = self;
+        _ = msg;
+        @panic("TODO");
+    }
+
+    pub fn enqueue(self: *@This(), payload: []const u8) void {
+        _ = self;
+        _ = payload;
+        @panic("TODO");
+    }
+
+    pub fn commit(self: *@This()) void {
+        _ = self;
+        @panic("TODO");
     }
 };
 
@@ -47,4 +112,7 @@ const Event = struct {
 
 const Msg = struct {
     const Inner = union(enum) { sync_res: []Event };
+
+    inner: Inner,
+    origin: Addr,
 };
