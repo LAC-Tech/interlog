@@ -62,6 +62,17 @@ const PayloadSrc = struct {
         };
     }
 
+    pub fn popPayloadLens(
+        self: *@This(),
+        buf: *std.ArrayListUnmanaged(usize),
+    ) !void {
+        const msg_len = self.msg_lens.pop();
+
+        for (msg_len) |_| {
+            buf.appendAssumeCapacity(self.payload_sizes.pop());
+        }
+    }
+
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.msg_lens.deinit(allocator);
         self.payload_sizes.deinit(allocator);
@@ -88,31 +99,3 @@ pub const Env = struct {
         self.payload_src.deinit(allocator);
     }
 };
-
-//fn RandPayloadIterator(comptime R: anytype) type {
-//    return struct {
-//        payload_buf: [config.payload_size.at_most]u8,
-//        sizes: std.ArrayListUnmanaged(usize),
-//        rng: *R,
-//        //
-//        fn init(
-//            rng: *R, allocator: std.mem.Allocator
-//        ) @This() {
-//            return .{
-//                .payload_buf = undefined,
-//                .sizes = std.ArrayListUnamanged(usize).initCapacity(
-//                    allocator,
-//                    config.msg_len.at_most,
-//                ),
-//                .rng = rng,
-//            };
-//        }
-
-//        fn populate(self: *@This(), msg_len, payload_sizes: *std.Array)
-
-//        fn next(self: *@This()) ?[]const u8 {
-//            const payload_size = self.payload_sizes().popOrNull()
-//            self.rng.random().bytes(se)
-//        }
-//    };
-//}

@@ -20,13 +20,30 @@ pub fn main() !void {
         try envs.putNoClobber(env.actor.addr, env);
     }
 
-    //var payload_buf: [sim.config.payload_size.at_most]u8 = undefined;
     std.debug.print("seed = {d}\n", .{seed});
     std.debug.print("Running simulation with:\n", .{});
     std.debug.print("- {d} actors\n", .{envs.count()});
 
+    //var payload_buf: [sim.config.payload_size.at_most]u8 = undefined;
+    var payload_lens = try std.ArrayListUnmanaged(usize).initCapacity(
+        allocator,
+        sim.config.msg_len.at_most,
+    );
     var i: u64 = 0;
-    while (i < ONE_DAY_IN_MS) : (i += 10) {}
+    while (i < ONE_DAY_IN_MS) : (i += 10) {
+        var it = envs.iterator();
+
+        while (it.next()) |entry| {
+            payload_lens.clearRetainingCapacity();
+            try entry.value_ptr.payload_src.popPayloadLens(&payload_lens);
+            std.debug.print("{}", .{payload_lens});
+        }
+
+        // for each env, generate payload lens
+        // loop over payload lens, fillin the payload buffer every time
+        // as you fill the pay load buffer, enqueue it on the actor
+        // once the loop is done, commit
+    }
 }
 
 test "set up and tear down sim env" {
