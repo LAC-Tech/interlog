@@ -1,6 +1,8 @@
 const std = @import("std");
 const RNG = std.Random.Xoshiro256;
 
+const ONE_DAY_IN_MS: u64 = 1000 * 60 * 60 * 24;
+
 const mem = struct {
     pub const Word = u64;
 };
@@ -62,9 +64,8 @@ const sim = struct {
         .source_msgs_per_actor = range(0, 10_000),
     };
 
-    // An environment, representing some source of messages, and an actor
-    const Env = struct {
-        actor: Actor,
+    // Represents a local source of data for an actor
+    const PayloadSrc = struct {
         msg_lens: std.ArrayListUnmanaged(usize),
         payload_sizes: std.ArrayListUnmanaged(usize),
 
@@ -89,8 +90,7 @@ const sim = struct {
                 payload_size.* = config.payload_size.gen(R, rng);
             }
 
-            const result = .{
-                .actor = Actor.init(Addr.init(R, rng)),
+            return .{
                 .msg_lens = std.ArrayListUnmanaged(usize).fromOwnedSlice(
                     msg_lens,
                 ),
@@ -98,8 +98,6 @@ const sim = struct {
                     payload_sizes,
                 ),
             };
-
-            return result;
         }
 
         fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -107,6 +105,55 @@ const sim = struct {
             self.payload_sizes.deinit(allocator);
         }
     };
+
+    // An environment, representing some source of messages, and an actor
+    const Env = struct {
+        actor: Actor,
+        payload_src: PayloadSrc,
+
+        fn init(
+            comptime R: anytype,
+            rng: *R,
+            allocator: std.mem.Allocator,
+        ) !@This() {
+            return .{
+                .actor = Actor.init(Addr.init(R, rng)),
+                .payload_src = try PayloadSrc.init(R, rng, allocator),
+            };
+        }
+
+        fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            self.payload_src.deinit(allocator);
+        }
+    };
+
+    //fn RandPayloadIterator(comptime R: anytype) type {
+    //    return struct {
+    //        payload_buf: [config.payload_size.at_most]u8,
+    //        sizes: std.ArrayListUnmanaged(usize),
+    //        rng: *R,
+    //        //
+    //        fn init(
+    //            rng: *R, allocator: std.mem.Allocator
+    //        ) @This() {
+    //            return .{
+    //                .payload_buf = undefined,
+    //                .sizes = std.ArrayListUnamanged(usize).initCapacity(
+    //                    allocator,
+    //                    config.msg_len.at_most,
+    //                ),
+    //                .rng = rng,
+    //            };
+    //        }
+
+    //        fn populate(self: *@This(), msg_len, payload_sizes: *std.Array)
+
+    //        fn next(self: *@This()) ?[]const u8 {
+    //            const payload_size = self.payload_sizes().popOrNull()
+    //            self.rng.random().bytes(se)
+    //        }
+    //    };
+    //}
 };
 
 pub fn main() !void {
@@ -124,9 +171,13 @@ pub fn main() !void {
         try envs.putNoClobber(env.actor.addr, env);
     }
 
+    //var payload_buf: [sim.config.payload_size.at_most]u8 = undefined;
     std.debug.print("seed = {d}\n", .{seed});
     std.debug.print("Running simulation with:\n", .{});
     std.debug.print("- {d} actors\n", .{envs.count()});
+
+    var i: u64 = 0;
+    while (i < ONE_DAY_IN_MS) : (i += 10) {}
 }
 
 test "set up and tear down sim env" {
