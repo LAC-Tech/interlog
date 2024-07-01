@@ -1,5 +1,6 @@
 const std = @import("std");
 const lib = @import("lib.zig");
+const assert = std.debug.assert;
 const Actor = lib.Actor;
 const Addr = lib.Addr;
 
@@ -20,10 +21,10 @@ fn max(n: u64) Range {
 }
 
 pub const config = .{
-    .n_actors = max(256),
+    .n_actors = max(8),
     .payload_size = range(0, 4096),
-    .msg_len = range(0, 64),
-    .source_msgs_per_actor = range(0, 10_000),
+    .msg_len = range(0, 16),
+    .source_msgs_per_actor = range(0, 100),
 };
 
 // Represents a local source of data for an actor
@@ -44,10 +45,10 @@ const PayloadSrc = struct {
             msg_len.* = config.msg_len.gen(R, rng);
         }
 
-        const payload_sizes = try allocator.alloc(
-            u64,
-            config.payload_size.gen(R, rng),
-        );
+        var sum_lens: u64 = 0;
+        for (msg_lens) |len| sum_lens += len;
+
+        const payload_sizes = try allocator.alloc(u64, sum_lens);
         for (payload_sizes) |*payload_size| {
             payload_size.* = config.payload_size.gen(R, rng);
         }
@@ -90,9 +91,11 @@ pub const Env = struct {
     ) void {
         if (self.payload_src.msg_lens.popOrNull()) |msg_len| {
             for (msg_len) |_| {
-                if (self.payload_src.payload_sizes.popOrNull()) |payload_size| {
-                    buf.appendAssumeCapacity(payload_size);
-                }
+                //if (self.payload_src.payload_sizes.popNull()) |payload_size| {
+                //    buf.appendAssumeCapacity(payload_size);
+                //}
+                const payload_size = self.payload_src.payload_sizes.pop();
+                buf.appendAssumeCapacity(payload_size);
             }
         }
     }
