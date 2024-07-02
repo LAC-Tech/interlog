@@ -2,7 +2,7 @@ use interlog_core::*;
 use rand::prelude::*;
 use std::collections::HashMap;
 
-const ONE_DAY_IN_MS: u64 = 1000 * 60 * 60 * 24;
+const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60 * 24; // One day
 
 mod config {
 	use interlog_core::storage;
@@ -26,7 +26,7 @@ mod config {
 	pub const ACTORS: Range = max(256);
 	pub const SOURCE_BATCHES_PER_ACTOR: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
-	pub const EVENTS_PER_MSG: Range = Range(0, 50);
+	pub const MSG_LEN: Range = Range(0, 50);
 
 	// Currently just something "big enough", later handle disk overflow
 	pub const DISK_CAPACITY: storage::Qty = storage::Qty(1000);
@@ -59,7 +59,7 @@ impl storage::AppendOnly for AppendOnlyMemory {
 // An environment, representing some source of messages, and an actor
 struct Env {
 	actor: Actor<AppendOnlyMemory>,
-	msg_batch_lens: Vec<usize>,
+	msg_lens: Vec<usize>,
 	payload_sizes: Vec<usize>,
 }
 
@@ -76,7 +76,7 @@ impl Env {
 		let batches_per_actor = config::SOURCE_BATCHES_PER_ACTOR.gen(rng);
 
 		let msg_batch_lens: Vec<usize> =
-			std::iter::repeat_with(|| config::EVENTS_PER_MSG.gen(rng))
+			std::iter::repeat_with(|| config::MSG_LEN.gen(rng))
 				.take(batches_per_actor)
 				.collect();
 
@@ -87,7 +87,23 @@ impl Env {
 				.take(total_msgs)
 				.collect();
 
-		Self { actor, msg_batch_lens, payload_sizes }
+		Self { actor, msg_lens: msg_batch_lens, payload_sizes }
+	}
+
+	pub fn pop_payload_lens(
+		&mut self,
+		buf: &mut fixed_capacity::Vec<usize>,
+	) -> fixed_capacity::Res {
+		if let Some(msg_len) = self.msg_lens.pop() {
+			for _ in 0..msg_len {
+				let payload_size = self
+					.payload_sizes
+					.pop()
+					.expect("enough sizes for each msg len");
+				buf.push(payload_size)?;
+			}
+		}
+		Ok(())
 	}
 }
 
@@ -112,39 +128,15 @@ fn main() {
 	println!("Number of actors {}", environments.len());
 
 	let mut payload_buf = [0u8; config::PAYLOAD_SIZE.max()];
-	let mut event_buf = event::Buf::new(TXN_SIZE);
+	let mut payload_lens = fixed_capacity::Vec::new(config::MSG_LEN.max());
 
-	for tick in (0..ONE_DAY_IN_MS).step_by(10) {
+	for tick in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for env in environments.values_mut() {
-			// receive messages from environment
+			payload_lens.clear();
+			env.pop_payload_lens(&mut payload_lens)
+				.expect("payload lens to be big enough");
 
-			let payloads = env.msg_batch_lens.pop().map(|batch_len| {
-				std::iter::repeat_with(move || {
-					env.payload_sizes.pop().map(|payload_size| {
-						let payload = &mut payload_buf[0..payload_size];
-						rng.fill(payload);
-						&payload_buf[0..payload_size]
-					})
-				})
-				.take(batch_len)
-				.flatten()
-			});
-
-			if let Some(payloads) = payloads {
-				env.actor.local_write(payloads).expect("LOL HANDLE THIS")
-			}
-
-			/*
-			if let Some(batch_len) = env.msg_batch_lens.pop() {
-				for _ in 0..batch_len {
-					if let Some(payload_size) = env.payload_sizes.pop() {
-						let payload = &mut payload_buf[0..payload_size];
-						rng.fill(payload);
-						// TODO: need Illife vector of payloads, write that to actor
-					}
-				}
-			}
-			*/
+			for payload_len in payload_lens {}
 		}
 	}
 }

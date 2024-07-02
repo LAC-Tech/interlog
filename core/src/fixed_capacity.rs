@@ -45,6 +45,12 @@ impl<T: core::default::Default + Clone> Vec<T> {
 
 		Ok(())
 	}
+	pub fn pop(&mut self) -> Option<T> {
+		(self.len == 0).then(|| {
+			self.len -= 1;
+			self.elems[self.len].clone()
+		})
+	}
 }
 
 impl<T> Vec<T> {
@@ -143,6 +149,14 @@ impl<T> ops::DerefMut for Vec<T> {
 impl AsRef<[u8]> for Vec<u8> {
 	fn as_ref(&self) -> &[u8] {
 		&self.elems
+	}
+}
+impl<'a, T> IntoIterator for &'a Vec<T> {
+	type Item = T;
+	type IntoIter = core::slice::Iter<'a, T>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		self.elems[0..self.len].into_iter()
 	}
 }
 

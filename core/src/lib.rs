@@ -21,7 +21,7 @@ compile_error!("code assumes little-endian");
 compile_error!("code assumes linux");
 
 pub mod event;
-mod fixed_capacity;
+pub mod fixed_capacity;
 mod index;
 mod mem;
 mod pervasives;
@@ -54,7 +54,11 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	pub fn recv(&mut self, msg: Msg, send: impl Fn(Msg, Addr)) {
 		match msg.inner {
 			InnerMsg::SyncRes(events) => {
-				if let Err(err) = self.write(events) {
+				let write_res = events
+					.into_iter()
+					.try_for_each(|e| self.write(e))
+					.and_then(|()| self.commit());
+				if let Err(err) = write_res {
 					self.index.rollback();
 					self.log.rollback();
 					let outgoing_msg =
@@ -68,35 +72,24 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		}
 	}
 
-	fn write<'a, I>(&mut self, events: I) -> Result<(), Err>
-	where
-		I: IntoIterator<Item = event::Event<'a>>,
-	{
-		events
-			.into_iter()
-			.try_for_each(|e| {
-				let new_pos = self.log.append(&e).map_err(Err::LogAppend)?;
-				self.index.insert(e.id, new_pos).map_err(Err::IndexInsert)
-			})
-			.and_then(|()| {
-				self.index.commit().map_err(Err::IndexCommit)?;
-				self.log.commit().map_err(Err::LogCommit)
-			})
+	fn write(&mut self, e: event::Event) -> Result<(), Err> {
+		let new_pos = self.log.append(&e).map_err(Err::LogAppend)?;
+		self.index.insert(e.id, new_pos).map_err(Err::IndexInsert)
 	}
 
-	pub fn local_write<'a, I>(&mut self, payloads: I) -> Result<(), Err>
-	where
-		I: IntoIterator<Item = &'a [mem::Word]>,
-	{
+	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), Err> {
 		let origin = self.addr;
-		let last = self.log.last;
-		// First, transform payloads into events
-		let events = payloads.into_iter().enumerate().map(|(i, payload)| {
-			let pos = last + LogicalQty(i);
-			let id = event::ID { origin, pos };
-			event::Event { id, payload }
-		});
-		self.write(events)
+		let pos = self.log.last;
+		let id = event::ID { origin, pos };
+		let e = event::Event { id, payload };
+
+		let new_pos = self.log.append(&e).map_err(Err::LogAppend)?;
+		self.index.insert(e.id, new_pos).map_err(Err::IndexInsert)
+	}
+
+	pub fn commit(&mut self) -> Result<(), Err> {
+		self.index.commit().map_err(Err::IndexCommit)?;
+		self.log.commit().map_err(Err::LogCommit)
 	}
 }
 

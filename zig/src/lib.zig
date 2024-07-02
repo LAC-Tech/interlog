@@ -24,7 +24,7 @@ pub const Addr = struct {
         try writer.print("{x}{x}", .{ self.words[0], self.words[1] });
     }
 
-    const max = Addr {.words = .{0, 0}};
+    const zero = Addr{ .words = .{ 0, 0 } };
 };
 
 comptime {
@@ -49,14 +49,14 @@ const Index = struct {
             allocator: std.mem.Allocator,
             addr: Addr,
             config: Config,
-        ) @This() {
+        ) !@This() {
             return .{
                 .addr = addr,
-                .txn = std.ArrayListUnmanaged(
+                .txn = try std.ArrayListUnmanaged(usize).initCapacity(
                     allocator,
                     config.txn_events_per_addr,
                 ),
-                .actual = std.ArrayListUnmanaged(
+                .actual = try std.ArrayListUnmanaged(usize).initCapacity(
                     allocator,
                     config.actual_events_per_addr,
                 ),
@@ -73,10 +73,33 @@ const Index = struct {
     table: std.ArrayListUnmanaged(Elem),
     config: Config,
 
-    fn init(allocator: std.mem.Allocator, config: Config) @This() {
+    fn init(allocator: std.mem.Allocator, config: Config) !@This() {
+        const table = try allocator.alloc(Elem, config.max_addrs);
 
+        for (table) |*entry| {
+            entry.* = try Elem.init(allocator, Addr.zero, config);
+        }
+
+        return .{
+            .table = std.ArrayListUnmanaged(Elem).fromOwnedSlice(table),
+            .config = config,
+        };
     }
 };
+
+test "construct index" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    _ = try Index.init(
+        arena.allocator(),
+        .{
+            .max_addrs = 100,
+            .txn_events_per_addr = 10,
+            .actual_events_per_addr = 1000,
+        },
+    );
+}
 
 pub const Actor = struct {
     addr: Addr,
