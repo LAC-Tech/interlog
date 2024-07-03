@@ -31,16 +31,13 @@ pub fn main() !void {
     );
     var i: u64 = 0;
     while (i < MAX_SIM_TIME) : (i += 10) {
-        var it = envs.iterator();
+        var it = envs.valueIterator();
 
-        while (it.next()) |env_entry| {
+        while (it.next()) |val| {
             payload_lens.clearRetainingCapacity();
-            env_entry.value_ptr.popPayloadLens(&payload_lens);
+            val.popPayloadLens(&payload_lens);
 
-            std.debug.print(
-                "Sending actor {s} the following\n",
-                .{env_entry.key_ptr},
-            );
+            std.debug.print("Sending actor {s} the following\n", .{val.actor.addr});
             for (payload_lens.items) |payload_len| {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
