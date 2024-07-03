@@ -24,7 +24,7 @@ mod config {
 	}
 
 	pub const ACTORS: Range = max(256);
-	pub const SOURCE_BATCHES_PER_ACTOR: Range = Range(100, 1000);
+	pub const PAYLOADS_PER_ACTOR: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
 	pub const MSG_LEN: Range = Range(0, 50);
 
@@ -32,7 +32,7 @@ mod config {
 	pub const DISK_CAPACITY: storage::Qty = storage::Qty(1000);
 }
 
-const TXN_SIZE: storage::Qty = storage::Qty(10);
+const TXN_SIZE: storage::Qty = storage::Qty(4096);
 const TXN_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
 const ACTUAL_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
 
@@ -73,21 +73,21 @@ impl Env {
 			AppendOnlyMemory::new(),
 		);
 
-		let batches_per_actor = config::SOURCE_BATCHES_PER_ACTOR.gen(rng);
+		let payloads_per_actor = config::PAYLOADS_PER_ACTOR.gen(rng);
 
-		let msg_batch_lens: Vec<usize> =
+		let msg_lens: Vec<usize> =
 			std::iter::repeat_with(|| config::MSG_LEN.gen(rng))
-				.take(batches_per_actor)
+				.take(payloads_per_actor)
 				.collect();
 
-		let total_msgs = msg_batch_lens.iter().sum();
+		let total_msgs = msg_lens.iter().sum();
 
 		let payload_sizes: Vec<usize> =
 			std::iter::repeat_with(|| config::PAYLOAD_SIZE.gen(rng))
 				.take(total_msgs)
 				.collect();
 
-		Self { actor, msg_lens: msg_batch_lens, payload_sizes }
+		Self { actor, msg_lens, payload_sizes }
 	}
 
 	pub fn pop_payload_lens(
@@ -105,6 +105,10 @@ impl Env {
 		}
 		Ok(())
 	}
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+	bytes.into_iter().map(|&b| format!("{:x}", b)).collect()
 }
 
 fn main() {
@@ -136,7 +140,14 @@ fn main() {
 			env.pop_payload_lens(&mut payload_lens)
 				.expect("payload lens to be big enough");
 
-			for payload_len in payload_lens {}
+			println!("Sending actor {} the following\n", env.actor.addr);
+			for &payload_len in &payload_lens {
+				let payload = &mut payload_buf[..payload_len];
+				rng.fill(payload);
+				env.actor.enqueue(payload).unwrap();
+			}
+
+			env.actor.commit().unwrap();
 		}
 	}
 }

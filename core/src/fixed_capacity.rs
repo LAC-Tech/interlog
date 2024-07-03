@@ -76,6 +76,11 @@ impl<T> Vec<T> {
 	}
 
 	#[inline]
+	pub fn is_empty(&self) -> bool {
+		self.len == 0
+	}
+
+	#[inline]
 	pub fn clear(&mut self) {
 		self.len = 0;
 	}
@@ -152,11 +157,11 @@ impl AsRef<[u8]> for Vec<u8> {
 	}
 }
 impl<'a, T> IntoIterator for &'a Vec<T> {
-	type Item = T;
+	type Item = &'a T;
 	type IntoIter = core::slice::Iter<'a, T>;
 
 	fn into_iter(self) -> Self::IntoIter {
-		self.elems[0..self.len].into_iter()
+		self[..self.len].iter()
 	}
 }
 

@@ -44,16 +44,16 @@ impl Index {
 		}
 	}
 
-	pub fn insert<EID: Into<event::ID>>(
+	pub fn enqueue<EID: Into<event::ID>>(
 		&mut self,
 		event_id: EID,
 		offset: storage::Qty,
-	) -> Result<(), InsertErr> {
+	) -> Result<(), EnqueueErr> {
 		let event_id: event::ID = event_id.into();
 		match self.map.get_mut(&event_id.origin) {
 			Some(existing) => {
 				if existing.txn.len() != event_id.pos.0 {
-					return Err(InsertErr::NonConsecutivePos);
+					return Err(EnqueueErr::NonConsecutivePos);
 				}
 
 				if let Some(&last_offset) = existing.txn.last() {
@@ -64,19 +64,19 @@ impl Index {
 
 				if let Err(fixed_capacity::Overrun) = existing.txn.push(offset)
 				{
-					return Err(InsertErr::Overrun);
+					return Err(EnqueueErr::Overrun);
 				}
 
 				Ok(())
 			}
 			None => {
 				if !event_id.pos.is_initial() {
-					return Err(InsertErr::IndexWouldNotStartAtZero);
+					return Err(EnqueueErr::IndexWouldNotStartAtZero);
 				}
 
 				let mut txn = Vec::new(self.txn_events_per_addr.0);
 				if let Err(fixed_capacity::Overrun) = txn.push(offset) {
-					return Err(InsertErr::Overrun);
+					return Err(EnqueueErr::Overrun);
 				}
 
 				let actual = Vec::new(self.actual_events_per_addr.0);
@@ -130,7 +130,7 @@ impl Index {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum InsertErr {
+pub enum EnqueueErr {
 	NonConsecutivePos,
 	IndexWouldNotStartAtZero,
 	Overrun,
@@ -158,11 +158,11 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.insert((addr, LogicalQty(0)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(0)), StorageQty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.insert((addr, LogicalQty(34)), StorageQty(0));
-		assert_eq!(actual, Err(InsertErr::NonConsecutivePos));
+		let actual = index.enqueue((addr, LogicalQty(34)), StorageQty(0));
+		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
 	}
 
 	#[test]
@@ -171,8 +171,8 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.insert((addr, LogicalQty(42)), StorageQty(0));
-		assert_eq!(actual, Err(InsertErr::IndexWouldNotStartAtZero));
+		let actual = index.enqueue((addr, LogicalQty(42)), StorageQty(0));
+		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
 	}
 
 	#[test]
@@ -181,11 +181,11 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(1, 8);
 
-		let actual = index.insert((addr, LogicalQty(0)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(0)), StorageQty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.insert((addr, LogicalQty(1)), StorageQty(1));
-		assert_eq!(actual, Err(InsertErr::Overrun));
+		let actual = index.enqueue((addr, LogicalQty(1)), StorageQty(1));
+		assert_eq!(actual, Err(EnqueueErr::Overrun));
 	}
 
 	#[test]
@@ -194,10 +194,10 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
 
-		let actual = index.insert((addr, LogicalQty(0)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(0)), StorageQty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.insert((addr, LogicalQty(1)), StorageQty(1));
+		let actual = index.enqueue((addr, LogicalQty(1)), StorageQty(1));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
@@ -210,7 +210,7 @@ mod tests {
 		let addr = Addr::new(rng.gen());
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 		let event_id: event::ID = (addr, LogicalQty(0)).into();
-		index.insert(event_id, StorageQty(0)).unwrap();
+		index.enqueue(event_id, StorageQty(0)).unwrap();
 		index.commit().unwrap();
 
 		assert_eq!(index.get(event_id), Some(StorageQty(0)));
@@ -231,10 +231,10 @@ mod tests {
 
 			let original_index = index.clone();
 
-			let res: Result<(), InsertErr> = vs
+			let res: Result<(), EnqueueErr> = vs
 				.iter()
 				.map(|&(event_id, disk_offset)| {
-					index.insert(event_id, disk_offset)
+					index.enqueue(event_id, disk_offset)
 				})
 				.collect();
 

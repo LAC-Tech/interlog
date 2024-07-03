@@ -1,7 +1,5 @@
-use crate::event;
-
 pub enum WriteErr {
-	Full
+	Full,
 }
 
 /// Position of a word, in either memory or disk
@@ -14,7 +12,7 @@ pub enum WriteErr {
 	PartialOrd,
 	bytemuck::Pod,
 	bytemuck::Zeroable,
-	derive_more::Add
+	derive_more::Add,
 )]
 #[repr(transparent)]
 pub struct Qty(pub usize);
