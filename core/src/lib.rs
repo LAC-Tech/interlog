@@ -56,8 +56,8 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 			InnerMsg::SyncRes(events) => {
 				let write_res = events
 					.into_iter()
-					.try_for_each(|e| self.write(e))
-					.and_then(|()| self.commit());
+					.try_for_each(|e| self.write(e).map_err(Err::Enqueue))
+					.and_then(|()| self.commit().map_err(Err::Commit));
 				if let Err(err) = write_res {
 					self.index.rollback();
 					self.log.rollback();
@@ -72,33 +72,42 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		}
 	}
 
-	fn write(&mut self, e: event::Event) -> Result<(), Err> {
-		let new_pos = self.log.append(&e).map_err(Err::LogAppend)?;
-		self.index.insert(e.id, new_pos).map_err(Err::IndexInsert)
+	fn write(&mut self, e: event::Event) -> Result<(), EnqueueErr> {
+		let new_pos = self.log.enqueue(&e).map_err(EnqueueErr::Log)?;
+		self.index.enqueue(e.id, new_pos).map_err(EnqueueErr::Index)
 	}
 
-	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), Err> {
+	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let origin = self.addr;
 		let pos = self.log.last;
 		let id = event::ID { origin, pos };
 		let e = event::Event { id, payload };
 
-		let new_pos = self.log.append(&e).map_err(Err::LogAppend)?;
-		self.index.insert(e.id, new_pos).map_err(Err::IndexInsert)
+		self.write(e)
 	}
 
-	pub fn commit(&mut self) -> Result<(), Err> {
-		self.index.commit().map_err(Err::IndexCommit)?;
-		self.log.commit().map_err(Err::LogCommit)
+	pub fn commit(&mut self) -> Result<(), CommitErr> {
+		self.index.commit().map_err(CommitErr::Index)?;
+		self.log.commit().map_err(CommitErr::Log)
 	}
 }
 
 #[derive(Debug)]
+pub enum EnqueueErr {
+	Log(log::EnqueueErr),
+	Index(index::EnqueueErr),
+}
+
+#[derive(Debug)]
+pub enum CommitErr {
+	Log(log::CommitErr),
+	Index(index::CommitErr),
+}
+
+#[derive(Debug)]
 pub enum Err {
-	LogAppend(fixed_capacity::Overrun),
-	IndexInsert(index::InsertErr),
-	LogCommit(log::CommitErr),
-	IndexCommit(index::CommitErr),
+	Enqueue(EnqueueErr),
+	Commit(CommitErr),
 }
 
 pub struct Msg<'a> {
@@ -122,6 +131,8 @@ mod log {
 	// Can't think of any yet but I am sure there are LOADS
 	#[derive(Debug)]
 	pub struct CommitErr;
+	#[derive(Debug)]
+	pub struct EnqueueErr(fixed_capacity::Overrun);
 
 	pub struct Log<AOS: storage::AppendOnly> {
 		pub last: LogicalQty,
@@ -137,12 +148,12 @@ mod log {
 				actual: aos,
 			}
 		}
-		pub fn append(
+		pub fn enqueue(
 			&mut self,
 			e: &event::Event,
-		) -> Result<storage::Qty, fixed_capacity::Overrun> {
+		) -> Result<storage::Qty, EnqueueErr> {
 			let result = self.actual.used() + self.txn.used();
-			self.txn.push(e)?;
+			self.txn.push(e).map_err(EnqueueErr)?;
 			Ok(result)
 		}
 
