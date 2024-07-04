@@ -45,6 +45,7 @@ impl<T: core::default::Default + Clone> Vec<T> {
 
 		Ok(())
 	}
+
 	pub fn pop(&mut self) -> Option<T> {
 		(self.len == 0).then(|| {
 			self.len -= 1;
