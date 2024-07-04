@@ -139,6 +139,10 @@ impl Buf {
 	pub fn clear(&mut self) {
 		self.0.clear();
 	}
+
+	pub fn as_mut_bytes(&mut self) -> &mut [u8] {
+		&mut self.0
+	}
 }
 
 pub struct Slice<'a>(&'a [mem::Word]);
@@ -166,7 +170,7 @@ mod tests {
 			// Setup
 			let mut rng = rand::thread_rng();
 			let mut buf = Vec::new(256);
-			let origin = Addr::new(rng.gen());
+			let origin = Addr::new(&mut rng);
 			let id = ID::new(origin, LogicalQty(0));
 			let event = Event {id, payload: &e};
 

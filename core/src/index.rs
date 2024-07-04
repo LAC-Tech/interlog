@@ -155,49 +155,49 @@ mod tests {
 	#[test]
 	fn non_consecutive() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(rng.gen());
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.enqueue((addr, LogicalQty(0)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(0)), storage::Qty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalQty(34)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(34)), storage::Qty(0));
 		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
 	}
 
 	#[test]
 	fn index_would_not_start_at_zero() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(rng.gen());
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.enqueue((addr, LogicalQty(42)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(42)), storage::Qty(0));
 		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
 	}
 
 	#[test]
 	fn overlow() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(rng.gen());
-		let mut index = Index::new(1, 8);
+		let addr = Addr::new(&mut rng);
+		let mut index = Index::new(LogicalQty(1), LogicalQty(8));
 
-		let actual = index.enqueue((addr, LogicalQty(0)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(0)), storage::Qty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalQty(1)), StorageQty(1));
+		let actual = index.enqueue((addr, LogicalQty(1)), storage::Qty(1));
 		assert_eq!(actual, Err(EnqueueErr::Overrun));
 	}
 
 	#[test]
 	fn not_enough_space() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(rng.gen());
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
 
-		let actual = index.enqueue((addr, LogicalQty(0)), StorageQty(0));
+		let actual = index.enqueue((addr, LogicalQty(0)), storage::Qty(0));
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalQty(1)), StorageQty(1));
+		let actual = index.enqueue((addr, LogicalQty(1)), storage::Qty(1));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
@@ -207,13 +207,13 @@ mod tests {
 	#[test]
 	fn enqueue_and_get() {
 		let mut rng = thread_rng();
-		let addr = Addr::new(rng.gen());
+		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 		let event_id: event::ID = (addr, LogicalQty(0)).into();
-		index.enqueue(event_id, StorageQty(0)).unwrap();
+		index.enqueue(event_id, storage::Qty(0)).unwrap();
 		index.commit().unwrap();
 
-		assert_eq!(index.get(event_id), Some(StorageQty(0)));
+		assert_eq!(index.get(event_id), Some(storage::Qty(0)));
 	}
 
 	proptest! {
@@ -227,7 +227,7 @@ mod tests {
 
 		) {
 			let mut index =
-				Index::new(txn_events_per_addr, actual_events_per_addr);
+				Index::new(LogicalQty(txn_events_per_addr), LogicalQty(actual_events_per_addr));
 
 			let original_index = index.clone();
 
@@ -245,7 +245,7 @@ mod tests {
 				index.rollback();
 				assert_eq!(original_index, index);
 			} else {
-				let actual: alloc::vec::Vec<(event::ID, StorageQty)> =
+				let actual: alloc::vec::Vec<(event::ID, storage::Qty)> =
 					vs.iter()
 						.filter(|&(event_id, _)| index.get(*event_id).is_some())
 						.copied()

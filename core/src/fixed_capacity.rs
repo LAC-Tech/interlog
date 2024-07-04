@@ -157,6 +157,7 @@ impl AsRef<[u8]> for Vec<u8> {
 		&self.elems
 	}
 }
+
 impl<'a, T> IntoIterator for &'a Vec<T> {
 	type Item = &'a T;
 	type IntoIter = core::slice::Iter<'a, T>;

@@ -38,21 +38,27 @@ const ACTUAL_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
 
 // Currently a paper thin wrapper around Buf.
 // TODO: introduce faults
-struct AppendOnlyMemory(event::Buf);
+struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
 
 impl AppendOnlyMemory {
 	fn new() -> Self {
-		Self(event::Buf::new(config::DISK_CAPACITY))
+		Self(fixed_capacity::Vec::new(config::DISK_CAPACITY.0))
 	}
 }
 
 impl storage::AppendOnly for AppendOnlyMemory {
 	fn used(&self) -> storage::Qty {
-		self.0.used()
+		storage::Qty(self.0.len())
 	}
 
 	fn write(&mut self, data: &[u8]) -> Result<(), storage::WriteErr> {
-		panic!("TODO");
+		self.0
+			.extend_from_slice(data)
+			.map_err(|fixed_capacity::Overrun| storage::WriteErr::Full)
+	}
+
+	fn read(&self, buf: &mut [u8], offset: usize) {
+		buf.copy_from_slice(&self.0[offset..offset + buf.len()])
 	}
 }
 
@@ -157,8 +163,13 @@ fn main() {
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for env in environments.values_mut() {
-			env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens)
-				.unwrap();
+			let write_res =
+				env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens);
+
+			if let Err(err) = write_res {
+				println!("Error for {:?}: {:?}", env.actor.addr, err);
+				return;
+			}
 		}
 	}
 }

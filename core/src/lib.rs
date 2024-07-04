@@ -90,6 +90,11 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		self.index.commit().map_err(CommitErr::Index)?;
 		self.log.commit().map_err(CommitErr::Log)
 	}
+
+	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
+		// Figure out how much space I need from index
+		// allocate that amount to a buffer
+	}
 }
 
 #[derive(Debug)]

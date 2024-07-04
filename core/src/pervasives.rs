@@ -1,7 +1,7 @@
 //! Module exists purely to prevent circular dependency.
 
 use core::fmt;
-use derive_more::Add;
+use derive_more::{Add, From};
 
 /// This was originally u128, but I changed it to keep the alignment to 0x8
 #[derive(
@@ -11,6 +11,7 @@ use derive_more::Add;
 	Copy,
 	Default,
 	Eq,
+	From,
 	Hash,
 	PartialEq,
 	PartialOrd,

@@ -1,3 +1,5 @@
+use crate::fixed_capacity::Vec;
+
 pub enum WriteErr {
 	Full,
 }
@@ -23,4 +25,5 @@ pub struct Qty(pub usize);
 pub trait AppendOnly {
 	fn used(&self) -> Qty;
 	fn write(&mut self, data: &[u8]) -> Result<(), WriteErr>;
+	fn read(&self, buf: &mut [u8], offset: usize);
 }
