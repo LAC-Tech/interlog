@@ -166,6 +166,15 @@ impl<'a, T> IntoIterator for &'a Vec<T> {
 	}
 }
 
+impl<'a, T> IntoIterator for &'a mut Vec<T> {
+	type Item = &'a T;
+	type IntoIter = core::slice::Iter<'a, T>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		self[..self.len].iter()
+	}
+}
+
 /*
 macro_rules! vec {
 	($($x:expr),*) => {{

@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 interlog_core = { path = "../core" }
 rand = "0.8.5"
+tabled = "0.15.0"

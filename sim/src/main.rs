@@ -90,7 +90,7 @@ impl Env {
 		Self { actor, msg_lens, payload_sizes }
 	}
 
-	pub fn pop_payload_lens(
+	fn pop_payload_lens(
 		&mut self,
 		buf: &mut fixed_capacity::Vec<usize>,
 	) -> fixed_capacity::Res {
@@ -104,6 +104,27 @@ impl Env {
 			}
 		}
 		Ok(())
+	}
+
+	pub fn tick<R: rand::Rng>(
+		&mut self,
+		ms: u64,
+		rng: &mut R,
+		payload_buf: &mut [u8],
+		payload_lens: &mut fixed_capacity::Vec<usize>,
+	) -> Result<(), Err> {
+		payload_lens.clear();
+		self.pop_payload_lens(payload_lens)
+			.expect("payload lens to be big enough");
+
+		println!("sending actor {} the following\n", self.actor.addr);
+		for &payload_len in payload_lens {
+			let payload = &mut payload_buf[..payload_len];
+			rng.fill(payload);
+			self.actor.enqueue(payload).map_err(Err::Enqueue)?;
+		}
+
+		self.actor.commit().map_err(Err::Commit)
 	}
 }
 
@@ -134,20 +155,10 @@ fn main() {
 	let mut payload_buf = [0u8; config::PAYLOAD_SIZE.max()];
 	let mut payload_lens = fixed_capacity::Vec::new(config::MSG_LEN.max());
 
-	for tick in (0..MAX_SIM_TIME_MS).step_by(10) {
+	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for env in environments.values_mut() {
-			payload_lens.clear();
-			env.pop_payload_lens(&mut payload_lens)
-				.expect("payload lens to be big enough");
-
-			println!("Sending actor {} the following\n", env.actor.addr);
-			for &payload_len in &payload_lens {
-				let payload = &mut payload_buf[..payload_len];
-				rng.fill(payload);
-				env.actor.enqueue(payload).unwrap();
-			}
-
-			env.actor.commit().unwrap();
+			env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens)
+				.unwrap();
 		}
 	}
 }
