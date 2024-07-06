@@ -44,6 +44,7 @@ impl fmt::Debug for Addr {
 	Clone,
 	Copy,
 	Debug,
+	Default,
 	Eq,
 	PartialOrd,
 	Ord,

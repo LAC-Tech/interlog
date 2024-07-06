@@ -1,154 +1,181 @@
+use core::ops::Range;
+
 use crate::event;
 use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
 use crate::pervasives::*;
 use crate::storage;
 
-use hashbrown::HashMap;
+/// Version Vector
+mod version_vector {
+	use crate::event;
+	use crate::fixed_capacity::Vec;
+	use crate::pervasives::*;
+	use crate::storage;
+	use hashbrown::hash_map::Entry;
+	use hashbrown::HashMap;
 
-#[derive(Clone, Debug, PartialEq)]
-struct Elem {
-	txn: Vec<storage::Qty>,
-	actual: Vec<storage::Qty>,
-}
+	#[derive(Debug, PartialEq)]
+	pub struct NonConsecutiveErr;
 
-impl Elem {
-	fn is_empty(&self) -> bool {
-		self.actual.is_empty()
+	// TODO: fixed capacity hash map, if such a thing is even possible
+	#[derive(Clone, Debug, PartialEq)]
+	pub struct VersionVector(HashMap<Addr, usize>);
+
+	impl VersionVector {
+		pub fn new() -> Self {
+			Self(HashMap::new())
+		}
+
+		fn get_raw(&self, addr: Addr) -> usize {
+			self.0.get(&addr).copied().unwrap_or(0)
+		}
+
+		pub fn get(&self, addr: Addr) -> LogicalQty {
+			// If an address it not the VV, by definition there are 0 updates
+			LogicalQty(self.get_raw(addr))
+		}
+
+		pub fn insert(
+			&mut self,
+			eid: event::ID,
+		) -> Result<LogicalQty, NonConsecutiveErr> {
+			let new_count = eid.pos.0 + 1;
+			let addr = eid.origin;
+			let result = match self.0.entry(addr) {
+				Entry::Occupied(mut count) => (new_count == *count.get() + 1)
+					.then(|| count.insert(new_count))
+					.ok_or(NonConsecutiveErr),
+				Entry::Vacant(entry) => (new_count == 1)
+					.then(|| *entry.insert(new_count))
+					.ok_or(NonConsecutiveErr),
+			};
+
+			result.map(LogicalQty)
+		}
+
+		pub fn transfer_count(&mut self, src: &VersionVector, addr: Addr) {
+			self.0
+				.entry(addr)
+				.or_insert_with(|| *src.0.get(&addr).unwrap_or(&0));
+		}
+
+		pub fn merge_in(&mut self, txn: &VersionVector) {
+			for (&addr, &new_counter) in txn.0.iter() {
+				self.0.entry(addr).and_modify(|current_counter| {
+					if new_counter > *current_counter {
+						*current_counter = new_counter;
+					} else {
+						panic!("Txn VV does not dominate actual VV")
+					}
+				});
+			}
+		}
+
+		pub fn clear(&mut self) {
+			self.0.clear();
+		}
+
+		// Does the LHS dominate the RHS?
+		pub fn dominates(&self, other: &VersionVector) -> bool {
+			// looping over both to avoid storing union of both adddrs
+			for (&addr, &left) in self.0.iter() {
+				let right = other.get_raw(addr);
+				if right > left {
+					return false;
+				}
+			}
+
+			for (&addr, &right) in other.0.iter() {
+				let left = self.get_raw(addr);
+				if right > left {
+					return false;
+				}
+			}
+
+			return true;
+		}
 	}
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Index {
-	// TODO: fixed size hashmap
-	map: HashMap<Addr, Elem>,
-	txn_events_per_addr: LogicalQty,
-	actual_events_per_addr: LogicalQty,
+	txn_buf: Vec<storage::Qty>,
+	logical_to_storage: Vec<storage::Qty>,
+	actual_vv: version_vector::VersionVector,
+	txn_vv: version_vector::VersionVector,
 }
-
-/// In-memory mapping of event IDs to disk offsets
-/// This keeps the following invariants:
-/// - events must be stored consecutively per address,
-///
-/// This effectively stores the causal histories over every addr
 impl Index {
-	pub fn new(
-		txn_events_per_addr: LogicalQty,
-		actual_events_per_addr: LogicalQty,
-	) -> Self {
+	pub fn new(max_txn_size: LogicalQty, max_events: LogicalQty) -> Self {
 		// TODO: HOW MANY ADDRS WILL I HAVE?
 		Self {
-			map: HashMap::new(),
-			txn_events_per_addr,
-			actual_events_per_addr,
+			logical_to_storage: Vec::new(max_events.0),
+			txn_buf: Vec::new(max_txn_size.0),
+			actual_vv: version_vector::VersionVector::new(),
+			txn_vv: version_vector::VersionVector::new(),
 		}
 	}
 
-	pub fn enqueue<EID: Into<event::ID>>(
+	pub fn enqueue(
 		&mut self,
-		event_id: EID,
-		offset: storage::Qty,
+		e: &event::Event,
+		stored_offset: storage::Qty,
 	) -> Result<(), EnqueueErr> {
-		let event_id: event::ID = event_id.into();
-		match self.map.get_mut(&event_id.origin) {
-			Some(existing) => {
-				if existing.txn.len() != event_id.pos.0 {
-					return Err(EnqueueErr::NonConsecutivePos);
-				}
+		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
+		self.txn_vv.insert(e.id).map_err(EnqueueErr::VersionVector)?;
 
-				if let Some(&last_offset) = existing.txn.last() {
-					if last_offset >= offset {
-						panic!("non-monotonic storage offset")
-					}
-				}
+		let offset =
+			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
 
-				if let Err(fixed_capacity::Overrun) = existing.txn.push(offset)
-				{
-					return Err(EnqueueErr::Overrun);
-				}
-
-				Ok(())
-			}
-			None => {
-				if !event_id.pos.is_initial() {
-					return Err(EnqueueErr::IndexWouldNotStartAtZero);
-				}
-
-				let mut txn = Vec::new(self.txn_events_per_addr.0);
-				if let Err(fixed_capacity::Overrun) = txn.push(offset) {
-					return Err(EnqueueErr::Overrun);
-				}
-
-				let actual = Vec::new(self.actual_events_per_addr.0);
-
-				self.map.insert(event_id.origin, Elem { txn, actual });
-				Ok(())
-			}
-		}
-	}
-
-	pub fn commit(&mut self) -> Result<(), CommitErr> {
-		let enough_space = self
-			.map
-			.values()
-			.all(|Elem { txn, actual }| actual.can_be_extended_by(txn));
-
-		if !enough_space {
-			return Err(CommitErr::NotEnoughSpace);
-		}
-
-		for Elem { txn, actual } in self.map.values_mut() {
-			if let Err(fixed_capacity::Overrun) = actual.extend_from_slice(txn)
-			{
-				return Err(CommitErr::Overrun);
-			}
-			txn.clear();
+		if let Err(fixed_capacity::Overrun) = self.txn_buf.push(offset) {
+			return Err(EnqueueErr::Overrun);
 		}
 
 		Ok(())
 	}
 
-	pub fn rollback(&mut self) {
-		// remove empty elems left behind by a failed transaction
-		self.map.retain(|_, v| !v.is_empty());
-		// remove items from txn buffers
-		for Elem { txn, .. } in self.map.values_mut() {
-			txn.clear()
+	pub fn commit(&mut self) -> Result<(), CommitErr> {
+		self.actual_vv.merge_in(&self.txn_vv);
+		if let Err(fixed_capacity::Overrun) =
+			self.logical_to_storage.extend_from_slice(&self.txn_buf)
+		{
+			return Err(CommitErr::Overrun);
 		}
+		Ok(())
 	}
 
-	pub fn get(&self, event_id: event::ID) -> Option<storage::Qty> {
-		self.map
-			.get(&event_id.origin)
-			.and_then(|elem| elem.actual.get(event_id.pos.0))
-			.cloned()
+	pub fn rollback(&mut self) {
+		self.txn_buf.clear();
+		self.txn_vv.clear();
 	}
 
-	pub fn event_count(&self) -> usize {
-		self.map.values().map(|elem| elem.actual.len()).sum()
+	pub fn read(&self, logical: Range<LogicalQty>) -> &[storage::Qty] {
+		&self.logical_to_storage[logical.start.0..logical.end.0]
 	}
 }
 
 #[derive(Debug, PartialEq)]
 pub enum EnqueueErr {
-	NonConsecutivePos,
-	IndexWouldNotStartAtZero,
+	VersionVector(version_vector::NonConsecutiveErr),
 	Overrun,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum CommitErr {
-	NotEnoughSpace,
 	Overrun,
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::event::Event;
 	use crate::test_utils::*;
 	use pretty_assertions::assert_eq;
 	use proptest::prelude::*;
 	use rand::prelude::*;
+
+	use version_vector::NonConsecutiveErr;
+	use EnqueueErr::*;
 
 	// Sanity check unit tests - trigger every error
 
@@ -158,11 +185,17 @@ mod tests {
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.enqueue((addr, LogicalQty(0)), storage::Qty(0));
+		let offset = storage::Qty(0);
+
+		let actual =
+			index.enqueue(&Event::new(addr, LogicalQty(0), b"non"), offset);
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalQty(34)), storage::Qty(0));
-		assert_eq!(actual, Err(EnqueueErr::NonConsecutivePos));
+		let actual = index.enqueue(
+			&Event::new(addr, LogicalQty(34), b"consecutive"),
+			storage::Qty(0),
+		);
+		assert_eq!(actual, Err(VersionVector(NonConsecutiveErr)))
 	}
 
 	#[test]
@@ -171,37 +204,45 @@ mod tests {
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.enqueue((addr, LogicalQty(42)), storage::Qty(0));
-		assert_eq!(actual, Err(EnqueueErr::IndexWouldNotStartAtZero));
+		let actual = index.enqueue(
+			&Event::new(addr, LogicalQty(42), b"not at zero"),
+			storage::Qty(0),
+		);
+		assert_eq!(actual, Err(VersionVector(NonConsecutiveErr)));
 	}
 
 	#[test]
-	fn overlow() {
+	fn enqueue_overrun() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(1), LogicalQty(8));
 
-		let actual = index.enqueue((addr, LogicalQty(0)), storage::Qty(0));
+		let offset = storage::Qty(0);
+		let actual =
+			index.enqueue(&Event::new(addr, LogicalQty(0), b"over"), offset);
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalQty(1)), storage::Qty(1));
+		let actual =
+			index.enqueue(&Event::new(addr, LogicalQty(1), b"run"), offset);
 		assert_eq!(actual, Err(EnqueueErr::Overrun));
 	}
 
 	#[test]
-	fn not_enough_space() {
+	fn commit_overrun() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
-
-		let actual = index.enqueue((addr, LogicalQty(0)), storage::Qty(0));
+		let offset = storage::Qty(0);
+		let actual =
+			index.enqueue(&Event::new(addr, LogicalQty(0), b"commit"), offset);
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue((addr, LogicalQty(1)), storage::Qty(1));
+		let actual =
+			index.enqueue(&Event::new(addr, LogicalQty(1), b"overrun"), offset);
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
-		assert_eq!(actual, Err(CommitErr::NotEnoughSpace))
+		assert_eq!(actual, Err(CommitErr::Overrun))
 	}
 
 	#[test]
@@ -209,51 +250,81 @@ mod tests {
 		let mut rng = thread_rng();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
-		let event_id: event::ID = (addr, LogicalQty(0)).into();
-		index.enqueue(event_id, storage::Qty(0)).unwrap();
+		let offset = storage::Qty(0);
+		let event = Event::new(addr, LogicalQty(0), b"enqueue and get");
+		index.enqueue(&event, offset).unwrap();
 		index.commit().unwrap();
 
-		assert_eq!(index.get(event_id), Some(storage::Qty(0)));
+		assert_eq!(
+			index.read(LogicalQty(0)..LogicalQty(1)),
+			&[offset + event.size()]
+		);
 	}
 
 	proptest! {
 		#[test]
-		fn txn_either_succeeds_or_fails(
-			vs in proptest::collection::vec(
-				(arb_event_id(), arb_storage_pos()),
-				0..1000),
-			txn_events_per_addr in 0usize..10usize,
-			actual_events_per_addr in 0usize..200usize
+		fn proptest_enqueue_and_get(
+			offset in 0usize..10_000_000usize,
+			payload in arb_payload(4096)
+		) {
+			let mut rng = thread_rng();
+			let addr = Addr::new(&mut rng);
+			let mut index = Index::new(LogicalQty(2), LogicalQty(8));
+			let offset = storage::Qty(offset);
+			let event = Event::new(addr, LogicalQty(0), &payload);
+			index.enqueue(&event, offset).unwrap();
+			index.commit().unwrap();
 
+			assert_eq!(
+				index.read(LogicalQty(0)..LogicalQty(1)),
+				&[offset + event.size()]
+			);
+		}
+
+		#[test]
+		fn txn_either_succeeds_or_fails(
+			id_payload_pairs in proptest::collection::vec(
+				(arb_event_id(), arb_payload(100)),
+				0..1000),
+			max_txn_size in 0usize..10usize,
+			max_events in 0usize..200usize,
+			offset in 0usize..10_000_000usize
 		) {
 			let mut index =
-				Index::new(LogicalQty(txn_events_per_addr), LogicalQty(actual_events_per_addr));
+				Index::new(
+					LogicalQty(max_txn_size),
+					LogicalQty(max_events));
 
-			let original_index = index.clone();
+			let control_index = index.clone();
 
-			let res: Result<(), EnqueueErr> = vs
+			let res: Result<(), EnqueueErr> = id_payload_pairs
 				.iter()
-				.map(|&(event_id, disk_offset)| {
-					index.enqueue(event_id, disk_offset)
+				.map(|(id, payload)| {
+					let e = Event {id: *id, payload};
+					index.enqueue(&e, storage::Qty(offset))
 				})
 				.collect();
 
 			if let Err(_) = res {
 				index.rollback();
-				assert_eq!(original_index, index);
+				assert_eq!(control_index, index);
 			} else if let Err(_) = index.commit() {
 				index.rollback();
-				assert_eq!(original_index, index);
+				assert_eq!(control_index, index, "after commit err, rolling back still has the two indexes in an inconsistent state");
 			} else {
-				let actual: alloc::vec::Vec<(event::ID, storage::Qty)> =
-					vs.iter()
-						.filter(|&(event_id, _)| index.get(*event_id).is_some())
-						.copied()
-						.collect();
 
-				assert_eq!(vs, actual);
+				let actual = index.read(
+					LogicalQty(0)..LogicalQty(id_payload_pairs.len())
+				);
+
+				let expected: alloc::vec::Vec<storage::Qty> = id_payload_pairs
+					.iter().map(|(id, payload)| {
+						let e = Event {id: *id, payload};
+						e.size()
+					}).collect();
+
+				assert_eq!(actual, expected)
 			}
 		}
-
 	}
 }

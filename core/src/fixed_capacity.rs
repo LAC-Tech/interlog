@@ -16,10 +16,16 @@ pub type Res = Result<(), Overrun>;
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
  * This is so it could be used in a #[no_std] context
  */
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct Vec<T> {
 	elems: alloc::boxed::Box<[T]>,
 	len: usize,
+}
+
+impl<T: core::cmp::PartialEq> PartialEq for Vec<T> {
+	fn eq(&self, other: &Self) -> bool {
+		&self.elems[..self.len] == &other.elems[..other.len]
+	}
 }
 
 impl<T: fmt::Debug> fmt::Debug for Vec<T> {
@@ -154,7 +160,7 @@ impl<T> ops::DerefMut for Vec<T> {
 
 impl AsRef<[u8]> for Vec<u8> {
 	fn as_ref(&self) -> &[u8] {
-		&self.elems
+		&self.elems[..self.len]
 	}
 }
 

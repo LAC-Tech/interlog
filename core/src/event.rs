@@ -15,6 +15,7 @@ use crate::storage;
 	Clone,
 	Copy,
 	Debug,
+	Default,
 	Eq,
 	PartialEq,
 	PartialOrd,
@@ -62,11 +63,19 @@ pub struct Event<'a> {
 }
 
 impl<'a> Event<'a> {
+	pub fn new(
+		origin: Addr,
+		pos: LogicalQty,
+		payload: &'a [mem::Word],
+	) -> Self {
+		Self { id: ID::new(origin, pos), payload }
+	}
 	/// Number of bytes the event will take up, including the header
-	pub fn on_disk_size(&self) -> usize {
+	pub fn size(&self) -> storage::Qty {
 		let raw_size = HEADER_SIZE + self.payload.len();
 		// align to 8
-		(raw_size + 7) & !7
+		let raw_size = (raw_size + 7) & !7;
+		storage::Qty(raw_size)
 	}
 }
 
@@ -84,7 +93,7 @@ pub fn append(buf: &mut Vec<mem::Word>, event: &Event) -> fixed_capacity::Res {
 	let header_region = mem::Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
 	let payload_region = header_region.next(byte_len);
-	let next_offset = buf.len() + event.on_disk_size();
+	let next_offset = buf.len() + event.size().0;
 	buf.resize(next_offset)?;
 	let header_bytes = bytemuck::bytes_of(&header);
 
@@ -112,7 +121,7 @@ impl<'a> Iterator for Iter<'a> {
 
 	fn next(&mut self) -> Option<Self::Item> {
 		let result = read(self.words, self.index)?;
-		self.index += result.on_disk_size();
+		self.index += result.size().0;
 		Some(result)
 	}
 }

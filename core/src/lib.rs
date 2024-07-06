@@ -74,7 +74,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 
 	fn write(&mut self, e: event::Event) -> Result<(), EnqueueErr> {
 		let new_pos = self.log.enqueue(&e).map_err(EnqueueErr::Log)?;
-		self.index.enqueue(e.id, new_pos).map_err(EnqueueErr::Index)
+		self.index.enqueue(&e, new_pos).map_err(EnqueueErr::Index)
 	}
 
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
@@ -92,6 +92,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 
 	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
+		panic!("TODO");
 		// Figure out how much space I need from index
 		// allocate that amount to a buffer
 	}

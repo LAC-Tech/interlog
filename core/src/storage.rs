@@ -15,6 +15,7 @@ pub enum WriteErr {
 	bytemuck::Pod,
 	bytemuck::Zeroable,
 	derive_more::Add,
+	derive_more::Sum,
 )]
 #[repr(transparent)]
 pub struct Qty(pub usize);
