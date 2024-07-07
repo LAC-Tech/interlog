@@ -152,6 +152,10 @@ impl Buf {
 	pub fn as_mut_bytes(&mut self) -> &mut [u8] {
 		&mut self.0
 	}
+
+	pub fn as_bytes(&mut self) -> &[u8] {
+		&self.0
+	}
 }
 
 pub struct Slice<'a>(&'a [mem::Word]);

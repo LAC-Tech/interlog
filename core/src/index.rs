@@ -154,6 +154,12 @@ impl Index {
 	}
 }
 
+// #[derive(Debug)]
+// pub struct EnqueueErr<'a> {
+// 	kind: EnqueueErrKind,
+// 	event: event::Event<'a>,
+// }
+
 #[derive(Debug, PartialEq)]
 pub enum EnqueueErr {
 	VersionVector(version_vector::NonConsecutiveErr),

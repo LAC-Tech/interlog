@@ -122,8 +122,6 @@ impl Env {
 		payload_lens.clear();
 		self.pop_payload_lens(payload_lens)
 			.expect("payload lens to be big enough");
-
-		println!("sending actor {} the following\n", self.actor.addr);
 		for &payload_len in payload_lens {
 			let payload = &mut payload_buf[..payload_len];
 			rng.fill(payload);
@@ -167,7 +165,8 @@ fn main() {
 				env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens);
 
 			if let Err(err) = write_res {
-				println!("Error for {:?}: {:?}", env.actor.addr, err);
+				println!("Error for {:?} at {:?}ms", env.actor.addr, ms);
+				println!("{:?}", err);
 				return;
 			}
 		}

@@ -1,7 +1,6 @@
 //! Module exists purely to prevent circular dependency.
 
 use core::fmt;
-use derive_more::{Add, From};
 
 /// This was originally u128, but I changed it to keep the alignment to 0x8
 #[derive(
@@ -11,7 +10,7 @@ use derive_more::{Add, From};
 	Copy,
 	Default,
 	Eq,
-	From,
+	derive_more::From,
 	Hash,
 	PartialEq,
 	PartialOrd,
@@ -40,7 +39,8 @@ impl fmt::Debug for Addr {
 
 /// Logical Position of the event on the log, ie the 'nth' event
 #[derive(
-	Add,
+	derive_more::Add,
+	derive_more::AddAssign,
 	Clone,
 	Copy,
 	Debug,

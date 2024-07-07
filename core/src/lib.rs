@@ -56,7 +56,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 			InnerMsg::SyncRes(events) => {
 				let write_res = events
 					.into_iter()
-					.try_for_each(|e| self.write(e).map_err(Err::Enqueue))
+					.try_for_each(|e| self.write(&e).map_err(Err::Enqueue))
 					.and_then(|()| self.commit().map_err(Err::Commit));
 				if let Err(err) = write_res {
 					self.index.rollback();
@@ -72,18 +72,18 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		}
 	}
 
-	fn write(&mut self, e: event::Event) -> Result<(), EnqueueErr> {
-		let new_pos = self.log.enqueue(&e).map_err(EnqueueErr::Log)?;
-		self.index.enqueue(&e, new_pos).map_err(EnqueueErr::Index)
+	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
+		let new_pos = self.log.enqueue(e).map_err(EnqueueErr::Log)?;
+		self.index.enqueue(e, new_pos).map_err(EnqueueErr::Index)
 	}
 
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let origin = self.addr;
-		let pos = self.log.last;
+		let pos = self.log.next_pos();
 		let id = event::ID { origin, pos };
 		let e = event::Event { id, payload };
 
-		self.write(e)
+		self.write(&e)
 	}
 
 	pub fn commit(&mut self) -> Result<(), CommitErr> {
@@ -136,12 +136,15 @@ mod log {
 
 	// Can't think of any yet but I am sure there are LOADS
 	#[derive(Debug)]
-	pub struct CommitErr;
+	pub enum CommitErr {
+		Storage(storage::WriteErr),
+	}
 	#[derive(Debug)]
 	pub struct EnqueueErr(fixed_capacity::Overrun);
 
 	pub struct Log<AOS: storage::AppendOnly> {
-		pub last: LogicalQty,
+		txn_last: LogicalQty,
+		actual_last: LogicalQty,
 		txn: event::Buf,
 		actual: AOS,
 	}
@@ -149,7 +152,8 @@ mod log {
 	impl<AOS: storage::AppendOnly> Log<AOS> {
 		pub fn new(txn_size: storage::Qty, aos: AOS) -> Self {
 			Self {
-				last: LogicalQty(0),
+				txn_last: LogicalQty(0),
+				actual_last: LogicalQty(0),
 				txn: event::Buf::new(txn_size),
 				actual: aos,
 			}
@@ -160,15 +164,24 @@ mod log {
 		) -> Result<storage::Qty, EnqueueErr> {
 			let result = self.actual.used() + self.txn.used();
 			self.txn.push(e).map_err(EnqueueErr)?;
+			self.txn_last += LogicalQty(1);
 			Ok(result)
 		}
 
 		pub fn commit(&mut self) -> Result<(), CommitErr> {
-			panic!("TODO: drain txn into actual, then update last")
+			self.actual
+				.write(self.txn.as_bytes())
+				.map_err(CommitErr::Storage)?;
+			self.actual_last += self.txn_last;
+			Ok(())
 		}
 
 		pub fn rollback(&mut self) {
 			self.txn.clear();
+		}
+
+		pub fn next_pos(&self) -> LogicalQty {
+			self.actual_last + self.txn_last
 		}
 	}
 }
