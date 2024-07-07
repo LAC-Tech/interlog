@@ -23,7 +23,7 @@ compile_error!("code assumes linux");
 pub mod event;
 pub mod fixed_capacity;
 mod index;
-mod mem;
+pub mod mem;
 mod pervasives;
 pub mod storage;
 #[cfg(test)]
@@ -73,7 +73,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 
 	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
-		let new_pos = self.log.enqueue(e)?;
+		let new_pos = self.log.enqueue(e).map_err(EnqueueErr::Log)?;
 		self.index.enqueue(e, new_pos)?;
 		Ok(())
 	}
@@ -102,14 +102,8 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 
 #[derive(Debug)]
 pub enum EnqueueErr {
-	Log(log::EnqueueErr),
+	Log(mem::Overrun),
 	Index(index::EnqueueErr),
-}
-
-impl From<log::EnqueueErr> for EnqueueErr {
-	fn from(item: log::EnqueueErr) -> Self {
-		Self::Log(item)
-	}
 }
 
 impl From<index::EnqueueErr> for EnqueueErr {
@@ -157,7 +151,7 @@ pub enum InnerMsg<'a> {
 mod log {
 	use super::storage;
 	use crate::event;
-	use crate::fixed_capacity;
+	use crate::mem;
 	use crate::pervasives::*;
 
 	// Can't think of any yet but I am sure there are LOADS
@@ -165,8 +159,6 @@ mod log {
 	pub enum CommitErr {
 		Storage(storage::WriteErr),
 	}
-	#[derive(Debug)]
-	pub struct EnqueueErr(fixed_capacity::Overrun);
 
 	pub struct Log<AOS: storage::AppendOnly> {
 		txn_last: LogicalQty,
@@ -187,9 +179,9 @@ mod log {
 		pub fn enqueue(
 			&mut self,
 			e: &event::Event,
-		) -> Result<storage::Qty, EnqueueErr> {
+		) -> Result<storage::Qty, mem::Overrun> {
 			let result = self.actual.used() + self.txn.used();
-			self.txn.push(e).map_err(EnqueueErr)?;
+			self.txn.push(e)?;
 			self.txn_last += LogicalQty(1);
 			Ok(result)
 		}

@@ -54,7 +54,7 @@ impl storage::AppendOnly for AppendOnlyMemory {
 	fn write(&mut self, data: &[u8]) -> Result<(), storage::WriteErr> {
 		self.0
 			.extend_from_slice(data)
-			.map_err(|fixed_capacity::Overrun| storage::WriteErr::Full)
+			.map_err(|mem::Overrun| storage::WriteErr::Overrun)
 	}
 
 	fn read(&self, buf: &mut [u8], offset: usize) {

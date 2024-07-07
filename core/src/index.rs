@@ -1,17 +1,15 @@
 use core::ops::Range;
 
 use crate::event;
-use crate::fixed_capacity;
 use crate::fixed_capacity::Vec;
+use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
 
 /// Version Vector
 mod version_vector {
 	use crate::event;
-	use crate::fixed_capacity::Vec;
 	use crate::pervasives::*;
-	use crate::storage;
 	use hashbrown::hash_map::Entry;
 	use hashbrown::HashMap;
 
@@ -127,7 +125,7 @@ impl Index {
 		let offset =
 			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
 
-		if let Err(fixed_capacity::Overrun) = self.txn_buf.push(offset) {
+		if let Err(mem::Overrun) = self.txn_buf.push(offset) {
 			return Err(EnqueueErr::Overrun);
 		}
 
@@ -136,7 +134,7 @@ impl Index {
 
 	pub fn commit(&mut self) -> Result<(), CommitErr> {
 		self.actual_vv.merge_in(&self.txn_vv);
-		if let Err(fixed_capacity::Overrun) =
+		if let Err(mem::Overrun) =
 			self.logical_to_storage.extend_from_slice(&self.txn_buf)
 		{
 			return Err(CommitErr::Overrun);

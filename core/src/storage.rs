@@ -2,7 +2,7 @@ use crate::fixed_capacity::Vec;
 
 #[derive(Debug)]
 pub enum WriteErr {
-	Full,
+	Overrun,
 }
 
 /// Position of a word, in either memory or disk

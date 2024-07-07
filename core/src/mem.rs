@@ -5,6 +5,9 @@ pub struct Region {
 }
 
 #[derive(Debug)]
+pub struct Overrun;
+
+#[derive(Debug)]
 pub struct WriteErr;
 
 pub type Word = u8;
