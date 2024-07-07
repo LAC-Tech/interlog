@@ -29,7 +29,7 @@ mod config {
 	pub const MSG_LEN: Range = Range(0, 50);
 
 	// Currently just something "big enough", later handle disk overflow
-	pub const DISK_CAPACITY: storage::Qty = storage::Qty(1000);
+	pub const STORAGE_CAPACITY: storage::Qty = storage::Qty(10_000_000);
 }
 
 // Currently a paper thin wrapper around Buf.
@@ -38,7 +38,7 @@ struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
 
 impl AppendOnlyMemory {
 	fn new() -> Self {
-		Self(fixed_capacity::Vec::new(config::DISK_CAPACITY.0))
+		Self(fixed_capacity::Vec::new(config::STORAGE_CAPACITY.0))
 	}
 }
 
@@ -72,7 +72,7 @@ impl Env {
 				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max(),
 			),
 			max_txn_events: LogicalQty(config::MSG_LEN.max()),
-			max_events: LogicalQty(1_100_000),
+			max_events: LogicalQty(100_000),
 		};
 		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
 
@@ -157,6 +157,7 @@ fn main() {
 	let mut payload_lens = fixed_capacity::Vec::new(config::MSG_LEN.max());
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
+		println!("the time is {:?} ms, do you know where your data is?", ms);
 		for env in environments.values_mut() {
 			let write_res =
 				env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens);
