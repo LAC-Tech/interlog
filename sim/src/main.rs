@@ -72,7 +72,7 @@ impl Env {
 				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max(),
 			),
 			max_txn_events: LogicalQty(config::MSG_LEN.max()),
-			max_events: LogicalQty(1_000_000),
+			max_events: LogicalQty(1_100_000),
 		};
 		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
 
@@ -134,13 +134,13 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 }
 
 fn main() {
-	let mut rng = thread_rng();
-
 	let args: Vec<String> = std::env::args().collect();
 	let seed: u64 = args
 		.get(1)
 		.map(|s| s.parse::<u64>().expect("a valid u64 seed"))
-		.unwrap_or_else(|| rng.gen());
+		.unwrap_or_else(|| thread_rng().gen());
+
+	let mut rng = StdRng::seed_from_u64(seed);
 
 	let n_actors = config::ACTORS.gen(&mut rng);
 
