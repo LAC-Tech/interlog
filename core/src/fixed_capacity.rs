@@ -24,7 +24,7 @@ pub struct Vec<T> {
 
 impl<T: core::cmp::PartialEq> PartialEq for Vec<T> {
 	fn eq(&self, other: &Self) -> bool {
-		&self.elems[..self.len] == &other.elems[..other.len]
+		self.elems[..self.len] == other.elems[..other.len]
 	}
 }
 

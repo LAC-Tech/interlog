@@ -73,8 +73,9 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 
 	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
-		let new_pos = self.log.enqueue(e).map_err(EnqueueErr::Log)?;
-		self.index.enqueue(e, new_pos).map_err(EnqueueErr::Index)
+		let new_pos = self.log.enqueue(e)?;
+		self.index.enqueue(e, new_pos)?;
+		Ok(())
 	}
 
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
@@ -87,8 +88,9 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 
 	pub fn commit(&mut self) -> Result<(), CommitErr> {
-		self.index.commit().map_err(CommitErr::Index)?;
-		self.log.commit().map_err(CommitErr::Log)
+		self.index.commit()?;
+		self.log.commit()?;
+		Ok(())
 	}
 
 	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
@@ -104,10 +106,34 @@ pub enum EnqueueErr {
 	Index(index::EnqueueErr),
 }
 
+impl From<log::EnqueueErr> for EnqueueErr {
+	fn from(item: log::EnqueueErr) -> Self {
+		Self::Log(item)
+	}
+}
+
+impl From<index::EnqueueErr> for EnqueueErr {
+	fn from(item: index::EnqueueErr) -> Self {
+		Self::Index(item)
+	}
+}
+
 #[derive(Debug)]
 pub enum CommitErr {
 	Log(log::CommitErr),
 	Index(index::CommitErr),
+}
+
+impl From<log::CommitErr> for CommitErr {
+	fn from(item: log::CommitErr) -> Self {
+		Self::Log(item)
+	}
+}
+
+impl From<index::CommitErr> for CommitErr {
+	fn from(item: index::CommitErr) -> Self {
+		Self::Index(item)
+	}
 }
 
 #[derive(Debug)]

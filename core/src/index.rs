@@ -93,7 +93,7 @@ mod version_vector {
 				}
 			}
 
-			return true;
+			true
 		}
 	}
 }
