@@ -14,7 +14,10 @@ mod version_vector {
 	use hashbrown::HashMap;
 
 	#[derive(Debug, PartialEq)]
-	pub struct NonConsecutiveErr;
+	pub struct NonConsecutiveErr {
+		pub new_count: usize,
+		pub expected: usize,
+	}
 
 	// TODO: fixed capacity hash map, if such a thing is even possible
 	#[derive(Clone, Debug, PartialEq)]
@@ -41,12 +44,19 @@ mod version_vector {
 			let new_count = eid.pos.0 + 1;
 			let addr = eid.origin;
 			let result = match self.0.entry(addr) {
-				Entry::Occupied(mut count) => (new_count == *count.get() + 1)
-					.then(|| count.insert(new_count))
-					.ok_or(NonConsecutiveErr),
-				Entry::Vacant(entry) => (new_count == 1)
-					.then(|| *entry.insert(new_count))
-					.ok_or(NonConsecutiveErr),
+				Entry::Occupied(mut count) => {
+					let expected = *count.get() + 1;
+					(new_count == expected)
+						.then(|| count.insert(new_count))
+						.ok_or(NonConsecutiveErr { new_count, expected })
+				}
+				Entry::Vacant(entry) => {
+					if new_count != 1 {
+						panic!("new count was not one");
+					}
+
+					Ok(*entry.insert(new_count))
+				}
 			};
 
 			result.map(LogicalQty)
@@ -120,17 +130,21 @@ impl Index {
 		stored_offset: storage::Qty,
 	) -> Result<(), EnqueueErr> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
-		self.txn_vv.insert(e.id).map_err(
-			|version_vector::NonConsecutiveErr| {
-				EnqueueErr::VersionVectorNonConsecutive
+		self.txn_vv.insert(e.id).map_err(|err| match err {
+			version_vector::NonConsecutiveErr { .. } => EnqueueErr {
+				kind: EnqueueErrKind::VersionVector(err),
+				event_id: e.id,
 			},
-		)?;
+		})?;
 
 		let offset =
 			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
 
 		if let Err(mem::Overrun) = self.txn_buf.push(offset) {
-			return Err(EnqueueErr::Overrun);
+			return Err(EnqueueErr {
+				kind: EnqueueErrKind::Overrun,
+				event_id: e.id,
+			});
 		}
 
 		Ok(())
@@ -156,15 +170,15 @@ impl Index {
 	}
 }
 
-// #[derive(Debug)]
-// pub struct EnqueueErr<'a> {
-// 	kind: EnqueueErrKind,
-// 	event: event::Event<'a>,
-// }
+#[derive(Debug)]
+pub struct EnqueueErr {
+	kind: EnqueueErrKind,
+	event_id: event::ID,
+}
 
 #[derive(Debug, PartialEq)]
-pub enum EnqueueErr {
-	VersionVectorNonConsecutive,
+pub enum EnqueueErrKind {
+	VersionVector(version_vector::NonConsecutiveErr),
 	Overrun,
 }
 

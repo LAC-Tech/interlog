@@ -106,7 +106,7 @@ pub enum EnqueueErr {
 	Index(index::EnqueueErr),
 }
 
-impl From<index::EnqueueErr> for EnqueueErr {
+impl<'a> From<index::EnqueueErr> for EnqueueErr {
 	fn from(item: index::EnqueueErr) -> Self {
 		Self::Index(item)
 	}

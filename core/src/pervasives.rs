@@ -33,7 +33,7 @@ impl fmt::Display for Addr {
 
 impl fmt::Debug for Addr {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "ReplicaID({:x}{:x})", self.0[0], self.0[1])
+		write!(f, "{:x}{:x}", self.0[0], self.0[1])
 	}
 }
 
@@ -43,7 +43,6 @@ impl fmt::Debug for Addr {
 	derive_more::AddAssign,
 	Clone,
 	Copy,
-	Debug,
 	Default,
 	Eq,
 	PartialOrd,
@@ -55,8 +54,8 @@ impl fmt::Debug for Addr {
 #[repr(transparent)]
 pub struct LogicalQty(pub usize);
 
-impl LogicalQty {
-	pub fn is_initial(&self) -> bool {
-		self.0 == 0
+impl core::fmt::Debug for LogicalQty {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{}<logical>", self.0)
 	}
 }

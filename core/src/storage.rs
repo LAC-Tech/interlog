@@ -1,5 +1,3 @@
-use crate::fixed_capacity::Vec;
-
 #[derive(Debug)]
 pub enum WriteErr {
 	Overrun,
