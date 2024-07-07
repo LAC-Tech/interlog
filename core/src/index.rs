@@ -120,7 +120,11 @@ impl Index {
 		stored_offset: storage::Qty,
 	) -> Result<(), EnqueueErr> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
-		self.txn_vv.insert(e.id).map_err(EnqueueErr::VersionVector)?;
+		self.txn_vv.insert(e.id).map_err(
+			|version_vector::NonConsecutiveErr| {
+				EnqueueErr::VersionVectorNonConsecutive
+			},
+		)?;
 
 		let offset =
 			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
@@ -160,7 +164,7 @@ impl Index {
 
 #[derive(Debug, PartialEq)]
 pub enum EnqueueErr {
-	VersionVector(version_vector::NonConsecutiveErr),
+	VersionVectorNonConsecutive,
 	Overrun,
 }
 

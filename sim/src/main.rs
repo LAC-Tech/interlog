@@ -74,8 +74,8 @@ impl Env {
 			max_txn_events: LogicalQty(config::MSG_LEN.max()),
 			max_events: LogicalQty(100_000),
 		};
-		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
 
+		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
 		let payloads_per_actor = config::PAYLOADS_PER_ACTOR.gen(rng);
 
 		let msg_lens: Vec<usize> =
