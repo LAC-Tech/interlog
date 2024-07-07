@@ -38,16 +38,16 @@ pub struct Actor<AOS: storage::AppendOnly> {
 	index: Index,
 }
 
+pub struct Config {
+	pub txn_size: storage::Qty,
+	pub max_txn_events: LogicalQty,
+	pub max_events: LogicalQty,
+}
+
 impl<AOS: storage::AppendOnly> Actor<AOS> {
-	pub fn new(
-		addr: Addr,
-		txn_size: storage::Qty,
-		txn_events_per_addr: LogicalQty,
-		actual_events_per_addr: LogicalQty,
-		aos: AOS,
-	) -> Self {
-		let log = log::Log::new(txn_size, aos);
-		let index = Index::new(txn_events_per_addr, actual_events_per_addr);
+	pub fn new(addr: Addr, config: Config, aos: AOS) -> Self {
+		let log = log::Log::new(config.txn_size, aos);
+		let index = Index::new(config.max_txn_events, config.max_events);
 		Self { addr, log, index }
 	}
 
@@ -114,13 +114,17 @@ impl From<index::EnqueueErr> for EnqueueErr {
 
 #[derive(Debug)]
 pub enum CommitErr {
-	Log(log::CommitErr),
+	LogStorageOverrun,
 	Index(index::CommitErr),
 }
 
 impl From<log::CommitErr> for CommitErr {
 	fn from(item: log::CommitErr) -> Self {
-		Self::Log(item)
+		match item {
+			log::CommitErr::Storage(storage::WriteErr::Overrun) => {
+				CommitErr::LogStorageOverrun
+			}
+		}
 	}
 }
 

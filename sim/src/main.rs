@@ -32,10 +32,6 @@ mod config {
 	pub const DISK_CAPACITY: storage::Qty = storage::Qty(1000);
 }
 
-const TXN_SIZE: storage::Qty = storage::Qty(4096);
-const TXN_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
-const ACTUAL_EVENTS_PER_ADDR: LogicalQty = LogicalQty(10);
-
 // Currently a paper thin wrapper around Buf.
 // TODO: introduce faults
 struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
@@ -71,13 +67,14 @@ struct Env {
 
 impl Env {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
-		let actor = Actor::new(
-			Addr::new(rng),
-			TXN_SIZE,
-			TXN_EVENTS_PER_ADDR,
-			ACTUAL_EVENTS_PER_ADDR,
-			AppendOnlyMemory::new(),
-		);
+		let config = Config {
+			txn_size: storage::Qty(
+				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max(),
+			),
+			max_txn_events: LogicalQty(config::MSG_LEN.max()),
+			max_events: LogicalQty(1_000_000),
+		};
+		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
 
 		let payloads_per_actor = config::PAYLOADS_PER_ACTOR.gen(rng);
 
