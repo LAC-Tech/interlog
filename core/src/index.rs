@@ -13,12 +13,6 @@ mod version_vector {
 	use hashbrown::hash_map::Entry;
 	use hashbrown::HashMap;
 
-	#[derive(Debug, PartialEq)]
-	pub struct NonConsecutiveErr {
-		pub new_count: usize,
-		pub expected: usize,
-	}
-
 	// TODO: fixed capacity hash map, if such a thing is even possible
 	#[derive(Clone, Debug, PartialEq)]
 	pub struct VersionVector(HashMap<Addr, usize>);
@@ -37,29 +31,23 @@ mod version_vector {
 			LogicalQty(self.get_raw(addr))
 		}
 
-		pub fn insert(
-			&mut self,
-			eid: event::ID,
-		) -> Result<LogicalQty, NonConsecutiveErr> {
+		pub fn insert(&mut self, eid: event::ID) {
 			let new_count = eid.pos.0 + 1;
 			let addr = eid.origin;
-			let result = match self.0.entry(addr) {
-				Entry::Occupied(mut count) => {
-					let expected = *count.get() + 1;
-					(new_count == expected)
-						.then(|| count.insert(new_count))
-						.ok_or(NonConsecutiveErr { new_count, expected })
-				}
-				Entry::Vacant(entry) => {
+			self.0
+				.entry(addr)
+				.and_modify(|count| {
+					let expected = *count + 1;
+					assert_eq!(expected, new_count);
+					*count = new_count;
+				})
+				.or_insert_with(|| {
 					if new_count != 1 {
 						panic!("new count was not one");
 					}
 
-					Ok(*entry.insert(new_count))
-				}
-			};
-
-			result.map(LogicalQty)
+					new_count
+				});
 		}
 
 		pub fn transfer_count(&mut self, src: &VersionVector, addr: Addr) {
@@ -130,12 +118,7 @@ impl Index {
 		stored_offset: storage::Qty,
 	) -> Result<(), EnqueueErr> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
-		self.txn_vv.insert(e.id).map_err(|err| match err {
-			version_vector::NonConsecutiveErr { .. } => EnqueueErr {
-				kind: EnqueueErrKind::VersionVector(err),
-				event_id: e.id,
-			},
-		})?;
+		self.txn_vv.insert(e.id);
 
 		let offset =
 			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
@@ -178,7 +161,6 @@ pub struct EnqueueErr {
 
 #[derive(Debug, PartialEq)]
 pub enum EnqueueErrKind {
-	VersionVector(version_vector::NonConsecutiveErr),
 	Overrun,
 }
 
