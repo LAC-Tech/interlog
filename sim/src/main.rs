@@ -1,6 +1,6 @@
 use interlog_core::*;
 use rand::prelude::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60 * 24; // One day
 
@@ -144,7 +144,7 @@ fn main() {
 
 	let n_actors = config::ACTORS.gen(&mut rng);
 
-	let mut environments: HashMap<Addr, Env> =
+	let mut environments: BTreeMap<Addr, Env> =
 		std::iter::repeat_with(|| Env::new(&mut rng))
 			.map(|env| (env.actor.addr, env))
 			.take(n_actors)
