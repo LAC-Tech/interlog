@@ -159,7 +159,7 @@ fn main() {
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		println!("the time is {:?} ms, do you know where your data is?", ms);
 		for env in environments.values_mut() {
-			println!("{}", env.actor.addr);
+			println!("{:?}", env.actor.addr);
 			let write_res =
 				env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens);
 
