@@ -32,7 +32,6 @@ mod config {
 	pub const STORAGE_CAPACITY: storage::Qty = storage::Qty(10_000_000);
 }
 
-// Currently a paper thin wrapper around Buf.
 // TODO: introduce faults
 struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
 
@@ -61,7 +60,7 @@ impl storage::AppendOnly for AppendOnlyMemory {
 #[derive(Debug)]
 enum Err {
 	Enqueue(err::Enqueue),
-	Commit(err::Commit<mem::Overrun>),
+	Commit(err::Commit<<AppendOnlyMemory as storage::AppendOnly>::WriteErr>),
 }
 
 // An environment, representing some source of messages, and an actor
