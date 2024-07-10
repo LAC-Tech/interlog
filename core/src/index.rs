@@ -116,31 +116,21 @@ impl Index {
 		&mut self,
 		e: &event::Event,
 		stored_offset: storage::Qty,
-	) -> Result<(), EnqueueErr> {
+	) -> Result<(), mem::Overrun> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
 		self.txn_vv.insert(e.id);
 
 		let offset =
 			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
 
-		if let Err(mem::Overrun) = self.txn_buf.push(offset) {
-			return Err(EnqueueErr {
-				kind: EnqueueErrKind::Overrun,
-				event_id: e.id,
-			});
-		}
+		self.txn_buf.push(offset)?;
 
 		Ok(())
 	}
 
-	pub fn commit(&mut self) -> Result<(), CommitErr> {
+	pub fn commit(&mut self) -> Result<(), mem::Overrun> {
 		self.actual_vv.merge_in(&self.txn_vv);
-		if let Err(mem::Overrun) =
-			self.logical_to_storage.extend_from_slice(&self.txn_buf)
-		{
-			return Err(CommitErr::Overrun);
-		}
-		Ok(())
+		self.logical_to_storage.extend_from_slice(&self.txn_buf)
 	}
 
 	pub fn rollback(&mut self) {
@@ -151,22 +141,6 @@ impl Index {
 	pub fn read(&self, logical: Range<LogicalQty>) -> &[storage::Qty] {
 		&self.logical_to_storage[logical.start.0..logical.end.0]
 	}
-}
-
-#[derive(Debug)]
-pub struct EnqueueErr {
-	kind: EnqueueErrKind,
-	event_id: event::ID,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum EnqueueErrKind {
-	Overrun,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum CommitErr {
-	Overrun,
 }
 
 #[cfg(test)]

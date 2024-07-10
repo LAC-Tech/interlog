@@ -5,7 +5,10 @@ pub struct Region {
 }
 
 #[derive(Debug)]
-pub struct Overrun;
+pub struct Overrun {
+	pub capacity: usize,
+	pub requested: usize,
+}
 
 #[derive(Debug)]
 pub struct WriteErr;

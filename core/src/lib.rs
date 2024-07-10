@@ -20,6 +20,7 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
+pub mod err;
 pub mod event;
 pub mod fixed_capacity;
 mod index;
@@ -56,8 +57,8 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 			InnerMsg::SyncRes(events) => {
 				let write_res = events
 					.into_iter()
-					.try_for_each(|e| self.write(&e).map_err(Err::Enqueue))
-					.and_then(|()| self.commit().map_err(Err::Commit));
+					.try_for_each(|e| self.write(&e).map_err(Err::from))
+					.and_then(|()| self.commit().map_err(Err::from));
 				if let Err(err) = write_res {
 					self.index.rollback();
 					self.log.rollback();
@@ -72,13 +73,13 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		}
 	}
 
-	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
-		let new_pos = self.log.enqueue(e).map_err(EnqueueErr::Log)?;
+	fn write(&mut self, e: &event::Event) -> Result<(), err::Enqueue> {
+		let new_pos = self.log.enqueue(e).map_err(err::Enqueue::Log)?;
 		self.index.enqueue(e, new_pos)?;
 		Ok(())
 	}
 
-	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
+	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), err::Enqueue> {
 		let origin = self.addr;
 		let pos = self.log.next_pos();
 		let id = event::ID { origin, pos };
@@ -87,8 +88,8 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		self.write(&e)
 	}
 
-	pub fn commit(&mut self) -> Result<(), CommitErr> {
-		self.index.commit()?;
+	pub fn commit(&mut self) -> Result<(), err::Commit> {
+		self.index.commit().map_err(err::Commit::Index)?;
 		self.log.commit()?;
 		Ok(())
 	}
@@ -100,46 +101,6 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 }
 
-#[derive(Debug)]
-pub enum EnqueueErr {
-	Log(mem::Overrun),
-	Index(index::EnqueueErr),
-}
-
-impl<'a> From<index::EnqueueErr> for EnqueueErr {
-	fn from(item: index::EnqueueErr) -> Self {
-		Self::Index(item)
-	}
-}
-
-#[derive(Debug)]
-pub enum CommitErr {
-	LogStorageOverrun,
-	Index(index::CommitErr),
-}
-
-impl From<log::CommitErr> for CommitErr {
-	fn from(item: log::CommitErr) -> Self {
-		match item {
-			log::CommitErr::Storage(storage::WriteErr::Overrun) => {
-				CommitErr::LogStorageOverrun
-			}
-		}
-	}
-}
-
-impl From<index::CommitErr> for CommitErr {
-	fn from(item: index::CommitErr) -> Self {
-		Self::Index(item)
-	}
-}
-
-#[derive(Debug)]
-pub enum Err {
-	Enqueue(EnqueueErr),
-	Commit(CommitErr),
-}
-
 pub struct Msg<'a> {
 	inner: InnerMsg<'a>,
 	origin: Addr,
@@ -149,7 +110,14 @@ pub struct Msg<'a> {
 // It must come from some buffer somewhere (ie, TCP buffer)
 pub enum InnerMsg<'a> {
 	SyncRes(event::Slice<'a>),
-	Err(Err),
+	Err(Err), // Stop responding!
+}
+
+/// Only unified here for use as internal state of an actor.
+#[derive(Debug)]
+pub enum Err {
+	Commit(err::Commit),
+	Enqueue(err::Enqueue),
 }
 
 mod log {
@@ -167,8 +135,8 @@ mod log {
 	pub struct Log<AOS: storage::AppendOnly> {
 		txn_last: LogicalQty,
 		actual_last: LogicalQty,
-		txn: event::Buf,
-		actual: AOS,
+		txn_buf: event::Buf,
+		storage: AOS,
 	}
 
 	impl<AOS: storage::AppendOnly> Log<AOS> {
@@ -176,30 +144,30 @@ mod log {
 			Self {
 				txn_last: LogicalQty(0),
 				actual_last: LogicalQty(0),
-				txn: event::Buf::new(txn_size),
-				actual: aos,
+				txn_buf: event::Buf::new(txn_size),
+				storage: aos,
 			}
 		}
 		pub fn enqueue(
 			&mut self,
 			e: &event::Event,
 		) -> Result<storage::Qty, mem::Overrun> {
-			let result = self.actual.used() + self.txn.used();
-			self.txn.push(e)?;
+			let result = self.storage.used() + self.txn_buf.used();
+			self.txn_buf.push(e)?;
 			self.txn_last += LogicalQty(1);
 			Ok(result)
 		}
 
 		pub fn commit(&mut self) -> Result<(), CommitErr> {
-			self.actual
-				.write(self.txn.as_bytes())
+			self.storage
+				.write(self.txn_buf.as_bytes())
 				.map_err(CommitErr::Storage)?;
 			self.actual_last += self.txn_last;
 			Ok(())
 		}
 
 		pub fn rollback(&mut self) {
-			self.txn.clear();
+			self.txn_buf.clear();
 		}
 
 		pub fn next_pos(&self) -> LogicalQty {

@@ -92,8 +92,11 @@ impl<T> Vec<T> {
 		self.len = 0;
 	}
 
-	fn check_capacity(&self, new_len: usize) -> Res {
-		(self.capacity() >= new_len).then_some(()).ok_or(mem::Overrun)
+	fn check_capacity(&self, requested: usize) -> Res {
+		let capacity = self.capacity();
+		(capacity >= requested)
+			.then_some(())
+			.ok_or(mem::Overrun { capacity, requested })
 	}
 
 	pub fn push(&mut self, value: T) -> Res {
