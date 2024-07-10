@@ -151,6 +151,7 @@ mod log {
 		pub fn commit(&mut self) -> Result<(), AOS::WriteErr> {
 			self.storage.write(self.txn_buf.as_bytes())?;
 			self.actual_last += self.txn_last;
+			self.txn_buf.clear();
 			Ok(())
 		}
 

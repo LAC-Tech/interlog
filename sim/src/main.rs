@@ -77,7 +77,7 @@ impl Env {
 				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max(),
 			),
 			max_txn_events: LogicalQty(config::MSG_LEN.max()),
-			max_events: LogicalQty(100_000),
+			max_events: LogicalQty(1_000_000),
 		};
 
 		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
@@ -162,13 +162,15 @@ fn main() {
 	let mut payload_lens = fixed_capacity::Vec::new(config::MSG_LEN.max());
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
-		println!("the time is {:?} ms, do you know where your data is?", ms);
 		for env in environments.values_mut() {
-			println!("{:?}", env.actor.addr);
 			let write_res =
 				env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens);
 
 			if let Err(err) = write_res {
+				println!(
+					"the time is {:?} ms, do you know where your data is?",
+					ms
+				);
 				println!("Error for {:?} at {:?}ms", env.actor.addr, ms);
 				println!("{:?}", err);
 				return;

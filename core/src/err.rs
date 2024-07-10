@@ -35,3 +35,16 @@ impl<StorageWriteErr> Commit<StorageWriteErr> {
 		panic!("implement")
 	}
 }
+
+pub struct Assert<T> {
+	pub actual: T,
+	pub expected: T,
+}
+
+pub fn assert<T: PartialEq>(actual: T, expected: T) -> Result<(), Assert<T>> {
+	if actual != expected {
+		Err(Assert { actual, expected })
+	} else {
+		Ok(())
+	}
+}

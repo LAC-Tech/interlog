@@ -1,5 +1,6 @@
 use core::ops::Range;
 
+use crate::err;
 use crate::event;
 use crate::fixed_capacity::Vec;
 use crate::mem;
@@ -8,6 +9,7 @@ use crate::storage;
 
 /// Version Vector
 mod version_vector {
+	use crate::err;
 	use crate::event;
 	use crate::pervasives::*;
 	use hashbrown::hash_map::Entry;
@@ -31,23 +33,28 @@ mod version_vector {
 			LogicalQty(self.get_raw(addr))
 		}
 
-		pub fn insert(&mut self, eid: event::ID) {
+		pub fn insert(
+			&mut self,
+			eid: event::ID,
+		) -> Result<(), err::Assert<usize>> {
 			let new_count = eid.pos.0 + 1;
 			let addr = eid.origin;
-			self.0
-				.entry(addr)
-				.and_modify(|count| {
+			match self.0.entry(addr) {
+				Entry::Occupied(mut entry) => {
+					let count = entry.get_mut();
 					let expected = *count + 1;
-					assert_eq!(expected, new_count);
+					err::assert(expected, new_count)?;
 					*count = new_count;
-				})
-				.or_insert_with(|| {
+					Ok(())
+				}
+				Entry::Vacant(entry) => {
 					if new_count != 1 {
 						panic!("new count was not one");
 					}
-
-					new_count
-				});
+					entry.insert(new_count);
+					Ok(())
+				}
+			}
 		}
 
 		pub fn transfer_count(&mut self, src: &VersionVector, addr: Addr) {
@@ -120,8 +127,9 @@ impl Index {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
 		self.txn_vv.insert(e.id);
 
-		let offset =
-			stored_offset + self.txn_buf.iter().copied().sum() + e.size();
+		let offset = stored_offset
+			+ self.txn_buf.last().copied().unwrap_or(storage::Qty(0))
+			+ e.size();
 
 		self.txn_buf.push(offset)?;
 
@@ -130,7 +138,9 @@ impl Index {
 
 	pub fn commit(&mut self) -> Result<(), mem::Overrun> {
 		self.actual_vv.merge_in(&self.txn_vv);
-		self.logical_to_storage.extend_from_slice(&self.txn_buf)
+		let result = self.logical_to_storage.extend_from_slice(&self.txn_buf);
+		self.txn_buf.clear();
+		result
 	}
 
 	pub fn rollback(&mut self) {
