@@ -43,19 +43,25 @@ impl AppendOnlyMemory {
 }
 
 impl storage::AppendOnly for AppendOnlyMemory {
+	type WriteErr = mem::Overrun;
+
 	fn used(&self) -> storage::Qty {
 		storage::Qty(self.0.len())
 	}
 
-	fn write(&mut self, data: &[u8]) -> Result<(), storage::WriteErr> {
-		self.0
-			.extend_from_slice(data)
-			.map_err(|mem::Overrun| storage::WriteErr::Overrun)
+	fn write(&mut self, data: &[u8]) -> Result<(), Self::WriteErr> {
+		self.0.extend_from_slice(data)
 	}
 
 	fn read(&self, buf: &mut [u8], offset: usize) {
 		buf.copy_from_slice(&self.0[offset..offset + buf.len()])
 	}
+}
+
+#[derive(Debug)]
+enum Err {
+	Enqueue(err::Enqueue),
+	Commit(err::Commit<mem::Overrun>),
 }
 
 // An environment, representing some source of messages, and an actor

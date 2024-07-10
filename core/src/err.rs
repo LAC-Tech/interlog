@@ -15,6 +15,7 @@ use crate::mem;
 #[derive(Debug)]
 pub enum Enqueue {
 	Log(mem::Overrun),
+	Index(mem::Overrun),
 }
 
 impl Enqueue {
@@ -24,11 +25,12 @@ impl Enqueue {
 }
 
 #[derive(Debug)]
-pub enum Commit {
+pub enum Commit<StorageWriteErr> {
 	Index(mem::Overrun),
+	Log(StorageWriteErr),
 }
 
-impl Commit {
+impl<StorageWriteErr> Commit<StorageWriteErr> {
 	pub fn is_bug(self) -> bool {
 		panic!("implement")
 	}

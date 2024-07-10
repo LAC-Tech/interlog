@@ -57,13 +57,17 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 			InnerMsg::SyncRes(events) => {
 				let write_res = events
 					.into_iter()
-					.try_for_each(|e| self.write(&e).map_err(Err::from))
-					.and_then(|()| self.commit().map_err(Err::from));
+					.try_for_each(|e| {
+						self.write(&e).map_err(|e| format!("{:?}", e))
+					})
+					.and_then(|()| {
+						self.commit().map_err(|e| format!("{:?}", e))
+					});
 				if let Err(err) = write_res {
 					self.index.rollback();
 					self.log.rollback();
 					let outgoing_msg =
-						Msg { inner: InnerMsg::Err(err), origin: self.addr };
+						Msg { inner: InnerMsg::Err(&err), origin: self.addr };
 					send(outgoing_msg, msg.origin);
 				}
 			}
@@ -75,8 +79,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 
 	fn write(&mut self, e: &event::Event) -> Result<(), err::Enqueue> {
 		let new_pos = self.log.enqueue(e).map_err(err::Enqueue::Log)?;
-		self.index.enqueue(e, new_pos)?;
-		Ok(())
+		self.index.enqueue(e, new_pos).map_err(err::Enqueue::Index)
 	}
 
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), err::Enqueue> {
@@ -88,10 +91,9 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		self.write(&e)
 	}
 
-	pub fn commit(&mut self) -> Result<(), err::Commit> {
+	pub fn commit(&mut self) -> Result<(), err::Commit<AOS::WriteErr>> {
 		self.index.commit().map_err(err::Commit::Index)?;
-		self.log.commit()?;
-		Ok(())
+		self.log.commit().map_err(err::Commit::Log)
 	}
 
 	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
@@ -110,14 +112,8 @@ pub struct Msg<'a> {
 // It must come from some buffer somewhere (ie, TCP buffer)
 pub enum InnerMsg<'a> {
 	SyncRes(event::Slice<'a>),
-	Err(Err), // Stop responding!
-}
-
-/// Only unified here for use as internal state of an actor.
-#[derive(Debug)]
-pub enum Err {
-	Commit(err::Commit),
-	Enqueue(err::Enqueue),
+	// String to avoid parameterising every message by AOS::WriteErr
+	Err(&'a str),
 }
 
 mod log {
@@ -125,12 +121,6 @@ mod log {
 	use crate::event;
 	use crate::mem;
 	use crate::pervasives::*;
-
-	// Can't think of any yet but I am sure there are LOADS
-	#[derive(Debug)]
-	pub enum CommitErr {
-		Storage(storage::WriteErr),
-	}
 
 	pub struct Log<AOS: storage::AppendOnly> {
 		txn_last: LogicalQty,
@@ -158,10 +148,8 @@ mod log {
 			Ok(result)
 		}
 
-		pub fn commit(&mut self) -> Result<(), CommitErr> {
-			self.storage
-				.write(self.txn_buf.as_bytes())
-				.map_err(CommitErr::Storage)?;
+		pub fn commit(&mut self) -> Result<(), AOS::WriteErr> {
+			self.storage.write(self.txn_buf.as_bytes())?;
 			self.actual_last += self.txn_last;
 			Ok(())
 		}

@@ -1,10 +1,3 @@
-#[derive(Debug)]
-pub struct WriteErr {
-	pub os_err_no: rustix::io::Errno,
-}
-
-pub enum WriteErrContext {}
-
 /// Position of a word, in either memory or disk
 #[derive(
 	Clone,
@@ -23,10 +16,14 @@ pub struct Qty(pub usize);
 
 /// Where the events are persisted.
 /// Written right now so I can simulate faulty storage.
-/// (Only concrete implementation I can think of is an append only file)
-/// TODO: should the WriteErr be an abstract part of this?
+/// Possible concrete implementations:
+/// - Disk
+/// - In-memory
+/// - In-browser (WASM that calls to indexedDB?)
 pub trait AppendOnly {
+	/// Different concrete implementations will have different errors
+	type WriteErr: core::fmt::Debug;
 	fn used(&self) -> Qty;
-	fn write(&mut self, data: &[u8]) -> Result<(), WriteErr>;
+	fn write(&mut self, data: &[u8]) -> Result<(), Self::WriteErr>;
 	fn read(&self, buf: &mut [u8], offset: usize);
 }
