@@ -184,7 +184,6 @@ fn main() {
 					&mut payload_buf,
 					&mut payload_lens,
 				)
-				.unwrap();
 			}));
 
 			if let Err(err) = write_res {
@@ -194,7 +193,7 @@ fn main() {
 				);
 				println!("{:?}", stats);
 				println!("Error for {:?} at {:?}ms", env.actor.addr, ms);
-				println!("{:?}", err);
+				println!("{}", err.downcast_ref::<String>().unwrap());
 				return;
 			}
 		}
