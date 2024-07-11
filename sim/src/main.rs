@@ -3,7 +3,7 @@ use rand::prelude::*;
 use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
 
-const MAX_SIM_TIME_MS: u64 = 1_000_000; //1000 * 60 * 60 * 24; // One day
+const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
 
 mod config {
 	use interlog_core::storage;
