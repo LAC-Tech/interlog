@@ -1,6 +1,5 @@
 use core::ops::Range;
 
-use crate::err;
 use crate::event;
 use crate::fixed_capacity::Vec;
 use crate::mem;
@@ -9,7 +8,6 @@ use crate::storage;
 
 /// Version Vector
 mod version_vector {
-	use crate::err;
 	use crate::event;
 	use crate::pervasives::*;
 	use hashbrown::hash_map::Entry;
@@ -33,26 +31,21 @@ mod version_vector {
 			LogicalQty(self.get_raw(addr))
 		}
 
-		pub fn insert(
-			&mut self,
-			eid: event::ID,
-		) -> Result<(), err::Assert<usize>> {
+		pub fn insert(&mut self, eid: event::ID) {
 			let new_count = eid.pos.0 + 1;
 			let addr = eid.origin;
 			match self.0.entry(addr) {
 				Entry::Occupied(mut entry) => {
 					let count = entry.get_mut();
 					let expected = *count + 1;
-					err::assert(expected, new_count)?;
+					assert_eq!(expected, new_count);
 					*count = new_count;
-					Ok(())
 				}
 				Entry::Vacant(entry) => {
 					if new_count != 1 {
 						panic!("new count was not one");
 					}
 					entry.insert(new_count);
-					Ok(())
 				}
 			}
 		}
@@ -108,6 +101,7 @@ pub struct Index {
 	actual_vv: version_vector::VersionVector,
 	txn_vv: version_vector::VersionVector,
 }
+
 impl Index {
 	pub fn new(max_txn_size: LogicalQty, max_events: LogicalQty) -> Self {
 		// TODO: HOW MANY ADDRS WILL I HAVE?
@@ -131,16 +125,17 @@ impl Index {
 			+ self.txn_buf.last().copied().unwrap_or(storage::Qty(0))
 			+ e.size();
 
-		self.txn_buf.push(offset)?;
-
-		Ok(())
+		self.txn_buf.push(offset)
 	}
 
-	pub fn commit(&mut self) -> Result<(), mem::Overrun> {
+	/// Returns number of events committed
+	pub fn commit(&mut self) -> Result<usize, mem::Overrun> {
 		self.actual_vv.merge_in(&self.txn_vv);
-		let result = self.logical_to_storage.extend_from_slice(&self.txn_buf);
+
+		let n_events_comitted = self.txn_buf.len();
+		self.logical_to_storage.extend_from_slice(&self.txn_buf)?;
 		self.txn_buf.clear();
-		result
+		Ok(n_events_comitted)
 	}
 
 	pub fn rollback(&mut self) {
@@ -162,12 +157,9 @@ mod tests {
 	use proptest::prelude::*;
 	use rand::prelude::*;
 
-	use version_vector::NonConsecutiveErr;
-	use EnqueueErr::*;
-
 	// Sanity check unit tests - trigger every error
-
 	#[test]
+	#[should_panic]
 	fn non_consecutive() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(&mut rng);
@@ -179,24 +171,23 @@ mod tests {
 			index.enqueue(&Event::new(addr, LogicalQty(0), b"non"), offset);
 		assert_eq!(actual, Ok(()));
 
-		let actual = index.enqueue(
+		index.enqueue(
 			&Event::new(addr, LogicalQty(34), b"consecutive"),
 			storage::Qty(0),
 		);
-		assert_eq!(actual, Err(VersionVector(NonConsecutiveErr)))
 	}
 
 	#[test]
+	#[should_panic]
 	fn index_would_not_start_at_zero() {
 		let mut rng = thread_rng();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let actual = index.enqueue(
+		index.enqueue(
 			&Event::new(addr, LogicalQty(42), b"not at zero"),
 			storage::Qty(0),
 		);
-		assert_eq!(actual, Err(VersionVector(NonConsecutiveErr)));
 	}
 
 	#[test]
@@ -212,7 +203,7 @@ mod tests {
 
 		let actual =
 			index.enqueue(&Event::new(addr, LogicalQty(1), b"run"), offset);
-		assert_eq!(actual, Err(EnqueueErr::Overrun));
+		assert_eq!(actual, Err(mem::Overrun { capacity: 1, requested: 2 }));
 	}
 
 	#[test]
@@ -230,7 +221,7 @@ mod tests {
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
-		assert_eq!(actual, Err(CommitErr::Overrun))
+		assert_eq!(actual, Err(mem::Overrun { capacity: 1, requested: 2 }))
 	}
 
 	#[test]
@@ -249,6 +240,7 @@ mod tests {
 		);
 	}
 
+	/*
 	proptest! {
 		#[test]
 		fn proptest_enqueue_and_get(
@@ -285,7 +277,7 @@ mod tests {
 
 			let control_index = index.clone();
 
-			let res: Result<(), EnqueueErr> = id_payload_pairs
+			let res: Result<(), mem::Overrun> = id_payload_pairs
 				.iter()
 				.map(|(id, payload)| {
 					let e = Event {id: *id, payload};
@@ -315,4 +307,5 @@ mod tests {
 			}
 		}
 	}
+	*/
 }

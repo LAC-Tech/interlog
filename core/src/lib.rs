@@ -20,10 +20,11 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
-pub mod err;
+//pub mod err;
 pub mod event;
 pub mod fixed_capacity;
 mod index;
+mod log;
 pub mod mem;
 mod pervasives;
 pub mod storage;
@@ -45,6 +46,24 @@ pub struct Config {
 	pub max_events: LogicalQty,
 }
 
+#[derive(Debug)]
+pub enum EnqueueErr {
+	Log(mem::Overrun),
+	Index(mem::Overrun),
+}
+
+#[derive(Debug)]
+pub enum CommitErr {
+	Index(mem::Overrun),
+	Log(storage::Overrun),
+}
+
+#[derive(Debug)]
+pub enum ReplicaErr {
+	Enqueue(EnqueueErr),
+	Commit(CommitErr),
+}
+
 impl<AOS: storage::AppendOnly> Actor<AOS> {
 	pub fn new(addr: Addr, config: Config, aos: AOS) -> Self {
 		let log = log::Log::new(config.txn_size, aos);
@@ -58,16 +77,14 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 				let write_res = events
 					.into_iter()
 					.try_for_each(|e| {
-						self.write(&e).map_err(|e| format!("{:?}", e))
+						self.write(&e).map_err(ReplicaErr::Enqueue)
 					})
-					.and_then(|()| {
-						self.commit().map_err(|e| format!("{:?}", e))
-					});
+					.and_then(|()| self.commit().map_err(ReplicaErr::Commit));
 				if let Err(err) = write_res {
 					self.index.rollback();
 					self.log.rollback();
 					let outgoing_msg =
-						Msg { inner: InnerMsg::Err(&err), origin: self.addr };
+						Msg { inner: InnerMsg::Err(err), origin: self.addr };
 					send(outgoing_msg, msg.origin);
 				}
 			}
@@ -77,12 +94,12 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		}
 	}
 
-	fn write(&mut self, e: &event::Event) -> Result<(), err::Enqueue> {
-		let new_pos = self.log.enqueue(e).map_err(err::Enqueue::Log)?;
-		self.index.enqueue(e, new_pos).map_err(err::Enqueue::Index)
+	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
+		let new_pos = self.log.enqueue(e).map_err(EnqueueErr::Log)?;
+		self.index.enqueue(e, new_pos).map_err(EnqueueErr::Index)
 	}
 
-	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), err::Enqueue> {
+	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let origin = self.addr;
 		let pos = self.log.next_pos();
 		let id = event::ID { origin, pos };
@@ -91,9 +108,11 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		self.write(&e)
 	}
 
-	pub fn commit(&mut self) -> Result<(), err::Commit<AOS::WriteErr>> {
-		self.index.commit().map_err(err::Commit::Index)?;
-		self.log.commit().map_err(err::Commit::Log)
+	pub fn commit(&mut self) -> Result<usize, CommitErr> {
+		let index_count = self.index.commit().map_err(CommitErr::Index)?;
+		let log_count = self.log.commit().map_err(CommitErr::Log)?;
+		assert_eq!(log_count, index_count);
+		Ok(log_count)
 	}
 
 	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
@@ -113,57 +132,9 @@ pub struct Msg<'a> {
 pub enum InnerMsg<'a> {
 	SyncRes(event::Slice<'a>),
 	// String to avoid parameterising every message by AOS::WriteErr
-	Err(&'a str),
+	Err(ReplicaErr),
 }
 
-mod log {
-	use super::storage;
-	use crate::event;
-	use crate::mem;
-	use crate::pervasives::*;
-
-	pub struct Log<AOS: storage::AppendOnly> {
-		txn_last: LogicalQty,
-		actual_last: LogicalQty,
-		txn_buf: event::Buf,
-		storage: AOS,
-	}
-
-	impl<AOS: storage::AppendOnly> Log<AOS> {
-		pub fn new(txn_size: storage::Qty, aos: AOS) -> Self {
-			Self {
-				txn_last: LogicalQty(0),
-				actual_last: LogicalQty(0),
-				txn_buf: event::Buf::new(txn_size),
-				storage: aos,
-			}
-		}
-		pub fn enqueue(
-			&mut self,
-			e: &event::Event,
-		) -> Result<storage::Qty, mem::Overrun> {
-			let result = self.storage.used() + self.txn_buf.used();
-			self.txn_buf.push(e)?;
-			self.txn_last += LogicalQty(1);
-			Ok(result)
-		}
-
-		pub fn commit(&mut self) -> Result<(), AOS::WriteErr> {
-			self.storage.write(self.txn_buf.as_bytes())?;
-			self.actual_last += self.txn_last;
-			self.txn_buf.clear();
-			Ok(())
-		}
-
-		pub fn rollback(&mut self) {
-			self.txn_buf.clear();
-		}
-
-		pub fn next_pos(&self) -> LogicalQty {
-			self.actual_last + self.txn_last
-		}
-	}
-}
 /*
 use alloc::boxed::Box;
 use alloc::string::String;

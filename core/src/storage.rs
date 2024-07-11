@@ -14,6 +14,9 @@
 #[repr(transparent)]
 pub struct Qty(pub usize);
 
+#[derive(Debug)]
+pub struct Overrun;
+
 /// Where the events are persisted.
 /// Written right now so I can simulate faulty storage.
 /// Possible concrete implementations:
@@ -21,9 +24,7 @@ pub struct Qty(pub usize);
 /// - In-memory
 /// - In-browser (WASM that calls to indexedDB?)
 pub trait AppendOnly {
-	/// Different concrete implementations will have different errors
-	type WriteErr: core::fmt::Debug;
 	fn used(&self) -> Qty;
-	fn write(&mut self, data: &[u8]) -> Result<(), Self::WriteErr>;
+	fn write(&mut self, data: &[u8]) -> Result<(), Overrun>;
 	fn read(&self, buf: &mut [u8], offset: usize);
 }

@@ -5,6 +5,7 @@ pub struct Region {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Overrun {
 	pub capacity: usize,
 	pub requested: usize,

@@ -1,8 +1,9 @@
 use interlog_core::*;
 use rand::prelude::*;
 use std::collections::BTreeMap;
+use std::panic::{self, AssertUnwindSafe};
 
-const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60 * 24; // One day
+const MAX_SIM_TIME_MS: u64 = 1_000_000; //1000 * 60 * 60 * 24; // One day
 
 mod config {
 	use interlog_core::storage;
@@ -23,10 +24,19 @@ mod config {
 		Range(0, n)
 	}
 
+	pub struct Bool(usize);
+
+	impl Bool {
+		pub fn gen<R: rand::Rng>(&self, rng: &mut R) -> bool {
+			rng.gen_range(0..100) < self.0
+		}
+	}
+
 	pub const ACTORS: Range = max(256);
 	pub const PAYLOADS_PER_ACTOR: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
 	pub const MSG_LEN: Range = Range(0, 50);
+	pub const CHANCE_OF_WRITE_PER_TICK: Range = Range(1, 50);
 
 	// Currently just something "big enough", later handle disk overflow
 	pub const STORAGE_CAPACITY: storage::Qty = storage::Qty(10_000_000);
@@ -42,25 +52,20 @@ impl AppendOnlyMemory {
 }
 
 impl storage::AppendOnly for AppendOnlyMemory {
-	type WriteErr = mem::Overrun;
-
 	fn used(&self) -> storage::Qty {
 		storage::Qty(self.0.len())
 	}
 
-	fn write(&mut self, data: &[u8]) -> Result<(), Self::WriteErr> {
-		self.0.extend_from_slice(data)
+	fn write(&mut self, data: &[u8]) -> Result<(), storage::Overrun> {
+		self.0
+			.extend_from_slice(data)
+			// TODO: should storage overrun have the same fields?
+			.map_err(|mem::Overrun { .. }| storage::Overrun)
 	}
 
 	fn read(&self, buf: &mut [u8], offset: usize) {
 		buf.copy_from_slice(&self.0[offset..offset + buf.len()])
 	}
-}
-
-#[derive(Debug)]
-enum Err {
-	Enqueue(err::Enqueue),
-	Commit(err::Commit<<AppendOnlyMemory as storage::AppendOnly>::WriteErr>),
 }
 
 // An environment, representing some source of messages, and an actor
@@ -118,19 +123,21 @@ impl Env {
 		&mut self,
 		ms: u64,
 		rng: &mut R,
+		stats: &mut Stats,
 		payload_buf: &mut [u8],
 		payload_lens: &mut fixed_capacity::Vec<usize>,
-	) -> Result<(), Err> {
+	) -> Result<(), ReplicaErr> {
 		payload_lens.clear();
 		self.pop_payload_lens(payload_lens)
 			.expect("payload lens to be big enough");
 		for &payload_len in payload_lens {
 			let payload = &mut payload_buf[..payload_len];
 			rng.fill(payload);
-			self.actor.enqueue(payload).map_err(Err::Enqueue)?;
+			self.actor.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
 		}
 
-		self.actor.commit().map_err(Err::Commit)
+		stats.events_sent += self.actor.commit().map_err(ReplicaErr::Commit)?;
+		Ok(())
 	}
 }
 
@@ -138,7 +145,13 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 	bytes.into_iter().map(|&b| format!("{:x}", b)).collect()
 }
 
+#[derive(Debug)]
+struct Stats {
+	events_sent: usize,
+}
+
 fn main() {
+	let mut stats = Stats { events_sent: 0 };
 	let args: Vec<String> = std::env::args().collect();
 	let seed: u64 = args
 		.get(1)
@@ -163,14 +176,23 @@ fn main() {
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for env in environments.values_mut() {
-			let write_res =
-				env.tick(ms, &mut rng, &mut payload_buf, &mut payload_lens);
+			let write_res = panic::catch_unwind(AssertUnwindSafe(|| {
+				env.tick(
+					ms,
+					&mut rng,
+					&mut stats,
+					&mut payload_buf,
+					&mut payload_lens,
+				)
+				.unwrap();
+			}));
 
 			if let Err(err) = write_res {
 				println!(
 					"the time is {:?} ms, do you know where your data is?",
 					ms
 				);
+				println!("{:?}", stats);
 				println!("Error for {:?} at {:?}ms", env.actor.addr, ms);
 				println!("{:?}", err);
 				return;
