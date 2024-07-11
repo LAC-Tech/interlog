@@ -136,7 +136,8 @@ impl Env {
 			self.actor.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
 		}
 
-		stats.events_sent += self.actor.commit().map_err(ReplicaErr::Commit)?;
+		stats.events_sent +=
+			self.actor.commit().map_err(ReplicaErr::Commit)? as u128;
 		Ok(())
 	}
 }
@@ -147,7 +148,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 
 #[derive(Debug)]
 struct Stats {
-	events_sent: usize,
+	events_sent: u128,
 }
 
 fn main() {
@@ -191,11 +192,12 @@ fn main() {
 					"the time is {:?} ms, do you know where your data is?",
 					ms
 				);
-				println!("{:?}", stats);
 				println!("Error for {:?} at {:?}ms", env.actor.addr, ms);
 				println!("{}", err.downcast_ref::<String>().unwrap());
 				return;
 			}
 		}
 	}
+
+	println!("{:?}", stats);
 }

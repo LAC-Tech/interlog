@@ -36,10 +36,9 @@ mod version_vector {
 			let addr = eid.origin;
 			match self.0.entry(addr) {
 				Entry::Occupied(mut entry) => {
-					let count = entry.get_mut();
-					let expected = *count + 1;
-					assert_eq!(expected, new_count);
-					*count = new_count;
+					let current_count = entry.get_mut();
+					assert_eq!(*current_count + 1, new_count);
+					*current_count = new_count;
 				}
 				Entry::Vacant(entry) => {
 					if new_count != 1 {
