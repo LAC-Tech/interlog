@@ -136,8 +136,11 @@ impl Env {
 			self.actor.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
 		}
 
-		stats.events_sent +=
-			self.actor.commit().map_err(ReplicaErr::Commit)? as u128;
+		stats.events_sent = stats
+			.events_sent
+			.checked_add(self.actor.commit().map_err(ReplicaErr::Commit)?)
+			.unwrap();
+
 		Ok(())
 	}
 }
@@ -148,7 +151,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 
 #[derive(Debug)]
 struct Stats {
-	events_sent: u128,
+	events_sent: usize,
 }
 
 fn main() {
@@ -159,7 +162,7 @@ fn main() {
 		.map(|s| s.parse::<u64>().expect("a valid u64 seed"))
 		.unwrap_or_else(|| thread_rng().gen());
 
-	let mut rng = StdRng::seed_from_u64(seed);
+	let mut rng = SmallRng::seed_from_u64(seed);
 
 	let n_actors = config::ACTORS.gen(&mut rng);
 
@@ -199,5 +202,5 @@ fn main() {
 		}
 	}
 
-	println!("{:?}", stats);
+	println!("{:?}", stats)
 }
