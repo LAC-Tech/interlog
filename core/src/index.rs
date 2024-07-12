@@ -31,28 +31,16 @@ mod version_vector {
 			LogicalQty(self.get_raw(addr))
 		}
 
-		pub fn insert(&mut self, eid: event::ID) {
-			let new_count = eid.pos.0 + 1;
-			let addr = eid.origin;
-			match self.0.entry(addr) {
-				Entry::Occupied(mut entry) => {
-					let current_count = entry.get_mut();
-					assert_eq!(*current_count + 1, new_count);
-					*current_count = new_count;
-				}
-				Entry::Vacant(entry) => {
-					if new_count != 1 {
-						panic!("new count was not one");
-					}
-					entry.insert(new_count);
-				}
-			}
+		pub fn increment(&mut self, addr: Addr) -> usize {
+			let entry = self.0.entry(addr).or_insert(0);
+			*entry += 1;
+			*entry
 		}
 
 		pub fn transfer_count(&mut self, src: &VersionVector, addr: Addr) {
 			self.0
 				.entry(addr)
-				.or_insert_with(|| *src.0.get(&addr).unwrap_or(&0));
+				.or_insert_with(|| *src.0.get(&addr).unwrap_or(&1));
 		}
 
 		pub fn merge_in(&mut self, txn: &VersionVector) {
@@ -118,7 +106,10 @@ impl Index {
 		stored_offset: storage::Qty,
 	) -> Result<(), mem::Overrun> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
-		self.txn_vv.insert(e.id);
+
+		let event_count = self.txn_vv.increment(e.id.origin);
+
+		assert_eq!(event_count, e.id.pos.0 + 1);
 
 		let offset = stored_offset
 			+ self.txn_buf.last().copied().unwrap_or(storage::Qty(0))
@@ -239,7 +230,6 @@ mod tests {
 		);
 	}
 
-	/*
 	proptest! {
 		#[test]
 		fn proptest_enqueue_and_get(
@@ -267,7 +257,7 @@ mod tests {
 				0..1000),
 			max_txn_size in 0usize..10usize,
 			max_events in 0usize..200usize,
-			offset in 0usize..10_000_000usize
+			offset in (0usize..10_000_000usize).prop_map(storage::Qty)
 		) {
 			let mut index =
 				Index::new(
@@ -280,13 +270,13 @@ mod tests {
 				.iter()
 				.map(|(id, payload)| {
 					let e = Event {id: *id, payload};
-					index.enqueue(&e, storage::Qty(offset))
+					index.enqueue(&e, offset)
 				})
 				.collect();
 
 			if let Err(_) = res {
 				index.rollback();
-				assert_eq!(control_index, index);
+				assert_eq!(control_index, index, "index is not in it's original state after rolling back");
 			} else if let Err(_) = index.commit() {
 				index.rollback();
 				assert_eq!(control_index, index, "after commit err, rolling back still has the two indexes in an inconsistent state");
@@ -297,14 +287,15 @@ mod tests {
 				);
 
 				let expected: alloc::vec::Vec<storage::Qty> = id_payload_pairs
-					.iter().map(|(id, payload)| {
+					.iter()
+					.map(|(id, payload)| {
 						let e = Event {id: *id, payload};
-						e.size()
-					}).collect();
+						offset + e.size()
+					})
+					.collect();
 
-				assert_eq!(actual, expected)
+				assert_eq!(actual, expected, "transaction has not inserted everything");
 			}
 		}
 	}
-	*/
 }

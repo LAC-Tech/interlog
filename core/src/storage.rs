@@ -25,6 +25,6 @@ pub struct Overrun;
 /// - In-browser (WASM that calls to indexedDB?)
 pub trait AppendOnly {
 	fn used(&self) -> Qty;
-	fn write(&mut self, data: &[u8]) -> Result<(), Overrun>;
+	fn append(&mut self, data: &[u8]) -> Result<(), Overrun>;
 	fn read(&self, buf: &mut [u8], offset: usize);
 }

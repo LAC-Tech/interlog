@@ -56,7 +56,7 @@ impl storage::AppendOnly for AppendOnlyMemory {
 		storage::Qty(self.0.len())
 	}
 
-	fn write(&mut self, data: &[u8]) -> Result<(), storage::Overrun> {
+	fn append(&mut self, data: &[u8]) -> Result<(), storage::Overrun> {
 		self.0
 			.extend_from_slice(data)
 			// TODO: should storage overrun have the same fields?

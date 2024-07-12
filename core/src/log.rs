@@ -51,7 +51,7 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 	}
 
 	pub fn commit(&mut self) -> Result<usize, storage::Overrun> {
-		self.storage.write(self.txn.buf.as_bytes())?;
+		self.storage.append(self.txn.buf.as_bytes())?;
 		// TODO: ask storage directly for this? I think pwrite gives it
 		let n_events_comitted = self.txn.last;
 		self.actual_last += n_events_comitted;
