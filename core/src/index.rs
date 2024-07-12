@@ -79,6 +79,26 @@ mod version_vector {
 			true
 		}
 	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+		use crate::test_utils::*;
+		use proptest::prelude::*;
+
+		proptest! {
+			#[test]
+			fn vv_sanity_check(addr in arb_addr()) {
+				let mut vv = VersionVector::new();
+				assert_eq!(vv.get(addr), LogicalQty(0));
+
+				let new_count = vv.increment(addr);
+				assert_eq!(new_count, 1);
+
+				assert_eq!(vv.get(addr), LogicalQty(1));
+			}
+		}
+	}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -151,7 +171,7 @@ mod tests {
 	#[test]
 	#[should_panic]
 	fn non_consecutive() {
-		let mut rng = thread_rng();
+		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
@@ -170,7 +190,7 @@ mod tests {
 	#[test]
 	#[should_panic]
 	fn index_would_not_start_at_zero() {
-		let mut rng = thread_rng();
+		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
@@ -182,7 +202,7 @@ mod tests {
 
 	#[test]
 	fn enqueue_overrun() {
-		let mut rng = thread_rng();
+		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(1), LogicalQty(8));
 
@@ -198,7 +218,7 @@ mod tests {
 
 	#[test]
 	fn commit_overrun() {
-		let mut rng = thread_rng();
+		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
 		let offset = storage::Qty(0);
@@ -216,7 +236,7 @@ mod tests {
 
 	#[test]
 	fn enqueue_and_get() {
-		let mut rng = thread_rng();
+		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 		let offset = storage::Qty(0);
@@ -236,7 +256,7 @@ mod tests {
 			offset in 0usize..10_000_000usize,
 			payload in arb_payload(4096)
 		) {
-			let mut rng = thread_rng();
+			let mut rng = SmallRng::from_entropy();
 			let addr = Addr::new(&mut rng);
 			let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 			let offset = storage::Qty(offset);
