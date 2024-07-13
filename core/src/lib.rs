@@ -116,7 +116,8 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 
 	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
-		panic!("TODO");
+		let offsets = self.index.read(n_most_recent..);
+		self.log.storage.read(buf.as_mut_bytes(), offsets[0].0);
 		// Figure out how much space I need from index
 		// allocate that amount to a buffer
 	}
@@ -130,36 +131,75 @@ pub struct Msg<'a> {
 // The 'body' of each message will just be a pointer/
 // It must come from some buffer somewhere (ie, TCP buffer)
 pub enum InnerMsg<'a> {
+	/*
+	 * TODO: make illegal states un-representable
+	 * This should be consecutive events, ordered by position, grouped by address
+	 */
 	SyncRes(event::Slice<'a>),
 	// String to avoid parameterising every message by AOS::WriteErr
 	Err(ReplicaErr),
 }
 
-/*
-use alloc::boxed::Box;
-use alloc::string::String;
-use core::fmt;
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use pretty_assertions::assert_eq;
+	use rand::prelude::*;
 
-use rand::prelude::*;
+	struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
 
-use crate::fixed_capacity::Vec;
-use crate::index::*;
-use crate::pervasives::*;
-use mem::Region;
+	impl AppendOnlyMemory {
+		fn new(capacity: usize) -> Self {
+			Self(fixed_capacity::Vec::new(capacity))
+		}
+	}
 
-#[derive(Debug)]
-pub struct EnqueueErr(fixed_capacity::Overflow);
+	impl storage::AppendOnly for AppendOnlyMemory {
+		fn used(&self) -> storage::Qty {
+			storage::Qty(self.0.len())
+		}
 
-#[derive(Debug)]
-pub enum CommitErr {
-	Disk(disk::AppendErr),
-	ReadCache(mem::WriteErr),
-	TxnWriteBufHasNoEvents,
-	KeyIndex(fixed_capacity::Overflow),
+		fn append(&mut self, data: &[u8]) -> Result<(), storage::Overrun> {
+			self.0
+				.extend_from_slice(data)
+				// TODO: should storage overrun have the same fields?
+				.map_err(|mem::Overrun { .. }| storage::Overrun)
+		}
+
+		fn read(&self, buf: &mut [u8], offset: usize) {
+			buf.copy_from_slice(&self.0[offset..offset + buf.len()])
+		}
+	}
+
+	#[test]
+	fn enqueue_commit_and_read() {
+		let mut rng = SmallRng::from_entropy();
+		let mut actor = Actor::new(
+			Addr::new(&mut rng),
+			Config {
+				max_events: LogicalQty(2),
+				txn_size: storage::Qty(4096),
+				max_txn_events: LogicalQty(2),
+			},
+			AppendOnlyMemory::new(64),
+		);
+
+		let mut read_buf = event::Buf::new(storage::Qty(128));
+
+		actor.enqueue(b"I have known the arcane law").unwrap();
+		actor.commit().unwrap();
+		actor.read(&mut read_buf, 1);
+		let actual = &read_buf.into_iter().last().unwrap();
+		assert_eq!(actual.payload, b"I have known the arcane law");
+
+		actor.enqueue(b"On strange roads, such visions met").unwrap();
+		actor.commit().unwrap();
+		actor.read(&mut read_buf, 1);
+		let actual = &read_buf.into_iter().last().unwrap();
+		assert_eq!(actual.payload, b"On strange roads, such visions met");
+	}
 }
-
-type WriteRes = Result<(), CommitErr>;
-
+/*
 /// A fixed sized structure that caches the latest entries in the log
 /// (LIFO caching). The assumption is that things recently added are most
 /// likely to be read out again.
@@ -310,212 +350,6 @@ impl ReadCache {
 
 	fn read_b(&self) -> &[mem::Word] {
 		self.b.read(&self.mem).expect("b range to be correct")
-	}
-}
-
-#[derive(Debug)]
-pub struct Storage {
-	disk: disk::Log,
-	read_cache: ReadCache,
-}
-
-impl Storage {
-	fn persist(
-		&mut self,
-		txn_write_buf: &[mem::Word],
-	) -> Result<usize, CommitErr> {
-		let bytes_flushed =
-			self.disk.append(txn_write_buf).map_err(CommitErr::Disk)?;
-		self.read_cache.update(txn_write_buf)?;
-
-		Ok(bytes_flushed)
-	}
-}
-
-pub struct Config {
-	pub read_cache_capacity: usize,
-	pub key_index_capacity: usize,
-	pub txn_write_buf_capacity: usize,
-	pub disk_read_buf_capacity: usize,
-}
-
-#[derive(Debug)]
-struct Log {
-	addr: Addr,
-	/// Still counts as "static allocation" as only allocating in constructor
-	path: String,
-	/// Abstract storage of log, hiding details of any caching
-	storage: Storage,
-	/// Keeps track of the disk
-	byte_len: usize,
-	/// The entire index in memory, like bitcask's KeyDir
-	/// Maps logical indices to disk offsets
-	/// Eventully there will be a map of these, one per origin ID.
-	index: Index,
-	/// This stores all the events w/headers, contiguously, which means only
-	/// one syscall is required to write to disk.
-	txn_write_buf: Vec<u8>,
-	/// Written to when a value is not in the read_cache
-	disk_read_buf: Vec<u8>,
-}
-
-pub fn create(dir_path: &str, config: Config) -> rustix::io::Result<Log> {
-	let mut rng = rand::thread_rng();
-	let addr = Addr::new(rng.gen());
-	let path = format!("{dir_path}/{addr}");
-	let disk = disk::Log::open(&path)?;
-	let read_cache = ReadCache::new(config.read_cache_capacity);
-
-	Ok(Log {
-		addr,
-		path,
-		storage: Storage { disk, read_cache },
-		byte_len: 0,
-		index: Index::new(config.key_index_capacity),
-		txn_write_buf: Vec::new(config.txn_write_buf_capacity),
-		disk_read_buf: Vec::new(config.disk_read_buf_capacity),
-	})
-}
-
-impl Log {
-	// Based on FasterLog API
-	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
-		let id = event::ID::new(self.addr, self.index.event_count());
-		let e = event::Event { id, payload };
-
-		event::append(&mut self.txn_write_buf, &e).map_err(EnqueueErr)
-	}
-
-	// Based on FasterLog API
-	pub fn commit(&mut self) -> Result<(), CommitErr> {
-		assert_eq!(self.byte_len % 8, 0);
-
-		if event::HEADER_SIZE > self.txn_write_buf.len() {
-			return Err(CommitErr::TxnWriteBufHasNoEvents);
-		}
-
-		let bytes_flushed = self.storage.persist(&self.txn_write_buf)?;
-
-		// Disk offsets recorded in the Key Index always lag behind by one
-		let mut disk_offset = self.byte_len;
-		for e in event::View::new(&self.txn_write_buf) {
-			self.index.add(disk_offset).map_err(CommitErr::KeyIndex)?;
-			disk_offset += e.on_disk_size();
-		}
-
-		self.byte_len += bytes_flushed;
-		assert!(self.byte_len % 8 == 0);
-		Ok(self.txn_write_buf.clear())
-	}
-
-	pub fn read(&mut self, logical_pos: usize) -> Option<event::Event<'_>> {
-		let byte_cache_start =
-			self.index.get(self.storage.read_cache.logical_start)?;
-
-		let byte_pos = self.index.get(logical_pos)?;
-
-		let next_byte_pos = self.index.get(logical_pos + 1)?;
-
-		match byte_pos.checked_sub(byte_cache_start) {
-			Some(relative_byte_pos) => {
-				// If it's not in here, that means it doesn't exist at all
-				self.storage.read_cache.read(relative_byte_pos)
-			}
-			None => {
-				// read from disk
-				let len = next_byte_pos
-					.checked_sub(byte_pos)
-					.expect("key index must always be in sorted order");
-				self.disk_read_buf
-					.resize(len)
-					.expect("disk read buf should fit event");
-				self.storage
-					.disk
-					.read(&mut self.disk_read_buf, byte_pos)
-					.expect("reading from disk failed");
-
-				let event = event::read(&self.disk_read_buf, 0)
-					.expect("Disk read buf did not contain a valid event");
-
-				Some(event)
-			}
-		}
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	//use crate::test_utils::*;
-	use pretty_assertions::assert_eq;
-	use proptest::prelude::*;
-	use tempfile::TempDir;
-
-	#[test]
-	fn log() {
-		let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
-		let tmp_dir_path = tmp_dir.path().to_string_lossy().into_owned();
-
-		let mut log = create(
-			&tmp_dir_path,
-			Config {
-				read_cache_capacity: 127,
-				key_index_capacity: 0x10000,
-				txn_write_buf_capacity: 512,
-				disk_read_buf_capacity: 256,
-			},
-		)
-		.unwrap();
-
-		log.enqueue(b"I have known the arcane law").unwrap();
-		log.commit().unwrap();
-
-		assert_eq!(
-			log.read(0).unwrap().payload,
-			b"I have known the arcane law"
-		);
-
-		log.enqueue(b"On strange roads, such visions met").unwrap();
-		log.commit().unwrap();
-
-		dbg!(&log);
-
-		assert_eq!(
-			log.read(1).unwrap().payload,
-			b"On strange roads, such visions met"
-		);
-	}
-
-	proptest! {
-		// TODO: change stream max to reveal bugs
-		#[test]
-		fn rw_log(ess in arb_local_events_stream(1, 16, 16)) {
-			let tmp_dir = TempDir::with_prefix("interlog-").unwrap();
-
-			let tmp_dir_path =
-				tmp_dir
-				.path()
-				.to_string_lossy().into_owned();
-
-			let mut rng = rand::thread_rng();
-			let config = Config {
-				txn_write_buf_capacity: 512,
-				read_cache_capacity: 16 * 32,
-				key_index_capacity: 0x10000,
-			};
-
-			let mut log = Log::new(&tmp_dir_path, &mut rng, &config)
-				.expect("failed to open file");
-
-			for es in ess {
-				for e in es {
-					log.enqueue(&e).expect("failed to write to replica");
-				}
-
-				log.commit().unwrap();
-
-			}
-		}
 	}
 }
 */

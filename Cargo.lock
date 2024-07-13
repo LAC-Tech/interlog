@@ -423,6 +423,7 @@ name = "sim"
 version = "0.1.0"
 dependencies = [
  "interlog_core",
+ "pretty_assertions",
  "rand",
  "tabled",
 ]

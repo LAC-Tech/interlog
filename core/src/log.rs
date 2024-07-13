@@ -30,7 +30,8 @@ impl Txn {
 pub struct Log<AOS: storage::AppendOnly> {
 	txn: Txn,
 	actual_last: LogicalQty,
-	storage: AOS,
+	// TODO: make private of there's extra logic
+	pub storage: AOS,
 }
 
 impl<AOS: storage::AppendOnly> Log<AOS> {

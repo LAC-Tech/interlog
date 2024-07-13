@@ -185,6 +185,16 @@ impl<'a, T> IntoIterator for &'a mut Vec<T> {
 	}
 }
 
+impl<T, R> core::ops::Index<R> for Vec<T>
+where
+	R: core::ops::RangeBounds<usize>,
+{
+	type Output = [T];
+	fn index(&self, index: R) -> &Self::Output {
+		let slice: &[T] = &self.elems[..self.len];
+		&slice[(index.start_bound().cloned(), index.end_bound().cloned())]
+	}
+}
 /*
 macro_rules! vec {
 	($($x:expr),*) => {{

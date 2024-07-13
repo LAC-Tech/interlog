@@ -158,6 +158,15 @@ impl Buf {
 	}
 }
 
+impl<'a> IntoIterator for &'a Buf {
+	type Item = Event<'a>;
+	type IntoIter = Iter<'a>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		Iter::new(&self.0)
+	}
+}
+
 pub struct Slice<'a>(&'a [mem::Word]);
 
 impl<'a> IntoIterator for Slice<'a> {
