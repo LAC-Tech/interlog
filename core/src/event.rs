@@ -149,8 +149,14 @@ impl Buf {
 		self.0.clear();
 	}
 
-	pub fn as_mut_bytes(&mut self) -> &mut [u8] {
-		&mut self.0
+	pub fn fill(
+		&mut self,
+		len: usize,
+		f: impl Fn(&mut [u8]),
+	) -> fixed_capacity::Res {
+		self.0.resize(len)?;
+		f(&mut self.0[..len]);
+		Ok(())
 	}
 
 	pub fn as_bytes(&mut self) -> &[u8] {

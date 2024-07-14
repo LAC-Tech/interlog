@@ -4,6 +4,8 @@ use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
 
+use core::ops::RangeBounds;
+
 /// Version Vector
 mod version_vector {
 	use crate::pervasives::*;
@@ -149,11 +151,13 @@ impl Index {
 		self.txn_vv.clear();
 	}
 
-	pub fn read<R: core::ops::RangeBounds<usize>>(
+	pub fn read<R: RangeBounds<usize>>(
 		&self,
 		logical: R,
-	) -> &[storage::Qty] {
-		&self.logical_to_storage[logical]
+	) -> Option<mem::Region> {
+		let offsets: &[storage::Qty] = &self.logical_to_storage[logical];
+		let pos = offsets.first()?;
+		panic!("TODO: find len, and go one back");
 	}
 }
 

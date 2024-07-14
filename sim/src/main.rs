@@ -145,14 +145,6 @@ impl Env {
 	}
 }
 
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut output, b| {
-        let _ = write!(output, "{b:02X}");
-        output
-    })
-}b)).collect()
-}
-
 #[derive(Debug)]
 struct Stats {
 	events_sent: usize,

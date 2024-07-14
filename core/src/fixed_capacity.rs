@@ -195,6 +195,16 @@ where
 		&slice[(index.start_bound().cloned(), index.end_bound().cloned())]
 	}
 }
+
+impl<T, R> core::ops::IndexMut<R> for Vec<T>
+where
+	R: core::ops::RangeBounds<usize>,
+{
+	fn index_mut(&mut self, index: R) -> &mut Self::Output {
+		let slice: &mut [T] = &mut self.elems[..self.len];
+		&mut slice[(index.start_bound().cloned(), index.end_bound().cloned())]
+	}
+}
 /*
 macro_rules! vec {
 	($($x:expr),*) => {{

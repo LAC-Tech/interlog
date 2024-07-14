@@ -34,6 +34,8 @@ mod test_utils;
 use crate::index::Index;
 pub use crate::pervasives::*;
 
+use core::ops::RangeBounds;
+
 pub struct Actor<AOS: storage::AppendOnly> {
 	pub addr: Addr,
 	log: log::Log<AOS>,
@@ -115,11 +117,19 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		Ok(log_count)
 	}
 
-	pub fn read(&self, buf: &mut event::Buf, n_most_recent: usize) {
-		let offsets = self.index.read(n_most_recent..);
-		self.log.storage.read(buf.as_mut_bytes(), offsets[0].0);
-		// Figure out how much space I need from index
-		// allocate that amount to a buffer
+	// TODO: indexable actor?
+	pub fn read(
+		&self,
+		buf: &mut event::Buf,
+		range: impl RangeBounds<usize>,
+	) -> fixed_capacity::Res {
+		buf.clear();
+
+		if let Some(region) = self.index.read(range) {
+			self.log.read(buf, region)?;
+		}
+
+		Ok(())
 	}
 }
 

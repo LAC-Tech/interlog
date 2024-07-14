@@ -1,7 +1,8 @@
-use super::storage;
 use crate::event;
+use crate::fixed_capacity;
 use crate::mem;
 use crate::pervasives::*;
+use crate::storage;
 
 struct Txn {
 	last: LogicalQty,
@@ -31,7 +32,7 @@ pub struct Log<AOS: storage::AppendOnly> {
 	txn: Txn,
 	actual_last: LogicalQty,
 	// TODO: make private of there's extra logic
-	pub storage: AOS,
+	storage: AOS,
 }
 
 impl<AOS: storage::AppendOnly> Log<AOS> {
@@ -66,5 +67,13 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 
 	pub fn next_pos(&self) -> LogicalQty {
 		self.actual_last + self.txn.last
+	}
+
+	pub fn read(
+		&self,
+		buf: &mut event::Buf,
+		region: mem::Region,
+	) -> fixed_capacity::Res {
+		buf.fill(region.len, |words| self.storage.read(words, region.pos))
 	}
 }
