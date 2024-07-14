@@ -1,5 +1,3 @@
-use core::ops::Range;
-
 use crate::event;
 use crate::fixed_capacity::Vec;
 use crate::mem;
@@ -8,9 +6,7 @@ use crate::storage;
 
 /// Version Vector
 mod version_vector {
-	use crate::event;
 	use crate::pervasives::*;
-	use hashbrown::hash_map::Entry;
 	use hashbrown::HashMap;
 
 	// TODO: fixed capacity hash map, if such a thing is even possible

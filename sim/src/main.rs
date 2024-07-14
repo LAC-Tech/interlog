@@ -146,7 +146,11 @@ impl Env {
 }
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
-	bytes.into_iter().map(|&b| format!("{:x}", b)).collect()
+    bytes.iter().fold(String::new(), |mut output, b| {
+        let _ = write!(output, "{b:02X}");
+        output
+    })
+}b)).collect()
 }
 
 #[derive(Debug)]
