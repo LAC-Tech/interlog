@@ -1,5 +1,6 @@
 use crate::event;
-use crate::fixed_capacity::Vec;
+use crate::fixcap;
+use crate::fixcap::Vec;
 use crate::mem;
 use crate::pervasives::*;
 use crate::storage;

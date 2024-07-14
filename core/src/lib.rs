@@ -22,7 +22,7 @@ compile_error!("code assumes linux");
 
 //pub mod err;
 pub mod event;
-pub mod fixed_capacity;
+pub mod fixcap;
 mod index;
 mod log;
 pub mod mem;
@@ -122,7 +122,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		&self,
 		buf: &mut event::Buf,
 		range: impl RangeBounds<usize>,
-	) -> fixed_capacity::Res {
+	) -> fixcap::Res {
 		buf.clear();
 
 		if let Some(region) = self.index.read(range) {

@@ -43,11 +43,11 @@ mod config {
 }
 
 // TODO: introduce faults
-struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
+struct AppendOnlyMemory(fixcap::Vec<u8>);
 
 impl AppendOnlyMemory {
 	fn new() -> Self {
-		Self(fixed_capacity::Vec::new(config::STORAGE_CAPACITY.0))
+		Self(fixcap::Vec::new(config::STORAGE_CAPACITY.0))
 	}
 }
 
@@ -105,8 +105,8 @@ impl Env {
 
 	fn pop_payload_lens(
 		&mut self,
-		buf: &mut fixed_capacity::Vec<usize>,
-	) -> fixed_capacity::Res {
+		buf: &mut fixcap::Vec<usize>,
+	) -> fixcap::Res {
 		if let Some(msg_len) = self.msg_lens.pop() {
 			for _ in 0..msg_len {
 				let payload_size = self
@@ -125,7 +125,7 @@ impl Env {
 		rng: &mut R,
 		stats: &mut Stats,
 		payload_buf: &mut [u8],
-		payload_lens: &mut fixed_capacity::Vec<usize>,
+		payload_lens: &mut fixcap::Vec<usize>,
 	) -> Result<(), ReplicaErr> {
 		payload_lens.clear();
 		self.pop_payload_lens(payload_lens)
@@ -172,7 +172,7 @@ fn main() {
 	println!("Number of actors {}", environments.len());
 
 	let mut payload_buf = [0u8; config::PAYLOAD_SIZE.max()];
-	let mut payload_lens = fixed_capacity::Vec::new(config::MSG_LEN.max());
+	let mut payload_lens = fixcap::Vec::new(config::MSG_LEN.max());
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for env in environments.values_mut() {

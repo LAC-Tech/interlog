@@ -1,5 +1,5 @@
 use crate::event;
-use crate::fixed_capacity;
+use crate::fixcap;
 use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
@@ -73,7 +73,7 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 		&self,
 		buf: &mut event::Buf,
 		region: mem::Region,
-	) -> fixed_capacity::Res {
+	) -> fixcap::Res {
 		buf.as_mut_vec()
 			.fill(region.len, |words| self.storage.read(words, region.pos))
 	}

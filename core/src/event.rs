@@ -1,6 +1,6 @@
 //! Structs for reading and writing events from contiguous bytes.
-use crate::fixed_capacity;
-use crate::fixed_capacity::Vec;
+use crate::fixcap;
+use crate::fixcap::Vec;
 use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
@@ -88,7 +88,7 @@ pub fn read(bytes: &[mem::Word], byte_offset: usize) -> Option<Event<'_>> {
 	Some(Event { id, payload })
 }
 
-pub fn append(buf: &mut Vec<mem::Word>, event: &Event) -> fixed_capacity::Res {
+pub fn append(buf: &mut Vec<mem::Word>, event: &Event) -> fixcap::Res {
 	let byte_len = event.payload.len();
 	let header_region = mem::Region::new(buf.len(), HEADER_SIZE);
 	let header = Header { byte_len, id: event.id };
@@ -133,7 +133,7 @@ impl Buf {
 		Self(Vec::new(capacity.0))
 	}
 
-	pub fn push(&mut self, event: &Event) -> fixed_capacity::Res {
+	pub fn push(&mut self, event: &Event) -> fixcap::Res {
 		append(&mut self.0, event)
 	}
 
@@ -153,7 +153,7 @@ impl Buf {
 		&self.0
 	}
 
-	pub fn as_mut_vec(&mut self) -> &mut fixed_capacity::Vec<u8> {
+	pub fn as_mut_vec(&mut self) -> &mut fixcap::Vec<u8> {
 		&mut self.0
 	}
 }
