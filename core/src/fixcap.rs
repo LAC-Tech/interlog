@@ -18,33 +18,33 @@ pub type Res = Result<(), mem::Overrun>;
  */
 #[derive(Clone)]
 pub struct Vec<T> {
-	elems: alloc::boxed::Box<[T]>,
+	items: alloc::boxed::Box<[T]>,
 	len: usize,
 }
 
 impl<T: core::cmp::PartialEq> PartialEq for Vec<T> {
 	fn eq(&self, other: &Self) -> bool {
-		self.elems[..self.len] == other.elems[..other.len]
+		self.items[..self.len] == other.items[..other.len]
 	}
 }
 
 impl<T: fmt::Debug> fmt::Debug for Vec<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.debug_list().entries(self.elems.iter().take(self.len)).finish()
+		f.debug_list().entries(self.items.iter().take(self.len)).finish()
 	}
 }
 
 impl<T: core::default::Default + Clone> Vec<T> {
 	pub fn new(capacity: usize) -> Vec<T> {
 		let elems = vec![T::default(); capacity].into_boxed_slice();
-		Self { elems, len: 0 }
+		Self { items: elems, len: 0 }
 	}
 
 	pub fn resize(&mut self, new_len: usize) -> Res {
 		self.check_capacity(new_len)?;
 
 		if new_len > self.len {
-			self.elems[self.len..new_len].fill(T::default());
+			self.items[self.len..new_len].fill(T::default());
 		}
 
 		self.len = new_len;
@@ -54,14 +54,14 @@ impl<T: core::default::Default + Clone> Vec<T> {
 
 	pub fn fill(&mut self, len: usize, f: impl Fn(&mut [T])) -> Res {
 		self.resize(len)?;
-		f(&mut self.elems[..len]);
+		f(&mut self.items[..len]);
 		Ok(())
 	}
 
 	pub fn pop(&mut self) -> Option<T> {
 		(self.len == 0).then(|| {
 			self.len -= 1;
-			self.elems[self.len].clone()
+			self.items[self.len].clone()
 		})
 	}
 }
@@ -69,7 +69,7 @@ impl<T: core::default::Default + Clone> Vec<T> {
 impl<T> Vec<T> {
 	#[inline]
 	pub fn capacity(&self) -> usize {
-		self.elems.len()
+		self.items.len()
 	}
 
 	pub fn from_fn<F>(capacity: usize, cb: F) -> Self
@@ -80,7 +80,7 @@ impl<T> Vec<T> {
 			.map(cb)
 			.collect::<alloc::vec::Vec<_>>()
 			.into_boxed_slice();
-		Self { elems, len: 0 }
+		Self { items: elems, len: 0 }
 	}
 
 	#[inline]
@@ -107,7 +107,7 @@ impl<T> Vec<T> {
 
 	pub fn push(&mut self, value: T) -> Res {
 		self.check_capacity(self.len + 1)?;
-		self.elems[self.len] = value;
+		self.items[self.len] = value;
 		self.len += 1;
 		Ok(())
 	}
@@ -122,7 +122,7 @@ impl<T> Vec<T> {
 
 	fn insert(&mut self, index: usize, element: T) -> Res {
 		self.check_capacity(index + 1)?;
-		self.elems[index] = element;
+		self.items[index] = element;
 		Ok(())
 	}
 
@@ -130,11 +130,11 @@ impl<T> Vec<T> {
 	where
 		I: SliceIndex<[T]>,
 	{
-		self.elems[..self.len].get(index)
+		self.items[..self.len].get(index)
 	}
 
 	fn last(&self) -> Option<&T> {
-		self.len.checked_sub(1).and_then(|i| self.elems.get(i))
+		self.len.checked_sub(1).and_then(|i| self.items.get(i))
 	}
 
 	pub fn can_be_extended_by(&self, other: &[T]) -> bool {
@@ -147,7 +147,7 @@ impl<T: Copy> Vec<T> {
 	pub fn extend_from_slice(&mut self, other: &[T]) -> Res {
 		let new_len = self.len + other.len();
 		self.check_capacity(new_len)?;
-		self.elems[self.len..new_len].copy_from_slice(other);
+		self.items[self.len..new_len].copy_from_slice(other);
 		self.len = new_len;
 		Ok(())
 	}
@@ -157,19 +157,19 @@ impl<T> ops::Deref for Vec<T> {
 	type Target = [T];
 
 	fn deref(&self) -> &Self::Target {
-		&self.elems[..self.len]
+		&self.items[..self.len]
 	}
 }
 
 impl<T> ops::DerefMut for Vec<T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.elems[..self.len]
+		&mut self.items[..self.len]
 	}
 }
 
 impl AsRef<[u8]> for Vec<u8> {
 	fn as_ref(&self) -> &[u8] {
-		&self.elems[..self.len]
+		&self.items[..self.len]
 	}
 }
 
@@ -197,7 +197,7 @@ where
 {
 	type Output = [T];
 	fn index(&self, index: R) -> &Self::Output {
-		let slice: &[T] = &self.elems[..self.len];
+		let slice: &[T] = &self.items[..self.len];
 		&slice[(index.start_bound().cloned(), index.end_bound().cloned())]
 	}
 }
@@ -207,7 +207,7 @@ where
 	R: core::ops::RangeBounds<usize>,
 {
 	fn index_mut(&mut self, index: R) -> &mut Self::Output {
-		let slice: &mut [T] = &mut self.elems[..self.len];
+		let slice: &mut [T] = &mut self.items[..self.len];
 		&mut slice[(index.start_bound().cloned(), index.end_bound().cloned())]
 	}
 }
