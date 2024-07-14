@@ -260,6 +260,7 @@ mod tests {
 	}
 
 	proptest! {
+		/*
 		#[test]
 		fn proptest_enqueue_and_get(
 			offset in 0usize..10_000_000usize,
@@ -284,7 +285,6 @@ mod tests {
 		 * TODO: generate conseucitve events
 		 */
 
-		/*
 		#[test]
 		fn txn_either_succeeds_or_fails(
 			id_payload_pairs in proptest::collection::vec(

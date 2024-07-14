@@ -52,6 +52,12 @@ impl<T: core::default::Default + Clone> Vec<T> {
 		Ok(())
 	}
 
+	pub fn fill(&mut self, len: usize, f: impl Fn(&mut [T])) -> Res {
+		self.resize(len)?;
+		f(&mut self.elems[..len]);
+		Ok(())
+	}
+
 	pub fn pop(&mut self) -> Option<T> {
 		(self.len == 0).then(|| {
 			self.len -= 1;

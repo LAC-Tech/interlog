@@ -74,6 +74,7 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 		buf: &mut event::Buf,
 		region: mem::Region,
 	) -> fixed_capacity::Res {
-		buf.fill(region.len, |words| self.storage.read(words, region.pos))
+		buf.as_mut_vec()
+			.fill(region.len, |words| self.storage.read(words, region.pos))
 	}
 }

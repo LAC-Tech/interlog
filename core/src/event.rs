@@ -149,18 +149,12 @@ impl Buf {
 		self.0.clear();
 	}
 
-	pub fn fill(
-		&mut self,
-		len: usize,
-		f: impl Fn(&mut [u8]),
-	) -> fixed_capacity::Res {
-		self.0.resize(len)?;
-		f(&mut self.0[..len]);
-		Ok(())
-	}
-
 	pub fn as_bytes(&mut self) -> &[u8] {
 		&self.0
+	}
+
+	pub fn as_mut_vec(&mut self) -> &mut fixed_capacity::Vec<u8> {
+		&mut self.0
 	}
 }
 
