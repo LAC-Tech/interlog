@@ -156,11 +156,11 @@ mod tests {
 	use pretty_assertions::assert_eq;
 	use rand::prelude::*;
 
-	struct AppendOnlyMemory(fixed_capacity::Vec<u8>);
+	struct AppendOnlyMemory(fixcap::Vec<u8>);
 
 	impl AppendOnlyMemory {
 		fn new(capacity: usize) -> Self {
-			Self(fixed_capacity::Vec::new(capacity))
+			Self(fixcap::Vec::new(capacity))
 		}
 	}
 

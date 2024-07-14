@@ -103,16 +103,24 @@ mod version_vector {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Index {
 	txn_buf: Vec<storage::Qty>,
-	logical_to_storage: Vec<storage::Qty>,
+	/**
+	   This is always one greater than the number of events stored; the last
+	   element is the next offset of the next event appended
+	*/
+	storage_offsets: Vec<storage::Qty>,
 	actual_vv: version_vector::VersionVector,
 	txn_vv: version_vector::VersionVector,
 }
 
 impl Index {
 	pub fn new(max_txn_size: LogicalQty, max_events: LogicalQty) -> Self {
+		let mut storage_offsets = Vec::new(max_events.0);
+		storage_offsets
+			.push(storage::Qty(0))
+			.expect("max events should be more than 0");
 		// TODO: HOW MANY ADDRS WILL I HAVE?
 		Self {
-			logical_to_storage: Vec::new(max_events.0),
+			storage_offsets,
 			txn_buf: Vec::new(max_txn_size.0),
 			actual_vv: version_vector::VersionVector::new(),
 			txn_vv: version_vector::VersionVector::new(),
@@ -125,16 +133,11 @@ impl Index {
 		stored_offset: storage::Qty,
 	) -> Result<(), mem::Overrun> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
-
 		let event_count = self.txn_vv.increment(e.id.origin);
 
 		assert_eq!(event_count, e.id.pos.0 + 1, "vv counter should always be one more than the position of the last event");
 
-		let offset = stored_offset
-			+ self.txn_buf.last().copied().unwrap_or(storage::Qty(0))
-			+ e.size();
-
-		self.txn_buf.push(offset)
+		self.txn_buf.push(e.size())
 	}
 
 	/// Returns number of events committed
@@ -142,7 +145,7 @@ impl Index {
 		self.actual_vv.merge_in(&self.txn_vv);
 
 		let n_events_comitted = self.txn_buf.len();
-		self.logical_to_storage.extend_from_slice(&self.txn_buf)?;
+		self.storage_offsets.extend_from_slice(&self.txn_buf)?;
 		self.txn_buf.clear();
 		Ok(n_events_comitted)
 	}
@@ -159,7 +162,7 @@ impl Index {
 			range.end_bound().cloned().map(|n| n + 1),
 		);
 
-		let offsets: &[storage::Qty] = &self.logical_to_storage[range];
+		let offsets: &[storage::Qty] = &self.storage_offsets[range];
 
 		let start = offsets.first().cloned()?;
 		let end = offsets.last().cloned()?;
