@@ -198,13 +198,13 @@ mod tests {
 
 		actor.enqueue(b"I have known the arcane law").unwrap();
 		actor.commit().unwrap();
-		actor.read(&mut read_buf, 1);
+		actor.read(&mut read_buf, 0..=0);
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(actual.payload, b"I have known the arcane law");
 
 		actor.enqueue(b"On strange roads, such visions met").unwrap();
 		actor.commit().unwrap();
-		actor.read(&mut read_buf, 1);
+		actor.read(&mut read_buf, 0..=0);
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(actual.payload, b"On strange roads, such visions met");
 	}

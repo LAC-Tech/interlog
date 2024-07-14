@@ -151,13 +151,19 @@ impl Index {
 		self.txn_vv.clear();
 	}
 
-	pub fn read<R: RangeBounds<usize>>(
-		&self,
-		logical: R,
-	) -> Option<mem::Region> {
-		let offsets: &[storage::Qty] = &self.logical_to_storage[logical];
-		let pos = offsets.first()?;
-		panic!("TODO: find len, and go one back");
+	pub fn read<R: RangeBounds<usize>>(&self, range: R) -> Option<mem::Region> {
+		// Range needs to be adjusted forward by one, to get the total length
+		let range = (
+			range.start_bound().cloned(),
+			range.end_bound().cloned().map(|n| n + 1),
+		);
+
+		let offsets: &[storage::Qty] = &self.logical_to_storage[range];
+
+		let start = offsets.first().cloned()?;
+		let end = offsets.last().cloned()?;
+
+		Some(mem::Region::new(start.0, end.0 - start.0))
 	}
 }
 
@@ -247,7 +253,10 @@ mod tests {
 		index.enqueue(&event, offset).unwrap();
 		index.commit().unwrap();
 
-		assert_eq!(index.read(0..1), &[offset + event.size()]);
+		assert_eq!(
+			index.read(0..1),
+			Some(mem::Region::new(offset.0, event.size().0))
+		);
 	}
 
 	proptest! {
@@ -266,7 +275,7 @@ mod tests {
 
 			assert_eq!(
 				index.read(0..1),
-				&[offset + event.size()]
+				Some(mem::Region::new(0, event.size().0))
 			);
 		}
 
