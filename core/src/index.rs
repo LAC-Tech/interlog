@@ -291,8 +291,7 @@ mod tests {
 				(arb_event_id(), arb_payload(100)),
 				0..1000),
 			max_txn_size in 0usize..10usize,
-			max_events in 0usize..200usize,
-			offset in (0usize..10_000_000usize).prop_map(storage::Qty)
+			max_events in 1usize..200usize,
 		) {
 			let mut index =
 				Index::new(
@@ -317,19 +316,7 @@ mod tests {
 				assert_eq!(control_index, index, "after commit err, rolling back still has the two indexes in an inconsistent state");
 			} else {
 
-				let actual = index.read(
-					0..id_payload_pairs.len()
-				);
 
-				let expected: alloc::vec::Vec<storage::Qty> = id_payload_pairs
-					.iter()
-					.map(|(id, payload)| {
-						let e = Event {id: *id, payload};
-						offset + e.size()
-					})
-					.collect();
-
-				assert_eq!(actual, expected, "transaction has not inserted everything");
 			}
 		}
 		*/
