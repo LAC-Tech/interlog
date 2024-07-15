@@ -31,24 +31,27 @@ fn main() {
 	let mut actor = Actor::new(
 		Addr::new(&mut rng),
 		Config {
-			max_events: LogicalQty(2),
+			max_events: LogicalQty(3),
 			txn_size: storage::Qty(4096),
-			max_txn_events: LogicalQty(2),
+			max_txn_events: LogicalQty(3),
 		},
-		AppendOnlyMemory::new(64),
+		AppendOnlyMemory::new(4096),
 	);
 
 	let mut read_buf = event::Buf::new(storage::Qty(128));
 
 	actor.enqueue(b"I have known the arcane law").unwrap();
 	actor.commit().unwrap();
-	actor.read(&mut read_buf, 0..=0);
+	actor.read(&mut read_buf, 0..=0).unwrap();
 	let actual = &read_buf.into_iter().last().unwrap();
 	assert_eq!(actual.payload, b"I have known the arcane law");
 
 	actor.enqueue(b"On strange roads, such visions met").unwrap();
 	actor.commit().unwrap();
-	actor.read(&mut read_buf, 0..=0);
+	actor.read(&mut read_buf, 1..=1).unwrap();
 	let actual = &read_buf.into_iter().last().unwrap();
-	assert_eq!(actual.payload, b"On strange roads, such visions met");
+	assert_eq!(
+		core::str::from_utf8(actual.payload).unwrap(),
+		"On strange roads, such visions met"
+	);
 }

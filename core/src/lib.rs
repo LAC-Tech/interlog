@@ -97,13 +97,14 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 	}
 
 	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
-		let new_pos = self.log.enqueue(e).map_err(EnqueueErr::Log)?;
-		self.index.enqueue(e, new_pos).map_err(EnqueueErr::Index)
+		self.log.enqueue(e).map_err(EnqueueErr::Log)?;
+		self.index.enqueue(e).map_err(EnqueueErr::Index)
 	}
 
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let origin = self.addr;
-		let pos = self.log.next_pos();
+		let pos =
+			self.index.n_committed_events() + self.log.n_uncommitted_events();
 		let id = event::ID { origin, pos };
 		let e = event::Event { id, payload };
 
@@ -187,26 +188,29 @@ mod tests {
 		let mut actor = Actor::new(
 			Addr::new(&mut rng),
 			Config {
-				max_events: LogicalQty(2),
+				max_events: LogicalQty(3),
 				txn_size: storage::Qty(4096),
-				max_txn_events: LogicalQty(2),
+				max_txn_events: LogicalQty(3),
 			},
-			AppendOnlyMemory::new(64),
+			AppendOnlyMemory::new(4096),
 		);
 
 		let mut read_buf = event::Buf::new(storage::Qty(128));
 
 		actor.enqueue(b"I have known the arcane law").unwrap();
 		actor.commit().unwrap();
-		actor.read(&mut read_buf, 0..=0);
+		actor.read(&mut read_buf, 0..=0).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(actual.payload, b"I have known the arcane law");
 
 		actor.enqueue(b"On strange roads, such visions met").unwrap();
 		actor.commit().unwrap();
-		actor.read(&mut read_buf, 0..=0);
+		actor.read(&mut read_buf, 1..=1).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
-		assert_eq!(actual.payload, b"On strange roads, such visions met");
+		assert_eq!(
+			core::str::from_utf8(actual.payload).unwrap(),
+			"On strange roads, such visions met"
+		);
 	}
 }
 /*

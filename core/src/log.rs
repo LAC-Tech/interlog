@@ -30,18 +30,13 @@ impl Txn {
 
 pub struct Log<AOS: storage::AppendOnly> {
 	txn: Txn,
-	actual_last: LogicalQty,
 	// TODO: make private of there's extra logic
 	storage: AOS,
 }
 
 impl<AOS: storage::AppendOnly> Log<AOS> {
 	pub fn new(txn_size: storage::Qty, aos: AOS) -> Self {
-		Self {
-			actual_last: LogicalQty(0),
-			txn: Txn::new(txn_size),
-			storage: aos,
-		}
+		Self { txn: Txn::new(txn_size), storage: aos }
 	}
 	pub fn enqueue(
 		&mut self,
@@ -56,17 +51,12 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 		self.storage.append(self.txn.buf.as_bytes())?;
 		// TODO: ask storage directly for this? I think pwrite gives it
 		let n_events_comitted = self.txn.last;
-		self.actual_last += n_events_comitted;
 		self.txn.clear();
 		Ok(n_events_comitted.0)
 	}
 
 	pub fn rollback(&mut self) {
 		self.txn.clear();
-	}
-
-	pub fn next_pos(&self) -> LogicalQty {
-		self.actual_last + self.txn.last
 	}
 
 	pub fn read(
@@ -76,5 +66,9 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 	) -> fixcap::Res {
 		buf.as_mut_vec()
 			.fill(region.len, |words| self.storage.read(words, region.pos))
+	}
+
+	pub fn n_uncommitted_events(&self) -> LogicalQty {
+		self.txn.last
 	}
 }

@@ -127,17 +127,18 @@ impl Index {
 		}
 	}
 
-	pub fn enqueue(
-		&mut self,
-		e: &event::Event,
-		stored_offset: storage::Qty,
-	) -> Result<(), mem::Overrun> {
+	pub fn enqueue(&mut self, e: &event::Event) -> Result<(), mem::Overrun> {
 		self.txn_vv.transfer_count(&self.actual_vv, e.id.origin);
 		let event_count = self.txn_vv.increment(e.id.origin);
 
 		assert_eq!(event_count, e.id.pos.0 + 1, "vv counter should always be one more than the position of the last event");
 
-		self.txn_buf.push(e.size())
+		let last = self.txn_buf.last().unwrap_or_else(|| {
+			self.storage_offsets
+				.last()
+				.expect("must always have at least one element")
+		});
+		self.txn_buf.push(*last + e.size())
 	}
 
 	/// Returns number of events committed
@@ -169,6 +170,10 @@ impl Index {
 
 		Some(mem::Region::new(start.0, end.0 - start.0))
 	}
+
+	pub fn n_committed_events(&self) -> LogicalQty {
+		LogicalQty(self.storage_offsets.len() - 1)
+	}
 }
 
 #[cfg(test)]
@@ -190,14 +195,11 @@ mod tests {
 
 		let offset = storage::Qty(0);
 
-		let actual =
-			index.enqueue(&Event::new(addr, LogicalQty(0), b"non"), offset);
+		let actual = index.enqueue(&Event::new(addr, LogicalQty(0), b"non"));
 		assert_eq!(actual, Ok(()));
 
-		let _ = index.enqueue(
-			&Event::new(addr, LogicalQty(34), b"consecutive"),
-			storage::Qty(0),
-		);
+		let _ =
+			index.enqueue(&Event::new(addr, LogicalQty(34), b"consecutive"));
 	}
 
 	#[test]
@@ -207,10 +209,8 @@ mod tests {
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 
-		let _ = index.enqueue(
-			&Event::new(addr, LogicalQty(42), b"not at zero"),
-			storage::Qty(0),
-		);
+		let _ =
+			index.enqueue(&Event::new(addr, LogicalQty(42), b"not at zero"));
 	}
 
 	#[test]
@@ -220,12 +220,10 @@ mod tests {
 		let mut index = Index::new(LogicalQty(1), LogicalQty(8));
 
 		let offset = storage::Qty(0);
-		let actual =
-			index.enqueue(&Event::new(addr, LogicalQty(0), b"over"), offset);
+		let actual = index.enqueue(&Event::new(addr, LogicalQty(0), b"over"));
 		assert_eq!(actual, Ok(()));
 
-		let actual =
-			index.enqueue(&Event::new(addr, LogicalQty(1), b"run"), offset);
+		let actual = index.enqueue(&Event::new(addr, LogicalQty(1), b"run"));
 		assert_eq!(actual, Err(mem::Overrun { capacity: 1, requested: 2 }));
 	}
 
@@ -235,16 +233,15 @@ mod tests {
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
 		let offset = storage::Qty(0);
-		let actual =
-			index.enqueue(&Event::new(addr, LogicalQty(0), b"commit"), offset);
+		let actual = index.enqueue(&Event::new(addr, LogicalQty(0), b"commit"));
 		assert_eq!(actual, Ok(()));
 
 		let actual =
-			index.enqueue(&Event::new(addr, LogicalQty(1), b"overrun"), offset);
+			index.enqueue(&Event::new(addr, LogicalQty(1), b"overrun"));
 		assert_eq!(actual, Ok(()));
 
 		let actual = index.commit();
-		assert_eq!(actual, Err(mem::Overrun { capacity: 1, requested: 2 }))
+		assert_eq!(actual, Err(mem::Overrun { capacity: 1, requested: 3 }))
 	}
 
 	#[test]
@@ -254,7 +251,7 @@ mod tests {
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 		let offset = storage::Qty(0);
 		let event = Event::new(addr, LogicalQty(0), b"enqueue and get");
-		index.enqueue(&event, offset).unwrap();
+		index.enqueue(&event).unwrap();
 		index.commit().unwrap();
 
 		assert_eq!(
