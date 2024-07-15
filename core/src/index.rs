@@ -261,7 +261,6 @@ mod tests {
 	}
 
 	proptest! {
-		/*
 		#[test]
 		fn proptest_enqueue_and_get(
 			offset in 0usize..10_000_000usize,
@@ -272,7 +271,7 @@ mod tests {
 			let mut index = Index::new(LogicalQty(2), LogicalQty(8));
 			let offset = storage::Qty(offset);
 			let event = Event::new(addr, LogicalQty(0), &payload);
-			index.enqueue(&event, offset).unwrap();
+			index.enqueue(&event).unwrap();
 			index.commit().unwrap();
 
 			assert_eq!(
@@ -285,7 +284,7 @@ mod tests {
 		 * Fails because event positions must be consecutive per addr
 		 * TODO: generate conseucitve events
 		 */
-
+		/*
 		#[test]
 		fn txn_either_succeeds_or_fails(
 			id_payload_pairs in proptest::collection::vec(
@@ -306,7 +305,7 @@ mod tests {
 				.iter()
 				.map(|(id, payload)| {
 					let e = Event {id: *id, payload};
-					index.enqueue(&e, offset)
+					index.enqueue(&e)
 				})
 				.collect();
 
@@ -319,7 +318,7 @@ mod tests {
 			} else {
 
 				let actual = index.read(
-					LogicalQty(0)..LogicalQty(id_payload_pairs.len())
+					0..id_payload_pairs.len()
 				);
 
 				let expected: alloc::vec::Vec<storage::Qty> = id_payload_pairs
