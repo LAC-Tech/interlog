@@ -7,26 +7,28 @@ embedded (designed to be written and read from in-process) and distributed
 (full-support for synchronisation). In other words, it's Local-First: read and
 write locally, sync remotely.
 
-It's designed as an append only network of logs; events have arbitrary byte
-array payloads, and are recorded at each log in transaction order (ie, the order
-received by the log.)
+It's designed as an append only network of logs. Each log is a ledger of
+events, which have a unique ID and an arbitrary byte array payload. Events are
+recorded at each log in transaction order (ie, the order received by the log.)
 
 ## Design goals
 
 - Deployable on cheap embedded linux devices. I want something commercially
   viable to slap onto shipping containers and trucks. (TODO: investigate if RTOS
   systems have the necessary primitives for allocation and file IO).
-- Works offline: always available for writes no matter the network conditions. A
-  log should never wait for the network for local IO.
+- Working offline: always available for writes no matter the network conditions. A log should never wait for the network for local IO.
 - Fast; no mallocs after initialization, no disk IO save for appends. I plan to
   use Direct I/O to cache the "top" part of the log myself.
 - Strong Eventual Consistency - Conflict free design based on CRDTs.
+- Alternate implementations - it'd be interesting to see if I could run this in
+  the browser, eg by compiling to WASM and writing to IndexedDB internally.
 
 ## Non-Goals
 
 - A rich read model. Interlog is meant as a robust, but simple, source of truth.
   It allows you to append binary data, and read it back in transaction order.
-  Any advanced read models should be derived in user code.
+  Any advanced read models should be derived in user code (Event Sourcing
+  style).
 - Linearizability or other strong consistency models. Interlog unashamedly in
   team Availability. ABW - always be writing.
 
