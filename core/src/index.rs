@@ -171,7 +171,7 @@ impl Index {
 		Some(mem::Region::new(start.0, end.0 - start.0))
 	}
 
-	pub fn n_committed_events(&self) -> LogicalQty {
+	pub fn committed_count(&self) -> LogicalQty {
 		LogicalQty(self.storage_offsets.len() - 1)
 	}
 }
@@ -192,8 +192,6 @@ mod tests {
 		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(8));
-
-		let offset = storage::Qty(0);
 
 		let actual = index.enqueue(&Event::new(addr, LogicalQty(0), b"non"));
 		assert_eq!(actual, Ok(()));
@@ -219,7 +217,6 @@ mod tests {
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(1), LogicalQty(8));
 
-		let offset = storage::Qty(0);
 		let actual = index.enqueue(&Event::new(addr, LogicalQty(0), b"over"));
 		assert_eq!(actual, Ok(()));
 
@@ -232,7 +229,6 @@ mod tests {
 		let mut rng = SmallRng::from_entropy();
 		let addr = Addr::new(&mut rng);
 		let mut index = Index::new(LogicalQty(2), LogicalQty(1));
-		let offset = storage::Qty(0);
 		let actual = index.enqueue(&Event::new(addr, LogicalQty(0), b"commit"));
 		assert_eq!(actual, Ok(()));
 
@@ -263,13 +259,11 @@ mod tests {
 	proptest! {
 		#[test]
 		fn proptest_enqueue_and_get(
-			offset in 0usize..10_000_000usize,
 			payload in arb_payload(4096)
 		) {
 			let mut rng = SmallRng::from_entropy();
 			let addr = Addr::new(&mut rng);
 			let mut index = Index::new(LogicalQty(2), LogicalQty(8));
-			let offset = storage::Qty(offset);
 			let event = Event::new(addr, LogicalQty(0), &payload);
 			index.enqueue(&event).unwrap();
 			index.commit().unwrap();

@@ -103,8 +103,7 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let origin = self.addr;
-		let pos =
-			self.index.n_committed_events() + self.log.n_uncommitted_events();
+		let pos = self.index.committed_count() + self.log.uncommitted_count();
 		let id = event::ID { origin, pos };
 		let e = event::Event { id, payload };
 

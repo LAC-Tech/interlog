@@ -4,33 +4,8 @@ use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
 
-struct Txn {
-	last: LogicalQty,
-	buf: event::Buf,
-}
-
-impl Txn {
-	fn new(size: storage::Qty) -> Self {
-		Self { last: LogicalQty(0), buf: event::Buf::new(size) }
-	}
-
-	fn clear(&mut self) {
-		self.last = LogicalQty(0);
-		self.buf.clear();
-	}
-
-	fn push(&mut self, e: &event::Event) -> Result<(), mem::Overrun> {
-		self.buf.push(e).map(|()| self.last += LogicalQty(1))
-	}
-
-	fn used(&self) -> storage::Qty {
-		self.buf.used()
-	}
-}
-
 pub struct Log<AOS: storage::AppendOnly> {
 	txn: Txn,
-	// TODO: make private of there's extra logic
 	storage: AOS,
 }
 
@@ -68,7 +43,31 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 			.fill(region.len, |words| self.storage.read(words, region.pos))
 	}
 
-	pub fn n_uncommitted_events(&self) -> LogicalQty {
+	pub fn uncommitted_count(&self) -> LogicalQty {
 		self.txn.last
+	}
+}
+
+struct Txn {
+	last: LogicalQty,
+	buf: event::Buf,
+}
+
+impl Txn {
+	fn new(size: storage::Qty) -> Self {
+		Self { last: LogicalQty(0), buf: event::Buf::new(size) }
+	}
+
+	fn clear(&mut self) {
+		self.last = LogicalQty(0);
+		self.buf.clear();
+	}
+
+	fn push(&mut self, e: &event::Event) -> Result<(), mem::Overrun> {
+		self.buf.push(e).map(|()| self.last += LogicalQty(1))
+	}
+
+	fn used(&self) -> storage::Qty {
+		self.buf.used()
 	}
 }
