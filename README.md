@@ -2,11 +2,35 @@
 
 **WORK IN PROGRESS**
 
-## Overview
+Interlog is a database optimized for writing and syncing data. It is both
+embedded (designed to be written and read from in-process) and distributed
+(full-support for synchronisation). In other words, it's Local-First: read and
+write locally, sync remotely.
 
-A distributed, local first log.
+It's designed as an append only network of logs; events have arbitrary byte
+array payloads, and are recorded at each log in transaction order (ie, the order
+received by the log.)
 
-Planned Featurs (see [TODO file](TODO.md) for progress):
+## Design goals
+
+- Deployable on cheap embedded linux devices. I want something commercially
+  viable to slap onto shipping containers and trucks. (TODO: investigate if RTOS
+  systems have the necessary primitives for allocation and file IO).
+- Works offline: always available for writes no matter the network conditions. A
+  log should never wait for the network for local IO.
+- Fast; no mallocs after initialization, no disk IO save for appends. I plan to
+  use Direct I/O to cache the "top" part of the log myself.
+- Strong Eventual Consistency - Conflict free design based on CRDTs.
+
+## Non-Goals
+
+- A rich read model. Interlog is meant as a robust, but simple, source of truth.
+  It allows you to append binary data, and read it back in transaction order.
+  Any advanced read models should be derived in user code.
+- Linearizability or other strong consistency models. Interlog unashamedly in
+  team Availability. ABW - always be writing.
+
+## Planned Featurs (see [TODO file](TODO.md) for progress):
 
 - Append events to log
 - Sync log w/ other logs
@@ -18,11 +42,10 @@ Planned Featurs (see [TODO file](TODO.md) for progress):
 
 ## Implementation Docs
 
-Each source file is documented, start at lib.rs, and then probably replica.rs
+Documentation is in a state of flux, but start at core/src/actor.rs.
+(TODO: document new modules, host on docs.rs)
 
 ## Sync Strategy
-
-(TODO: I prototyped this in another repo, figure out which one and link it).
 
 Logs are append only. So the causal state of each log can be expressed by a
 single lamport clock - essentially the log length.
