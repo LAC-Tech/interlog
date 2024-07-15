@@ -1,6 +1,9 @@
 # Top = TODO first
 
-- Make sure txn for index is all or nothing
-- In memory storage implementation
-- Start doing deterministic simulation testing
+- Revisit names "actor", "log".
+- update readme
+- Document every module
+- upload to docs.rs
+- Make sure txn for index is atomic
+- Make sure txn for actor is atomic
 - reconstruct Log & indices from file
