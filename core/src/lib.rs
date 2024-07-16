@@ -23,8 +23,6 @@ compile_error!("code assumes linux");
 mod actor;
 pub mod event;
 pub mod fixcap;
-mod index;
-mod log;
 pub mod mem;
 mod pervasives;
 pub mod storage;

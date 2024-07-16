@@ -3,8 +3,6 @@ use core::ops::RangeBounds;
 use crate::event;
 use crate::fixcap;
 use crate::fixcap::Vec;
-use crate::index::Index;
-use crate::log;
 use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
@@ -29,8 +27,8 @@ pub enum EnqueueErr {
 
 #[derive(Debug)]
 pub enum CommitErr {
-	Index(mem::Overrun),
-	Log(storage::Overrun),
+	Offsets(mem::Overrun),
+	Events(storage::Overrun),
 }
 
 #[derive(Debug)]
@@ -58,12 +56,11 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 				let write_res = events
 					.into_iter()
 					.try_for_each(|e| {
-						self.write(&e).map_err(ReplicaErr::Enqueue)
+						self.enqueued.append(&e).map_err(ReplicaErr::Enqueue)
 					})
 					.and_then(|()| self.commit().map_err(ReplicaErr::Commit));
 				if let Err(err) = write_res {
-					self.index.rollback();
-					self.log.rollback();
+					self.rollback();
 					let outgoing_msg =
 						Msg { inner: InnerMsg::Err(err), origin: self.addr };
 					send(outgoing_msg, msg.origin);
@@ -75,44 +72,39 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 		}
 	}
 
-	fn write(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
-		self.enqueued.append(e, self.committed.last_offset())
-	}
-
 	pub fn enqueue(&mut self, payload: &[u8]) -> Result<(), EnqueueErr> {
 		let origin = self.addr;
-		let pos = self.index.committed_count() + self.log.uncommitted_count();
+		let pos = self.committed.count() + self.enqueued.count();
 		let id = event::ID { origin, pos };
 		let e = event::Event { id, payload };
 
-		self.write(&e)
+		self.enqueued.append(&e)
 	}
 
 	pub fn commit(&mut self) -> Result<usize, CommitErr> {
-		let index_count = self.index.commit().map_err(CommitErr::Index)?;
-		let log_count = self.log.commit().map_err(CommitErr::Log)?;
-		assert_eq!(log_count, index_count);
-		Ok(log_count)
+		let offsets = &self.enqueued.offsets;
+		self.committed
+			.append(offsets, self.enqueued.events.as_bytes())
+			.map(|()| offsets.len())
+	}
+
+	pub fn rollback(&mut self) {
+		self.enqueued.reset(self.committed.last_offset());
 	}
 
 	// TODO: indexable actor?
 	pub fn read(
 		&self,
-		buf: &mut event::Buf,
 		range: impl RangeBounds<usize>,
+		buf: &mut event::Buf,
 	) -> fixcap::Res {
-		buf.clear();
-
-		if let Some(region) = self.index.read(range) {
-			self.log.read(buf, region)?;
-		}
-
-		Ok(())
+		self.committed.read(range, buf)
 	}
 }
 
 struct Enqueued {
 	offsets: Vec<storage::Qty>,
+	next_committed_offset: storage::Qty,
 	events: event::Buf,
 }
 
@@ -120,24 +112,27 @@ impl Enqueued {
 	fn new(max_txn_events: LogicalQty, txn_size: storage::Qty) -> Self {
 		Self {
 			offsets: Vec::new(max_txn_events.0),
+			next_committed_offset: storage::Qty(0),
 			events: event::Buf::new(txn_size),
 		}
 	}
-	fn append(
-		&mut self,
-		e: &event::Event,
-		next_committed_offset: storage::Qty,
-	) -> Result<(), EnqueueErr> {
-		let offset =
-			self.offsets.last().copied().unwrap_or(next_committed_offset)
-				+ e.size();
+	fn append(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
+		let last_enqueued_offset =
+			self.offsets.last().copied().unwrap_or(self.next_committed_offset);
+
+		let offset = last_enqueued_offset + e.size();
 		self.offsets.push(offset).map_err(EnqueueErr::Offsets)?;
 		self.events.push(e).map_err(EnqueueErr::Events)
 	}
 
-	fn clear(&mut self) {
+	fn reset(&mut self, next_committed_offset: storage::Qty) {
 		self.offsets.clear();
 		self.events.clear();
+		self.next_committed_offset = next_committed_offset;
+	}
+
+	fn count(&self) -> LogicalQty {
+		LogicalQty(self.offsets.len())
 	}
 }
 
@@ -145,7 +140,7 @@ struct Committed<AOS: storage::AppendOnly> {
 	/// This is always one greater than the number of events stored; the last
 	/// element is the next offset of the next event appended
 	offsets: Vec<storage::Qty>,
-	event_storage: AOS,
+	events: AOS,
 }
 
 impl<AOS: storage::AppendOnly> Committed<AOS> {
@@ -155,7 +150,16 @@ impl<AOS: storage::AppendOnly> Committed<AOS> {
 			.push(storage::Qty(0))
 			.expect("max events should be more than 0");
 
-		Self { offsets: Vec::new(max_events.0), event_storage: aos }
+		Self { offsets: Vec::new(max_events.0), events: aos }
+	}
+
+	fn append(
+		&mut self,
+		offsets: &[storage::Qty],
+		events: &[mem::Word],
+	) -> Result<(), CommitErr> {
+		self.offsets.extend_from_slice(offsets).map_err(CommitErr::Offsets)?;
+		self.events.append(events).map_err(CommitErr::Events)
 	}
 
 	fn last_offset(&self) -> storage::Qty {
@@ -163,6 +167,35 @@ impl<AOS: storage::AppendOnly> Committed<AOS> {
 			.last()
 			.copied()
 			.expect("offsets should always contain at least one element")
+	}
+
+	fn count(&self) -> LogicalQty {
+		LogicalQty(self.offsets.len())
+	}
+
+	fn read<R: RangeBounds<usize>>(
+		&self,
+		range: R,
+		buf: &mut event::Buf,
+	) -> fixcap::Res {
+		buf.clear();
+		let range = (
+			range.start_bound().cloned(),
+			range.end_bound().cloned().map(|n| n + 1),
+		);
+
+		let offsets: &[storage::Qty] = &self.offsets[range];
+
+		offsets
+			.first()
+			.cloned()
+			.zip(offsets.last().cloned())
+			.map(|(start, end)| mem::Region::new(start.0, end.0 - start.0))
+			.map_or(Ok(()), |region| {
+				buf.as_mut_vec().fill(region.len, |words| {
+					self.events.read(words, region.pos)
+				})
+			})
 	}
 }
 
@@ -231,13 +264,13 @@ mod tests {
 
 		actor.enqueue(b"I have known the arcane law").unwrap();
 		actor.commit().unwrap();
-		actor.read(&mut read_buf, 0..=0).unwrap();
+		actor.read(0..=0, &mut read_buf).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(actual.payload, b"I have known the arcane law");
 
 		actor.enqueue(b"On strange roads, such visions met").unwrap();
 		actor.commit().unwrap();
-		actor.read(&mut read_buf, 1..=1).unwrap();
+		actor.read(1..=1, &mut read_buf).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(
 			core::str::from_utf8(actual.payload).unwrap(),

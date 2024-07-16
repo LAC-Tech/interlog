@@ -42,13 +42,14 @@ fn main() {
 
 	actor.enqueue(b"I have known the arcane law").unwrap();
 	actor.commit().unwrap();
-	actor.read(&mut read_buf, 0..=0).unwrap();
+	actor.read(0..=0, &mut read_buf).unwrap();
 	let actual = &read_buf.into_iter().last().unwrap();
 	assert_eq!(actual.payload, b"I have known the arcane law");
 
 	actor.enqueue(b"On strange roads, such visions met").unwrap();
 	actor.commit().unwrap();
-	actor.read(&mut read_buf, 1..=1).unwrap();
+	actor.read(1..=1, &mut read_buf).unwrap();
+
 	let actual = &read_buf.into_iter().last().unwrap();
 	assert_eq!(
 		core::str::from_utf8(actual.payload).unwrap(),
