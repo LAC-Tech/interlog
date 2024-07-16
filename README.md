@@ -32,7 +32,7 @@ recorded at each log in transaction order (ie, the order received by the log.)
 - Linearizability or other strong consistency models. Interlog unashamedly in
   team Availability. ABW - always be writing.
 
-## Planned Featurs (see [TODO file](TODO.md) for progress):
+## Planned Features (see [TODO file](TODO.md) for progress):
 
 - Append events to log
 - Sync log w/ other logs
