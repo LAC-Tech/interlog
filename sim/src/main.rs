@@ -3,7 +3,7 @@ use rand::prelude::*;
 use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
 
-const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
+const MAX_SIM_TIME_MS: u64 = 1000; //1000 * 60 * 60; // One hour
 
 mod config {
 	use interlog_core::storage;
@@ -130,6 +130,7 @@ impl Env {
 		payload_lens.clear();
 		self.pop_payload_lens(payload_lens)
 			.expect("payload lens to be big enough");
+
 		for &payload_len in payload_lens {
 			let payload = &mut payload_buf[..payload_len];
 			rng.fill(payload);
@@ -202,5 +203,8 @@ fn main() {
 	}
 
 	println!("{:?}", stats);
-	println!("{:?} transactions/second", stats.total_commits as f64 / 3600.0);
+	println!(
+		"{:?} transactions/second",
+		stats.total_commits as f64 / (MAX_SIM_TIME_MS as f64 / 1000.0),
+	);
 }
