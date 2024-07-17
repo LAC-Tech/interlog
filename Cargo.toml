@@ -1,3 +1,6 @@
 [workspace]
 members = ["core", "inspector", "sim"]
 resolver = "2"
+
+[alias]
+profile-sim = "flamegraph -- target/debug/sim 14301625462589455796"

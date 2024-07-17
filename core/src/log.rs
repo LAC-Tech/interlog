@@ -249,7 +249,7 @@ mod tests {
 	#[test]
 	fn enqueue_commit_and_read() {
 		let mut rng = SmallRng::from_entropy();
-		let mut actor = Actor::new(
+		let mut log = Log::new(
 			Addr::new(&mut rng),
 			Config {
 				max_events: LogicalQty(3),
@@ -261,15 +261,15 @@ mod tests {
 
 		let mut read_buf = event::Buf::new(storage::Qty(128));
 
-		actor.enqueue(b"I have known the arcane law").unwrap();
-		actor.commit().unwrap();
-		actor.read(0..=0, &mut read_buf).unwrap();
+		log.enqueue(b"I have known the arcane law").unwrap();
+		log.commit().unwrap();
+		log.read(0..=0, &mut read_buf).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(actual.payload, b"I have known the arcane law");
 
-		actor.enqueue(b"On strange roads, such visions met").unwrap();
-		actor.commit().unwrap();
-		actor.read(1..=1, &mut read_buf).unwrap();
+		log.enqueue(b"On strange roads, such visions met").unwrap();
+		log.commit().unwrap();
+		log.read(1..=1, &mut read_buf).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(
 			core::str::from_utf8(actual.payload).unwrap(),

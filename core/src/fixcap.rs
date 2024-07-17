@@ -40,13 +40,9 @@ impl<T: core::default::Default + Clone> Vec<T> {
 		Self { items: elems, len: 0 }
 	}
 
+	/// TODO is this "unsafe"? it doesn't intialize new areas of memory
 	pub fn resize(&mut self, new_len: usize) -> Res {
 		self.check_capacity(new_len)?;
-
-		if new_len > self.len {
-			self.items[self.len..new_len].fill(T::default());
-		}
-
 		self.len = new_len;
 
 		Ok(())
