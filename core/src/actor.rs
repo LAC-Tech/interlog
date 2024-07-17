@@ -39,14 +39,8 @@ pub enum ReplicaErr {
 
 impl<AOS: storage::AppendOnly> Actor<AOS> {
 	pub fn new(addr: Addr, config: Config, aos: AOS) -> Self {
-		/*
-		let log = log::Log::new(config.txn_size, aos);
-		let index = Index::new(config.max_txn_events, config.max_events);
-		*/
-
 		let enqueued = Enqueued::new(config.max_txn_events, config.txn_size);
 		let committed = Committed::new(config.max_events, aos);
-
 		Self { addr, enqueued, committed }
 	}
 
@@ -83,9 +77,13 @@ impl<AOS: storage::AppendOnly> Actor<AOS> {
 
 	pub fn commit(&mut self) -> Result<usize, CommitErr> {
 		let offsets = &self.enqueued.offsets;
-		self.committed
+		let result = self
+			.committed
 			.append(offsets, self.enqueued.events.as_bytes())
-			.map(|()| offsets.len())
+			.map(|()| offsets.len());
+
+		self.enqueued.reset(self.committed.last_offset());
+		result
 	}
 
 	pub fn rollback(&mut self) {
@@ -116,11 +114,13 @@ impl Enqueued {
 			events: event::Buf::new(txn_size),
 		}
 	}
+
 	fn append(&mut self, e: &event::Event) -> Result<(), EnqueueErr> {
 		let last_enqueued_offset =
 			self.offsets.last().copied().unwrap_or(self.next_committed_offset);
 
 		let offset = last_enqueued_offset + e.size();
+
 		self.offsets.push(offset).map_err(EnqueueErr::Offsets)?;
 		self.events.push(e).map_err(EnqueueErr::Events)
 	}
@@ -150,7 +150,7 @@ impl<AOS: storage::AppendOnly> Committed<AOS> {
 			.push(storage::Qty(0))
 			.expect("max events should be more than 0");
 
-		Self { offsets: Vec::new(max_events.0), events: aos }
+		Self { offsets, events: aos }
 	}
 
 	fn append(
@@ -190,11 +190,10 @@ impl<AOS: storage::AppendOnly> Committed<AOS> {
 			.first()
 			.cloned()
 			.zip(offsets.last().cloned())
-			.map(|(start, end)| mem::Region::new(start.0, end.0 - start.0))
-			.map_or(Ok(()), |region| {
-				buf.as_mut_vec().fill(region.len, |words| {
-					self.events.read(words, region.pos)
-				})
+			.map(|(start, end)| (start.0, end.0 - start.0))
+			.map_or(Ok(()), |(offset, len)| {
+				let buf = buf.as_mut_vec();
+				buf.fill(len, |words| self.events.read(words, offset))
 			})
 	}
 }
