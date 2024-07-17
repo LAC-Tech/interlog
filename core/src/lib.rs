@@ -20,9 +20,9 @@ compile_error!("code assumes little-endian");
 #[cfg(not(target_os = "linux"))]
 compile_error!("code assumes linux");
 
-mod actor;
 pub mod event;
 pub mod fixcap;
+mod log;
 pub mod mem;
 mod pervasives;
 pub mod storage;
@@ -30,4 +30,4 @@ pub mod storage;
 mod test_utils;
 
 pub use crate::pervasives::*;
-pub use actor::*;
+pub use log::*;
