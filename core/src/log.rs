@@ -51,6 +51,7 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 		self.enqueued.append(&e)
 	}
 
+	/// Returns number of events committed
 	pub fn commit(&mut self) -> Result<usize, CommitErr> {
 		let offsets = &self.enqueued.offsets;
 		let result = self
@@ -187,6 +188,7 @@ pub enum EnqueueErr {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum CommitErr {
 	Offsets(mem::Overrun),
 	Events(storage::Overrun),
@@ -262,13 +264,13 @@ mod tests {
 		let mut read_buf = event::Buf::new(storage::Qty(128));
 
 		log.enqueue(b"I have known the arcane law").unwrap();
-		log.commit().unwrap();
+		assert_eq!(log.commit(), Ok(1));
 		log.read(0..=0, &mut read_buf).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(actual.payload, b"I have known the arcane law");
 
 		log.enqueue(b"On strange roads, such visions met").unwrap();
-		log.commit().unwrap();
+		assert_eq!(log.commit(), Ok(1));
 		log.read(1..=1, &mut read_buf).unwrap();
 		let actual = &read_buf.into_iter().last().unwrap();
 		assert_eq!(

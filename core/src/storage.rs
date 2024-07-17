@@ -15,6 +15,7 @@
 pub struct Qty(pub usize);
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Overrun;
 
 /// Where the events are persisted.
