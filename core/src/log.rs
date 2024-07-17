@@ -7,37 +7,13 @@ use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
 
-pub struct Actor<AOS: storage::AppendOnly> {
+pub struct Log<AOS: storage::AppendOnly> {
 	pub addr: Addr,
 	enqueued: Enqueued,
 	committed: Committed<AOS>,
 }
 
-pub struct Config {
-	pub txn_size: storage::Qty,
-	pub max_txn_events: LogicalQty,
-	pub max_events: LogicalQty,
-}
-
-#[derive(Debug)]
-pub enum EnqueueErr {
-	Offsets(mem::Overrun),
-	Events(mem::Overrun),
-}
-
-#[derive(Debug)]
-pub enum CommitErr {
-	Offsets(mem::Overrun),
-	Events(storage::Overrun),
-}
-
-#[derive(Debug)]
-pub enum ReplicaErr {
-	Enqueue(EnqueueErr),
-	Commit(CommitErr),
-}
-
-impl<AOS: storage::AppendOnly> Actor<AOS> {
+impl<AOS: storage::AppendOnly> Log<AOS> {
 	pub fn new(addr: Addr, config: Config, aos: AOS) -> Self {
 		let enqueued = Enqueued::new(config.max_txn_events, config.txn_size);
 		let committed = Committed::new(config.max_events, aos);
@@ -196,6 +172,30 @@ impl<AOS: storage::AppendOnly> Committed<AOS> {
 				buf.fill(len, |words| self.events.read(words, offset))
 			})
 	}
+}
+
+pub struct Config {
+	pub txn_size: storage::Qty,
+	pub max_txn_events: LogicalQty,
+	pub max_events: LogicalQty,
+}
+
+#[derive(Debug)]
+pub enum EnqueueErr {
+	Offsets(mem::Overrun),
+	Events(mem::Overrun),
+}
+
+#[derive(Debug)]
+pub enum CommitErr {
+	Offsets(mem::Overrun),
+	Events(storage::Overrun),
+}
+
+#[derive(Debug)]
+pub enum ReplicaErr {
+	Enqueue(EnqueueErr),
+	Commit(CommitErr),
 }
 
 pub struct Msg<'a> {

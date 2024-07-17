@@ -32,8 +32,8 @@ mod config {
 		}
 	}
 
-	pub const ACTORS: Range = max(256);
-	pub const PAYLOADS_PER_ACTOR: Range = Range(100, 1000);
+	pub const N_LOGS: Range = max(256);
+	pub const PAYLOADS_PER_LOG: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
 	pub const MSG_LEN: Range = Range(0, 50);
 	pub const CHANCE_OF_WRITE_PER_TICK: Range = Range(1, 50);
@@ -70,7 +70,7 @@ impl storage::AppendOnly for AppendOnlyMemory {
 
 // An environment, representing some source of messages, and an actor
 struct Env {
-	actor: Actor<AppendOnlyMemory>,
+	log: Log<AppendOnlyMemory>,
 	msg_lens: Vec<usize>,
 	payload_sizes: Vec<usize>,
 }
@@ -85,8 +85,8 @@ impl Env {
 			max_events: LogicalQty(1_000_000),
 		};
 
-		let actor = Actor::new(Addr::new(rng), config, AppendOnlyMemory::new());
-		let payloads_per_actor = config::PAYLOADS_PER_ACTOR.gen(rng);
+		let log = Log::new(Addr::new(rng), config, AppendOnlyMemory::new());
+		let payloads_per_actor = config::PAYLOADS_PER_LOG.gen(rng);
 
 		let msg_lens: Vec<usize> =
 			std::iter::repeat_with(|| config::MSG_LEN.gen(rng))
@@ -100,7 +100,7 @@ impl Env {
 				.take(total_msgs)
 				.collect();
 
-		Self { actor, msg_lens, payload_sizes }
+		Self { log, msg_lens, payload_sizes }
 	}
 
 	fn pop_payload_lens(
@@ -133,12 +133,12 @@ impl Env {
 		for &payload_len in payload_lens {
 			let payload = &mut payload_buf[..payload_len];
 			rng.fill(payload);
-			self.actor.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
+			self.log.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
 		}
 
 		stats.events_sent = stats
 			.events_sent
-			.checked_add(self.actor.commit().map_err(ReplicaErr::Commit)?)
+			.checked_add(self.log.commit().map_err(ReplicaErr::Commit)?)
 			.unwrap();
 
 		Ok(())
@@ -160,12 +160,12 @@ fn main() {
 
 	let mut rng = SmallRng::seed_from_u64(seed);
 
-	let n_actors = config::ACTORS.gen(&mut rng);
+	let n_logs = config::N_LOGS.gen(&mut rng);
 
 	let mut environments: BTreeMap<Addr, Env> =
 		std::iter::repeat_with(|| Env::new(&mut rng))
-			.map(|env| (env.actor.addr, env))
-			.take(n_actors)
+			.map(|env| (env.log.addr, env))
+			.take(n_logs)
 			.collect();
 
 	println!("Seed is {}", seed);
@@ -191,7 +191,7 @@ fn main() {
 					"the time is {:?} ms, do you know where your data is?",
 					ms
 				);
-				println!("Error for {:?} at {:?}ms", env.actor.addr, ms);
+				println!("Error for {:?} at {:?}ms", env.log.addr, ms);
 				println!("{}", err.downcast_ref::<String>().unwrap());
 				return;
 			}
