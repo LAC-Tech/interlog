@@ -136,10 +136,12 @@ impl Env {
 			self.log.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
 		}
 
-		stats.events_sent = stats
-			.events_sent
-			.checked_add(self.log.commit().map_err(ReplicaErr::Commit)?)
-			.unwrap();
+		let events_committed = self.log.commit().map_err(ReplicaErr::Commit)?;
+
+		stats.total_events_committed =
+			stats.total_events_committed.checked_add(events_committed).unwrap();
+
+		stats.total_commits = stats.total_commits.checked_add(1).unwrap();
 
 		Ok(())
 	}
@@ -147,11 +149,12 @@ impl Env {
 
 #[derive(Debug)]
 struct Stats {
-	events_sent: usize,
+	total_events_committed: usize,
+	total_commits: usize,
 }
 
 fn main() {
-	let mut stats = Stats { events_sent: 0 };
+	let mut stats = Stats { total_events_committed: 0, total_commits: 0 };
 	let args: Vec<String> = std::env::args().collect();
 	let seed: u64 = args
 		.get(1)
@@ -198,5 +201,6 @@ fn main() {
 		}
 	}
 
-	println!("{:?}", stats)
+	println!("{:?}", stats);
+	println!("{:?} transactions/second", stats.total_commits as f64 / 3600.0);
 }
