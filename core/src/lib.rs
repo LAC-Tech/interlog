@@ -1,5 +1,12 @@
-//! Interlog is a distributed, persistent log. It's append only and designed
-//! to be a highly available source of truth for many different read models.
+//! The core of interlog.
+//!
+//! Each log is
+//! - single threaded
+//! - synchronous
+//! - persists to a single append-only fil
+//!
+//! Core has all the primitives needed to implement sync, but does not call out
+//! to the network itself.
 //!
 //! The following implementation notes may be useful:
 //! - Do the dumbest thing I can and test the hell out of it
@@ -8,6 +15,7 @@
 //! - Storage engine Works at libc level (rustix), so you can follow man pages.
 //! - Assumes linux, 64 bit, little endian - for now at least.
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever) server is out of scope.
+
 #![cfg_attr(not(test), no_std)]
 #[macro_use]
 extern crate alloc;
