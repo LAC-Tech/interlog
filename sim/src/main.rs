@@ -121,7 +121,14 @@ impl Env {
 		ctx: &mut Context<N>,
 	) -> Result<(), ReplicaErr> {
 		match self.msg_lens.pop() {
-			None => Ok(()),
+			None => {
+				assert_eq!(
+					self.payload_sizes.len(),
+					0,
+					"zero message lens means zero payload sizes"
+				);
+				Ok(())
+			}
 			Some(msg_len) => {
 				ctx.payload_lens.clear();
 				ctx.payload_lens
