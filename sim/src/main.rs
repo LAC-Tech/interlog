@@ -119,34 +119,36 @@ impl Env {
 		Ok(())
 	}
 
-	pub fn tick<R: rand::Rng>(
+	pub fn tick<R: rand::Rng, const N: usize>(
 		&mut self,
 		ms: u64,
 		rng: &mut R,
-		stats: &mut Stats,
-		payload_buf: &mut [u8],
-		payload_lens: &mut fixcap::Vec<usize>,
+		ctx: &mut Context<N>,
 	) -> Result<(), ReplicaErr> {
-		payload_lens.clear();
-		self.pop_payload_lens(payload_lens)
+		ctx.payload_lens.clear();
+		self.pop_payload_lens(&mut ctx.payload_lens)
 			.expect("payload lens to be big enough");
 
-		for &payload_len in payload_lens {
-			let payload = &mut payload_buf[..payload_len];
+		for &len in &ctx.payload_lens {
+			let payload = &mut ctx.payload_buf[..len];
 			rng.fill(payload);
 			self.log.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
 		}
 
 		let events_committed = self.log.commit().map_err(ReplicaErr::Commit)?;
-
-		stats.total_events_committed =
-			stats.total_events_committed.checked_add(events_committed).unwrap();
-
-		stats.total_commits = stats.total_commits.checked_add(1).unwrap();
+		ctx.stats.update(events_committed);
 
 		Ok(())
 	}
 }
+
+struct Context<const N: usize> {
+	stats: Stats,
+	payload_buf: [u8; N],
+	payload_lens: fixcap::Vec<usize>,
+}
+
+impl<const N: usize> Context<N> {}
 
 #[derive(Debug)]
 struct Stats {
@@ -154,8 +156,16 @@ struct Stats {
 	total_commits: usize,
 }
 
+impl Stats {
+	fn update(&mut self, events_committed: usize) {
+		self.total_events_committed =
+			self.total_events_committed.checked_add(events_committed).unwrap();
+
+		self.total_commits = self.total_commits.checked_add(1).unwrap();
+	}
+}
+
 fn main() {
-	let mut stats = Stats { total_events_committed: 0, total_commits: 0 };
 	let args: Vec<String> = std::env::args().collect();
 	let seed: u64 = args
 		.get(1)
@@ -175,19 +185,16 @@ fn main() {
 	println!("Seed is {}", seed);
 	println!("Number of actors {}", environments.len());
 
-	let mut payload_buf = [0u8; config::PAYLOAD_SIZE.max()];
-	let mut payload_lens = fixcap::Vec::new(config::MSG_LEN.max());
+	let mut ctx = Context {
+		stats: Stats { total_events_committed: 0, total_commits: 0 },
+		payload_buf: [0u8; config::PAYLOAD_SIZE.max()],
+		payload_lens: fixcap::Vec::new(config::MSG_LEN.max()),
+	};
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for env in environments.values_mut() {
 			let write_res = panic::catch_unwind(AssertUnwindSafe(|| {
-				env.tick(
-					ms,
-					&mut rng,
-					&mut stats,
-					&mut payload_buf,
-					&mut payload_lens,
-				)
+				env.tick(ms, &mut rng, &mut ctx)
 			}));
 
 			if let Err(err) = write_res {
@@ -202,9 +209,9 @@ fn main() {
 		}
 	}
 
-	println!("{:?}", stats);
+	println!("{:?}", ctx.stats);
 	println!(
 		"{:?} transactions/second",
-		stats.total_commits as f64 / (MAX_SIM_TIME_MS as f64 / 1000.0),
+		ctx.stats.total_commits as f64 / (MAX_SIM_TIME_MS as f64 / 1000.0),
 	);
 }
