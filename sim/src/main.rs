@@ -1,9 +1,10 @@
 use interlog_core::*;
 use rand::prelude::*;
 use std::collections::BTreeMap;
+use std::iter;
 use std::panic::{self, AssertUnwindSafe};
 
-const MAX_SIM_TIME_MS: u64 = 1000; //1000 * 60 * 60; // One hour
+const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
 
 mod config {
 	use interlog_core::storage;
@@ -68,9 +69,10 @@ impl storage::AppendOnly for AppendOnlyMemory {
 	}
 }
 
-// An environment, representing some source of messages, and an actor
+// An environment, representing some source of messages, and a log
 struct Env {
 	log: Log<AppendOnlyMemory>,
+	// The dimensions of each of the messages sent are pre-calculated
 	msg_lens: Vec<usize>,
 	payload_sizes: Vec<usize>,
 }
@@ -89,34 +91,27 @@ impl Env {
 		let payloads_per_actor = config::PAYLOADS_PER_LOG.gen(rng);
 
 		let msg_lens: Vec<usize> =
-			std::iter::repeat_with(|| config::MSG_LEN.gen(rng))
+			iter::repeat_with(|| config::MSG_LEN.gen(rng))
 				.take(payloads_per_actor)
 				.collect();
 
 		let total_msgs = msg_lens.iter().sum();
 
 		let payload_sizes: Vec<usize> =
-			std::iter::repeat_with(|| config::PAYLOAD_SIZE.gen(rng))
+			iter::repeat_with(|| config::PAYLOAD_SIZE.gen(rng))
 				.take(total_msgs)
 				.collect();
 
 		Self { log, msg_lens, payload_sizes }
 	}
 
-	fn pop_payload_lens(
+	fn payload_lens(
 		&mut self,
-		buf: &mut fixcap::Vec<usize>,
-	) -> fixcap::Res {
-		if let Some(msg_len) = self.msg_lens.pop() {
-			for _ in 0..msg_len {
-				let payload_size = self
-					.payload_sizes
-					.pop()
-					.expect("enough sizes for each msg len");
-				buf.push(payload_size)?;
-			}
-		}
-		Ok(())
+		msg_len: usize,
+	) -> impl Iterator<Item = usize> + '_ {
+		(0..msg_len).map(|_| {
+			self.payload_sizes.pop().expect("enough sizes for each msg len")
+		})
 	}
 
 	pub fn tick<R: rand::Rng, const N: usize>(
@@ -125,20 +120,27 @@ impl Env {
 		rng: &mut R,
 		ctx: &mut Context<N>,
 	) -> Result<(), ReplicaErr> {
-		ctx.payload_lens.clear();
-		self.pop_payload_lens(&mut ctx.payload_lens)
-			.expect("payload lens to be big enough");
+		match self.msg_lens.pop() {
+			None => Ok(()),
+			Some(msg_len) => {
+				ctx.payload_lens.clear();
+				ctx.payload_lens
+					.extend(self.payload_lens(msg_len))
+					.expect("payload lens to be big enough");
 
-		for &len in &ctx.payload_lens {
-			let payload = &mut ctx.payload_buf[..len];
-			rng.fill(payload);
-			self.log.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
+				for &len in &ctx.payload_lens {
+					let payload = &mut ctx.payload_buf[..len];
+					rng.fill(payload);
+					self.log.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
+				}
+
+				let events_committed =
+					self.log.commit().map_err(ReplicaErr::Commit)?;
+				ctx.stats.update(events_committed);
+
+				Ok(())
+			}
 		}
-
-		let events_committed = self.log.commit().map_err(ReplicaErr::Commit)?;
-		ctx.stats.update(events_committed);
-
-		Ok(())
 	}
 }
 
@@ -147,8 +149,6 @@ struct Context<const N: usize> {
 	payload_buf: [u8; N],
 	payload_lens: fixcap::Vec<usize>,
 }
-
-impl<const N: usize> Context<N> {}
 
 #[derive(Debug)]
 struct Stats {
