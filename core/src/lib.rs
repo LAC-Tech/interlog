@@ -24,9 +24,9 @@ extern crate alloc;
 compile_error!("code assumes usize is u64");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
-// May work on other OSes but no testing has been done. Remove if you want!
-#[cfg(not(target_os = "linux"))]
-compile_error!("code assumes linux");
+// TODO: Add this back in when I am using direct IO again.
+//#[cfg(not(target_os = "linux"))]
+//compile_error!("code assumes linux");
 
 pub mod event;
 pub mod fixcap;
