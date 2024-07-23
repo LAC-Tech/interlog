@@ -1,9 +1,8 @@
 # Top = TODO first
 
-- Revisit names "actor", "log".
-- update readme
+- seed 10329696794973717227 fails
+- fix max number of replicas replace allocating hashmap
+- PBT for atomic commits in log
 - Document every module
 - upload to docs.rs
-- Make sure txn for index is atomic
-- Make sure txn for actor is atomic
 - reconstruct Log & indices from file

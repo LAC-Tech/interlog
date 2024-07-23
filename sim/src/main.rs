@@ -114,12 +114,13 @@ impl Env {
 		})
 	}
 
+	/// returns true if it will produce new data next tick
 	pub fn tick<R: rand::Rng, const N: usize>(
 		&mut self,
 		ms: u64,
 		rng: &mut R,
 		ctx: &mut Context<N>,
-	) -> Result<(), ReplicaErr> {
+	) -> bool {
 		match self.msg_lens.pop() {
 			None => {
 				assert_eq!(
@@ -127,7 +128,7 @@ impl Env {
 					0,
 					"zero message lens means zero payload sizes"
 				);
-				Ok(())
+				false
 			}
 			Some(msg_len) => {
 				ctx.payload_lens.clear();
@@ -138,14 +139,18 @@ impl Env {
 				for &len in &ctx.payload_lens {
 					let payload = &mut ctx.payload_buf[..len];
 					rng.fill(payload);
-					self.log.enqueue(payload).map_err(ReplicaErr::Enqueue)?;
+					self.log
+						.enqueue(payload)
+						.expect("log to have enough txn buffer");
 				}
 
-				let events_committed =
-					self.log.commit().map_err(ReplicaErr::Commit)?;
-				ctx.stats.update(events_committed);
+				let events_committed = self
+					.log
+					.commit()
+					.expect("log to have enough space to persist all events");
 
-				Ok(())
+				ctx.stats.update(events_committed);
+				true
 			}
 		}
 	}
@@ -165,10 +170,13 @@ struct Stats {
 
 impl Stats {
 	fn update(&mut self, events_committed: usize) {
-		self.total_events_committed =
-			self.total_events_committed.checked_add(events_committed).unwrap();
+		self.total_events_committed = self
+			.total_events_committed
+			.checked_add(events_committed)
+			.expect("no overflow");
 
-		self.total_commits = self.total_commits.checked_add(1).unwrap();
+		self.total_commits =
+			self.total_commits.checked_add(1).expect("no overflow");
 	}
 }
 
@@ -198,10 +206,22 @@ fn main() {
 		payload_lens: fixcap::Vec::new(config::MSG_LEN.max()),
 	};
 
+	let mut dead_addrs: Vec<Addr> = vec![];
+
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
+		for addr in &dead_addrs {
+			environments.remove(&addr);
+		}
+
+		dead_addrs.clear();
+
 		for env in environments.values_mut() {
 			let write_res = panic::catch_unwind(AssertUnwindSafe(|| {
-				env.tick(ms, &mut rng, &mut ctx)
+				let more_data = env.tick(ms, &mut rng, &mut ctx);
+
+				if !more_data {
+					dead_addrs.push(env.log.addr.clone());
+				}
 			}));
 
 			if let Err(err) = write_res {
