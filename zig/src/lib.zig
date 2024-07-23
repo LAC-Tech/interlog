@@ -1,4 +1,74 @@
 const std = @import("std");
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;
+
+pub fn Log(comptime Storage: type) type {
+    return struct {
+        addr: Addr,
+        enqueued: Enqueued,
+        committed: Committed(Storage),
+
+        pub fn init(
+            allocator: Allocator,
+            addr: Addr,
+            config: Config,
+        ) Allocator.Error!@This() {
+            return .{
+                .addr = addr,
+                .enqueued = Enqueued{},
+                .committed = try Committed(Storage).init(
+                    allocator,
+                    config.max_events,
+                ),
+            };
+        }
+
+        pub fn recv(self: *@This(), msg: Msg) void {
+            _ = self;
+            _ = msg;
+            @panic("TODO");
+        }
+
+        pub fn enqueue(self: *@This(), payload: []const u8) void {
+            _ = self;
+            _ = payload;
+            @panic("TODO");
+        }
+
+        pub fn commit(self: *@This()) void {
+            _ = self;
+            @panic("TODO");
+        }
+    };
+}
+
+const Config = struct {
+    txn_size: usize,
+    max_txn_events: usize,
+    max_events: usize,
+};
+
+const Enqueued = struct {};
+
+fn Committed(comptime Storage: type) type {
+    return struct {
+        offsets: ArrayListUnmanaged(usize),
+        events: Storage,
+
+        pub fn init(
+            allocator: Allocator,
+            max_events: usize,
+        ) Allocator.Error!@This() {
+            return .{
+                .offsets = try ArrayListUnmanaged(usize).initCapacity(
+                    allocator,
+                    max_events,
+                ),
+                .events = Storage.init(),
+            };
+        }
+    };
+}
 
 const mem = struct {
     pub const Word = u64;
@@ -108,147 +178,6 @@ comptime {
     const alignment = @alignOf(Addr);
     std.debug.assert(alignment == 8);
 }
-
-/// In-memory mapping of event IDs to storage offsets
-/// This keeps the following invariants:
-/// - events must be stored consecutively per address,
-///
-/// Effectively stores the causal histories over every addr
-const Index = struct {
-    // One elem per address
-    const Entry = struct {
-        addr: Addr,
-        // indices waiting to be written to the index
-        txn: FixVec(usize),
-        // indices that already exist in the index
-        actual: FixVec(usize),
-
-        fn init(
-            allocator: std.mem.Allocator,
-            addr: Addr,
-            config: Config,
-        ) !@This() {
-            return .{
-                .addr = addr,
-                .txn = try FixVec(usize).init(
-                    allocator,
-                    config.txn_events_per_addr,
-                ),
-                .actual = try FixVec(usize).init(
-                    allocator,
-                    config.actual_events_per_addr,
-                ),
-            };
-        }
-    };
-
-    const Config = struct {
-        max_addrs: usize,
-        txn_events_per_addr: usize,
-        actual_events_per_addr: usize,
-    };
-
-    const InsertErr = error{
-        NonConsecutivePos,
-        IndexStartsAtNonZero,
-        Overrun,
-        NonMonotonicStorageOffset,
-        Overflow,
-    };
-
-    // TODO: how many addresses is a good upper bound? This means linear search
-    table: FixVec(Entry),
-    config: Config,
-
-    fn init(allocator: std.mem.Allocator, config: Config) !@This() {
-        const table = try allocator.alloc(Entry, config.max_addrs);
-
-        for (table) |*entry| {
-            entry.* = try Entry.init(allocator, Addr.zero, config);
-        }
-
-        return .{
-            .table = FixVec(Entry).fromSlice(table),
-            .config = config,
-        };
-    }
-
-    fn insert(
-        self: *@This(),
-        eid: Event.ID,
-        storage_offset: usize,
-    ) InsertErr!void {
-        var existing = null;
-
-        // TODO: linear search each time. sorted array + binary search??
-        for (self.table) |entry| {
-            if (entry.addr == eid.addr) {
-                existing = entry;
-                break;
-            }
-        }
-
-        if (existing) |entry| {
-            if (entry.txn.items.len != eid.pos) {
-                return error.NonConsecutivePos;
-            }
-
-            if (existing.txn.getLastOrNull()) |last_offset| {
-                if (last_offset + 1 != storage_offset) {
-                    return error.NonMonotonicStorageOffset;
-                }
-            }
-
-            try existing.txn.push(storage_offset);
-        } else if (eid.pos != 0) {
-            return error.IndexStartsAtNonZero;
-        }
-
-        // Storing a brand new entry.
-        // At first zero addr, create entry with address eid.origin
-        // write 0 to the txn buf therein
-        @panic("TODO: implement above comment");
-    }
-};
-
-test "construct index" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    _ = try Index.init(
-        arena.allocator(),
-        .{
-            .max_addrs = 100,
-            .txn_events_per_addr = 10,
-            .actual_events_per_addr = 1000,
-        },
-    );
-}
-
-pub const Actor = struct {
-    addr: Addr,
-
-    pub fn init(addr: Addr) @This() {
-        return .{ .addr = addr };
-    }
-
-    pub fn recv(self: *@This(), msg: Msg) void {
-        _ = self;
-        _ = msg;
-        @panic("TODO");
-    }
-
-    pub fn enqueue(self: *@This(), payload: []const u8) void {
-        _ = self;
-        _ = payload;
-        @panic("TODO");
-    }
-
-    pub fn commit(self: *@This()) void {
-        _ = self;
-        @panic("TODO");
-    }
-};
 
 const Event = struct {
     const ID = struct { origin: Addr, logical_pos: usize };

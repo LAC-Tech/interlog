@@ -17,7 +17,7 @@ pub fn main() !void {
 
     for (0..n_actors) |_| {
         const env = try sim.Env.init(RNG, &rng, allocator);
-        try envs.putNoClobber(env.actor.addr, env);
+        try envs.putNoClobber(env.log.addr, env);
     }
 
     std.debug.print("seed = {d}\n", .{seed});
@@ -37,7 +37,7 @@ pub fn main() !void {
             payload_lens.clearRetainingCapacity();
             val.popPayloadLens(&payload_lens);
 
-            std.debug.print("Sending actor {s} the following\n", .{val.actor.addr});
+            std.debug.print("Sending actor {s} the following\n", .{val.log.addr});
             for (payload_lens.items) |payload_len| {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
@@ -58,7 +58,11 @@ pub fn main() !void {
 
 test "set up and tear down sim env" {
     const seed: u64 = std.crypto.random.int(u64);
-    var rng = std.rand.DefaultPrng.init(seed);
-    var env = try sim.Env.init(std.Random.Xoshiro256, &rng, std.testing.allocator);
+    var rng = std.Random.Pcg.init(seed);
+    var env = try sim.Env.init(
+        std.Random.Pcg,
+        &rng,
+        std.testing.allocator,
+    );
     defer env.deinit(std.testing.allocator);
 }

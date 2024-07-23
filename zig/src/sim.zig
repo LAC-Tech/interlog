@@ -1,7 +1,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const assert = std.debug.assert;
-const Actor = lib.Actor;
+const Log = lib.Log;
 const Addr = lib.Addr;
 
 const Range = struct {
@@ -69,9 +69,15 @@ const PayloadSrc = struct {
     }
 };
 
-// An environment, representing some source of messages, and an actor
+const Storage = struct {
+    pub fn init() @This() {
+        return .{};
+    }
+};
+
+// An environment, representing some source of messages, and a log
 pub const Env = struct {
-    actor: Actor,
+    log: Log(Storage),
     payload_src: PayloadSrc,
 
     pub fn init(
@@ -80,7 +86,11 @@ pub const Env = struct {
         allocator: std.mem.Allocator,
     ) !@This() {
         return .{
-            .actor = Actor.init(Addr.init(R, rng)),
+            .log = try Log(Storage).init(allocator, Addr.init(R, rng), .{
+                .txn_size = config.msg_len.at_most * config.payload_size.at_most,
+                .max_txn_events = config.msg_len.at_most,
+                .max_events = 1_000_000,
+            }),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
     }
@@ -102,5 +112,6 @@ pub const Env = struct {
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.payload_src.deinit(allocator);
+        self.log.deinit(allocator);
     }
 };
