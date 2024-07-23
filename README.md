@@ -2,6 +2,9 @@
 
 **WORK IN PROGRESS**
 
+TL;DR - "cargo run --bin sim" to run the deterministic simulation test that may
+or may not work.
+
 Interlog is a database optimized for writing and syncing data. It is both
 embedded (designed to be written and read from in-process) and distributed
 (full-support for synchronisation). In other words, it's Local-First: read and
@@ -34,9 +37,7 @@ recorded at each log in transaction order (ie, the order received by the log.)
 
 ## Planned Features (see [TODO file](TODO.md) for progress):
 
-- Append events to log
 - Sync log w/ other logs
-- Event ID is composite of origin replica ID and log position
 - Can run user-defined function to validate data before appending
 - Can run user-defined function to validate data before syncing
 - No interpreter or query language - recompile to change validation functions
@@ -44,7 +45,7 @@ recorded at each log in transaction order (ie, the order received by the log.)
 
 ## Implementation Docs
 
-Documentation is in a state of flux, but start at core/src/actor.rs.
+Documentation is in a state of flux, but start at core/src/log.rs.
 (TODO: document new modules, host on docs.rs)
 
 ## Sync Strategy
