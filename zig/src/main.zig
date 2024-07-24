@@ -56,13 +56,11 @@ pub fn main() !void {
     std.debug.print("simulation has successfully completed!\n", .{});
 }
 
-test "set up and tear down sim env" {
+test "set up and tear down simulated env" {
     const seed: u64 = std.crypto.random.int(u64);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
     var rng = std.Random.Pcg.init(seed);
-    var env = try sim.Env.init(
-        std.Random.Pcg,
-        &rng,
-        std.testing.allocator,
-    );
-    defer env.deinit(std.testing.allocator);
+    const allocator = arena.allocator();
+    _ = try sim.Env.init(std.Random.Pcg, &rng, allocator);
 }

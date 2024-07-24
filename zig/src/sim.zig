@@ -3,6 +3,7 @@ const lib = @import("lib.zig");
 const assert = std.debug.assert;
 const Log = lib.Log;
 const Addr = lib.Addr;
+const FixVec = lib.FixVec;
 
 const Range = struct {
     at_least: u64,
@@ -85,12 +86,23 @@ pub const Env = struct {
         rng: *R,
         allocator: std.mem.Allocator,
     ) !@This() {
+        const buffers = .{
+            .enqueued = .{
+                .offsets = try allocator.alloc(usize, config.msg_len.at_most),
+                .events = try allocator.alloc(
+                    u8,
+                    config.msg_len.at_most * config.payload_size.at_most,
+                ),
+            },
+            .committed = .{
+                .offsets = try allocator.alloc(usize, 1_000_000),
+            },
+        };
         return .{
-            .log = try Log(Storage).init(allocator, Addr.init(R, rng), .{
-                .txn_size = config.msg_len.at_most * config.payload_size.at_most,
-                .max_txn_events = config.msg_len.at_most,
-                .max_events = 1_000_000,
-            }),
+            .log = try Log(Storage).init(
+                Addr.init(R, rng),
+                buffers,
+            ),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
     }
@@ -112,6 +124,5 @@ pub const Env = struct {
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.payload_src.deinit(allocator);
-        self.log.deinit(allocator);
     }
 };

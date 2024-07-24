@@ -1,5 +1,4 @@
 const std = @import("std");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const Allocator = std.mem.Allocator;
 
 pub fn Log(comptime Storage: type) type {
@@ -9,17 +8,13 @@ pub fn Log(comptime Storage: type) type {
         committed: Committed(Storage),
 
         pub fn init(
-            allocator: Allocator,
             addr: Addr,
-            config: Config,
+            buffers: Buffers,
         ) Allocator.Error!@This() {
             return .{
                 .addr = addr,
                 .enqueued = Enqueued{},
-                .committed = try Committed(Storage).init(
-                    allocator,
-                    config.max_events,
-                ),
+                .committed = try Committed(Storage).init(buffers.committed),
             };
         }
 
@@ -42,28 +37,30 @@ pub fn Log(comptime Storage: type) type {
     };
 }
 
-const Config = struct {
-    txn_size: usize,
-    max_txn_events: usize,
-    max_events: usize,
+const Buffers = struct {
+    const Committed = struct {
+        offsets: []usize,
+    };
+    const Enqueued = struct {
+        offsets: []usize,
+        events: []u8,
+    };
+    committed: @This().Committed,
+    enqueued: @This().Enqueued,
 };
 
 const Enqueued = struct {};
 
 fn Committed(comptime Storage: type) type {
     return struct {
-        offsets: ArrayListUnmanaged(usize),
+        offsets: FixVec(usize),
         events: Storage,
 
         pub fn init(
-            allocator: Allocator,
-            max_events: usize,
+            buffers: Buffers.Committed,
         ) Allocator.Error!@This() {
             return .{
-                .offsets = try ArrayListUnmanaged(usize).initCapacity(
-                    allocator,
-                    max_events,
-                ),
+                .offsets = FixVec(usize).fromSlice(buffers.offsets),
                 .events = Storage.init(),
             };
         }
@@ -83,17 +80,17 @@ pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
 
         pub const Err = error{Overflow};
 
-        pub fn init(allocator: std.mem.Allocator, _capacity: usize) !@This() {
-            return @This(){
-                ._items = try allocator.alignedAlloc(T, alignment, _capacity),
-                .len = 0,
-            };
-        }
+        //pub fn init(allocator: std.mem.Allocator, _capacity: usize) !@This() {
+        //    return @This(){
+        //        ._items = try allocator.alignedAlloc(T, alignment, _capacity),
+        //        .len = 0,
+        //    };
+        //}
 
-        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-            allocator.free(self._items);
-            self.* = undefined;
-        }
+        //pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        //    allocator.free(self._items);
+        //    self.* = undefined;
+        //}
 
         pub fn capacity(self: *@This()) usize {
             return self._items.len;
@@ -131,7 +128,7 @@ pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
         }
 
         pub fn fromSlice(slice: Slice) @This() {
-            return .{ ._items = slice, .len = slice.len };
+            return .{ ._items = slice, .len = 0 };
         }
     };
 }
@@ -141,8 +138,9 @@ pub fn FixVec(comptime T: type) type {
 }
 
 test "fixvec stuff" {
-    var fv = try FixVec(u64).init(std.testing.allocator, 8);
-    defer fv.deinit(std.testing.allocator);
+    const buf = try std.testing.allocator.alloc(u64, 8);
+    var fv = FixVec(u64).fromSlice(buf);
+    defer std.testing.allocator.free(buf);
 
     try std.testing.expectEqual(fv.capacity(), 8);
     try fv.append(42);
@@ -151,6 +149,7 @@ test "fixvec stuff" {
     try fv.appendSlice(&[_]u64{ 6, 1, 9 });
     try std.testing.expectEqual(fv.len, 4);
 }
+
 pub const Addr = struct {
     words: [2]u64,
     pub fn init(comptime R: type, rng: *R) @This() {
