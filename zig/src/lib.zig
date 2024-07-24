@@ -1,4 +1,5 @@
 const std = @import("std");
+const err = @import("./err.zig");
 const mem = @import("./mem.zig");
 
 const Allocator = std.mem.Allocator;
@@ -62,9 +63,6 @@ const Enqueued = struct {
             .next_committed_offset = 0,
         };
     }
-
-    pub fn append(self: *@This(), e: &event.Event) {
-    }
 };
 
 fn Committed(comptime Storage: type) type {
@@ -126,7 +124,10 @@ const event = struct {
         return .{ .id = header.id, .payload = payload };
     }
 
-    fn append(buf: *FixVecAligned(u8, 8), e: *const Event) void {
+    fn append(
+        buf: *FixVecAligned(u8, 8),
+        e: *const Event,
+    ) err.Write!void {
         const header_region = mem.Region.init(buf.len, @sizeOf(Header));
         const header = .{ .byte_len = e.payload.len, .id = e.id };
         const header_bytes = std.mem.asBytes(&header);
@@ -204,8 +205,6 @@ pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
 
         pub const Slice = if (alignment) |a| ([]align(a) T) else []T;
 
-        pub const Err = error{Overflow};
-
         pub fn capacity(self: *@This()) usize {
             return self._items.len;
         }
@@ -214,24 +213,24 @@ pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
             self.len = 0;
         }
 
-        fn checkCapacity(self: *@This(), new_len: usize) Err!void {
+        fn checkCapacity(self: *@This(), new_len: usize) err.Write!void {
             if (new_len > self.capacity()) {
-                return Err.Overflow;
+                return error.Overrun;
             }
         }
 
-        pub fn resize(self: *@This(), new_len: usize) Err!void {
+        pub fn resize(self: *@This(), new_len: usize) err.Write!void {
             try self.checkCapacity(new_len);
             self.len = new_len;
         }
 
-        pub fn append(self: *@This(), item: T) Err!void {
+        pub fn append(self: *@This(), item: T) err.Write!void {
             try self.checkCapacity(self.len + 1);
             self._items[self.len] = item;
             self.len += 1;
         }
 
-        pub fn appendSlice(self: *@This(), items: []const T) Err!void {
+        pub fn appendSlice(self: *@This(), items: []const T) err.Write!void {
             try self.checkCapacity(self.len + items.len);
             @memcpy(self._items[self.len .. self.len + items.len], items);
             self.len += items.len;
