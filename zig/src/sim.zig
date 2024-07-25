@@ -86,6 +86,7 @@ pub const Env = struct {
         rng: *R,
         allocator: std.mem.Allocator,
     ) !@This() {
+        const storage = Storage.init();
         const buffers = .{
             .enqueued = .{
                 .offsets = try allocator.alloc(usize, config.msg_len.at_most),
@@ -99,8 +100,9 @@ pub const Env = struct {
             },
         };
         return .{
-            .log = try Log(Storage).init(
+            .log = Log(Storage).init(
                 Addr.init(R, rng),
+                storage,
                 buffers,
             ),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
