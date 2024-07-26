@@ -52,11 +52,8 @@ pub fn Log(comptime Storage: type) type {
             self: *@This(),
             n: usize,
             buf: *event.Buf,
-        ) void {
-            _ = self;
-            _ = n;
-            _ = buf;
-            @panic("TODO");
+        ) err.Write!void {
+            try self.committed.readFromEnd(n, buf);
         }
     };
 }
@@ -145,9 +142,18 @@ fn Committed(comptime Storage: type) type {
             return self.offsets.len;
         }
 
-        pub fn read(self: @This()) err.Write!void {
-            _ = self;
-            @panic("TODO");
+        pub fn readFromEnd(
+            self: @This(),
+            n: usize,
+            buf: *event.Buf,
+        ) err.Write!void {
+            buf.clear();
+            const nTotalOffsets = self.offsets.len;
+            const lastNOffsets = self.offsets.asSlice()[nTotalOffsets - n ..];
+
+            for (lastNOffsets) |offset| {
+                self.events.read(buf.asSlice(), offset);
+            }
         }
     };
 }
@@ -214,6 +220,7 @@ const event = struct {
         payload_region.write(buf.asSlice(), e.payload) catch unreachable;
     }
 
+    // TODO: this should be the iterator for Buf I think
     const Iterator = struct {
         bytes: []const u8,
         index: usize,
@@ -240,7 +247,7 @@ const event = struct {
             try event.append(&self.bytes, e);
         }
 
-        pub fn asSlice(self: @This()) []const u8 {
+        pub fn asSlice(self: @This()) []u8 {
             return self.bytes.asSlice();
         }
 
@@ -277,15 +284,18 @@ test "let's write some bytes" {
     try std.testing.expectEqualDeep(actual, evt);
 }
 
+// This could just be ArrayListAlignedUnManaged. However:
+// - I can add conveniene functions like "last"
+// - the logical length is not part of the slice, so I can pass empty buffers in
 pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
     return struct {
-        _items: Slice,
+        _slice: Slice,
         len: usize,
 
         pub const Slice = if (alignment) |a| ([]align(a) T) else []T;
 
         pub fn capacity(self: *@This()) usize {
-            return self._items.len;
+            return self.asSlice().len;
         }
 
         pub fn clear(self: *@This()) void {
@@ -305,26 +315,27 @@ pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
 
         pub fn append(self: *@This(), item: T) err.Write!void {
             try self.checkCapacity(self.len + 1);
-            self._items[self.len] = item;
+            self._slice[self.len] = item;
             self.len += 1;
         }
 
         pub fn appendSlice(self: *@This(), items: []const T) err.Write!void {
             try self.checkCapacity(self.len + items.len);
-            @memcpy(self._items[self.len .. self.len + items.len], items);
+            @memcpy(self._slice[self.len .. self.len + items.len], items);
             self.len += items.len;
         }
 
-        pub fn asSlice(self: @This()) Slice {
-            return self._items[0..self.len];
+        // Note: slice is treated as blank, over-writeable memory
+        pub fn fromSlice(slice: Slice) @This() {
+            return .{ ._slice = slice, .len = 0 };
         }
 
-        pub fn fromSlice(slice: Slice) @This() {
-            return .{ ._items = slice, .len = 0 };
+        pub fn asSlice(self: @This()) Slice {
+            return self._slice[0..self.len];
         }
 
         pub fn last(self: @This()) ?T {
-            return if (self.len == 0) null else self._items[self._items.len - 1];
+            return if (self.len == 0) null else self._slice[self.len - 1];
         }
     };
 }
@@ -394,7 +405,7 @@ const TestStorage = struct {
     }
 
     pub fn read(self: @This(), buf: []u8, offset: usize) void {
-        @memcpy(buf, self.buf[offset .. offset + buf.len]);
+        @memcpy(buf, self.buf.asSlice()[offset .. offset + buf.len]);
     }
 };
 
@@ -424,6 +435,6 @@ test "enqueue, commit and read data" {
 
     var read_buf = event.Buf.fromSlice(try allocator.alloc(u8, 128));
     try log.enqueue("I have known the arcane law");
-    log.readFromEnd(1, &read_buf);
+    try log.readFromEnd(1, &read_buf);
     try std.testing.expectEqual(try log.commit(), 1);
 }
