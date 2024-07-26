@@ -1,5 +1,6 @@
 const std = @import("std");
 const err = @import("./err.zig");
+const extalloc = @import("./extalloc.zig");
 const mem = @import("./mem.zig");
 
 const Allocator = std.mem.Allocator;
@@ -77,12 +78,12 @@ const Buffers = struct {
 };
 
 const Enqueued = struct {
-    offsets: FixVec(usize),
+    offsets: extalloc.Vec(usize),
     events: event.Buf,
     next_committed_offset: usize,
     pub fn init(buffers: Buffers.Enqueued) @This() {
         return .{
-            .offsets = FixVec(usize).fromSlice(buffers.offsets),
+            .offsets = extalloc.Vec(usize).fromSlice(buffers.offsets),
             .events = event.Buf.fromSlice(buffers.events),
             .next_committed_offset = 0,
         };
@@ -112,14 +113,14 @@ fn Committed(comptime Storage: type) type {
     return struct {
         /// This is always one greater than the number of events stored; the last
         /// element is the next offset of the next event appended
-        offsets: FixVec(usize),
+        offsets: extalloc.Vec(usize),
         events: Storage,
 
         pub fn init(
             storage: Storage,
             buffers: Buffers.Committed,
         ) @This() {
-            var offsets = FixVec(usize).fromSlice(buffers.offsets);
+            var offsets = extalloc.Vec(usize).fromSlice(buffers.offsets);
             // TODO: enforce this at the buffer level?
             offsets.append(0) catch unreachable;
             return .{ .offsets = offsets, .events = storage };
@@ -202,7 +203,7 @@ const event = struct {
     }
 
     fn append(
-        buf: *FixVec(u8),
+        buf: *extalloc.Vec(u8),
         e: *const Event,
     ) err.Write!void {
         const header_region = mem.Region.init(buf.len, @sizeOf(Header));
@@ -237,10 +238,10 @@ const event = struct {
     };
 
     const Buf = struct {
-        bytes: FixVec(u8),
+        bytes: extalloc.Vec(u8),
 
         fn fromSlice(bytes: []u8) @This() {
-            return .{ .bytes = FixVec(u8).fromSlice(bytes) };
+            return .{ .bytes = extalloc.Vec(u8).fromSlice(bytes) };
         }
 
         fn append(self: *@This(), e: *const event.Event) !void {
@@ -260,7 +261,7 @@ const event = struct {
 test "let's write some bytes" {
     const bytes_buf = try std.testing.allocator.alloc(u8, 63);
     defer std.testing.allocator.free(bytes_buf);
-    var bytes = FixVec(u8).fromSlice(bytes_buf);
+    var bytes = extalloc.Vec(u8).fromSlice(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
@@ -282,79 +283,6 @@ test "let's write some bytes" {
     const actual = event.read(bytes.asSlice(), 0);
 
     try std.testing.expectEqualDeep(actual, evt);
-}
-
-// This could just be ArrayListAlignedUnManaged. However:
-// - I can add conveniene functions like "last"
-// - the logical length is not part of the slice, so I can pass empty buffers in
-pub fn FixVecAligned(comptime T: type, comptime alignment: ?u29) type {
-    return struct {
-        _slice: Slice,
-        len: usize,
-
-        pub const Slice = if (alignment) |a| ([]align(a) T) else []T;
-
-        pub fn capacity(self: *@This()) usize {
-            return self.asSlice().len;
-        }
-
-        pub fn clear(self: *@This()) void {
-            self.len = 0;
-        }
-
-        fn checkCapacity(self: *@This(), new_len: usize) err.Write!void {
-            if (new_len > self.capacity()) {
-                return error.Overrun;
-            }
-        }
-
-        pub fn resize(self: *@This(), new_len: usize) err.Write!void {
-            try self.checkCapacity(new_len);
-            self.len = new_len;
-        }
-
-        pub fn append(self: *@This(), item: T) err.Write!void {
-            try self.checkCapacity(self.len + 1);
-            self._slice[self.len] = item;
-            self.len += 1;
-        }
-
-        pub fn appendSlice(self: *@This(), items: []const T) err.Write!void {
-            try self.checkCapacity(self.len + items.len);
-            @memcpy(self._slice[self.len .. self.len + items.len], items);
-            self.len += items.len;
-        }
-
-        // Note: slice is treated as blank, over-writeable memory
-        pub fn fromSlice(slice: Slice) @This() {
-            return .{ ._slice = slice, .len = 0 };
-        }
-
-        pub fn asSlice(self: @This()) Slice {
-            return self._slice[0..self.len];
-        }
-
-        pub fn last(self: @This()) ?T {
-            return if (self.len == 0) null else self._slice[self.len - 1];
-        }
-    };
-}
-
-pub fn FixVec(comptime T: type) type {
-    return FixVecAligned(T, null);
-}
-
-test "fixvec stuff" {
-    const buf = try std.testing.allocator.alloc(u64, 8);
-    defer std.testing.allocator.free(buf);
-    var fv = FixVec(u64).fromSlice(buf);
-
-    try std.testing.expectEqual(fv.capacity(), 8);
-    try fv.append(42);
-    try std.testing.expectEqual(fv.len, 1);
-
-    try fv.appendSlice(&[_]u64{ 6, 1, 9 });
-    try std.testing.expectEqual(fv.len, 4);
 }
 
 pub const Addr = extern struct {
@@ -395,9 +323,9 @@ const Msg = struct {
 };
 
 const TestStorage = struct {
-    buf: FixVec(u8),
+    buf: extalloc.Vec(u8),
     pub fn init(slice: []u8) @This() {
-        return .{ .buf = FixVec(u8).fromSlice(slice) };
+        return .{ .buf = extalloc.Vec(u8).fromSlice(slice) };
     }
 
     pub fn append(self: *@This(), data: []const u8) err.Write!void {
