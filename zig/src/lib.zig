@@ -39,7 +39,7 @@ pub fn Log(comptime Storage: type) type {
         pub fn commit(self: *@This()) err.Write!usize {
             const result = self.enqueued.offsets.eventCount();
             try self.committed.append(
-                self.enqueued.offsets.asSlice(),
+                self.enqueued.offsets.tail(),
                 self.enqueued.events.asSlice(),
             );
             self.enqueued.reset();
@@ -145,7 +145,7 @@ fn Committed(comptime Storage: type) type {
             buf: *event.Buf,
         ) err.Write!void {
             buf.clear();
-            try self.events.read(&buf.bytes, self.offsets.asSlice()[n]);
+            try self.events.read(&buf.bytes, self.offsets.get(n));
         }
     };
 }
@@ -166,8 +166,8 @@ const StorageOffsets = struct {
         self.vec.append(next_committed_offset) catch unreachable;
     }
 
-    fn asSlice(self: @This()) []usize {
-        return self.vec.asSlice();
+    fn tail(self: @This()) []usize {
+        return self.vec.asSlice()[1..];
     }
 
     fn eventCount(self: @This()) usize {
@@ -184,6 +184,10 @@ const StorageOffsets = struct {
 
     fn appendSlice(self: *@This(), slice: []const usize) err.Write!void {
         try self.vec.appendSlice(slice);
+    }
+
+    fn get(self: @This(), index: usize) usize {
+        return self.vec.asSlice()[index];
     }
 };
 
