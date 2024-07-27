@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("./util.zig");
 const err = @import("./err.zig");
 const extalloc = @import("./extalloc.zig");
 const mem = @import("./mem.zig");
@@ -36,12 +37,12 @@ pub fn Log(comptime Storage: type) type {
 
         /// Returns number of events committed
         pub fn commit(self: *@This()) err.Write!usize {
-            const result = self.enqueued.offsets.len;
+            const result = self.enqueued.offsets.eventCount();
             try self.committed.append(
                 self.enqueued.offsets.asSlice(),
                 self.enqueued.events.asSlice(),
             );
-            self.enqueued.reset(self.committed.lastOffset());
+            self.enqueued.reset();
             return result;
         }
 
@@ -78,34 +79,29 @@ const Buffers = struct {
 };
 
 const Enqueued = struct {
-    offsets: extalloc.Vec(usize),
+    offsets: StorageOffsets,
     events: event.Buf,
-    next_committed_offset: usize,
     pub fn init(buffers: Buffers.Enqueued) @This() {
         return .{
-            .offsets = extalloc.Vec(usize).fromSlice(buffers.offsets),
+            .offsets = StorageOffsets.init(buffers.offsets, 0),
             .events = event.Buf.fromSlice(buffers.events),
-            .next_committed_offset = 0,
         };
     }
 
     pub fn append(self: *@This(), e: *const event.Event) err.Write!void {
-        const last_enqueued_offset =
-            self.offsets.last() orelse self.next_committed_offset;
-
-        const offset = last_enqueued_offset + e.storedSize();
+        const offset = self.offsets.last() + e.storedSize();
         try self.offsets.append(offset);
         try self.events.append(e);
     }
 
-    pub fn reset(self: *@This(), next_committed_offset: usize) void {
-        self.offsets.clear();
+    pub fn reset(self: *@This()) void {
+        const last = self.offsets.last();
+        self.offsets.reset(last);
         self.events.clear();
-        self.next_committed_offset = next_committed_offset;
     }
 
     pub fn count(self: *@This()) usize {
-        return self.offsets.len;
+        return self.offsets.eventCount();
     }
 };
 
@@ -113,20 +109,20 @@ fn Committed(comptime Storage: type) type {
     return struct {
         /// This is always one greater than the number of events stored; the last
         /// element is the next offset of the next event appended
-        offsets: extalloc.Vec(usize),
+        offsets: StorageOffsets,
         events: Storage,
 
-        pub fn init(
+        fn init(
             storage: Storage,
             buffers: Buffers.Committed,
         ) @This() {
-            var offsets = extalloc.Vec(usize).fromSlice(buffers.offsets);
-            // TODO: enforce this at the buffer level?
-            offsets.append(0) catch unreachable;
-            return .{ .offsets = offsets, .events = storage };
+            return .{
+                .offsets = StorageOffsets.init(buffers.offsets, 0),
+                .events = storage,
+            };
         }
 
-        pub fn append(
+        fn append(
             self: *@This(),
             offsets: []const usize,
             events: []const u8,
@@ -135,29 +131,61 @@ fn Committed(comptime Storage: type) type {
             try self.events.append(events);
         }
 
-        pub fn lastOffset(self: *@This()) usize {
-            return self.offsets.last() orelse unreachable;
+        fn lastOffset(self: *@This()) usize {
+            return self.offsets.last();
         }
 
-        pub fn count(self: @This()) usize {
-            return self.offsets.len;
+        fn count(self: @This()) usize {
+            return self.offsets.eventCount();
         }
 
-        pub fn readFromEnd(
+        fn readFromEnd(
             self: @This(),
             n: usize,
             buf: *event.Buf,
         ) err.Write!void {
             buf.clear();
-            const nTotalOffsets = self.offsets.len;
-            const lastNOffsets = self.offsets.asSlice()[nTotalOffsets - n ..];
-
-            for (lastNOffsets) |offset| {
-                self.events.read(buf.asSlice(), offset);
-            }
+            try self.events.read(&buf.bytes, self.offsets.asSlice()[n]);
         }
     };
 }
+
+/// Maps a logical position (nth event) to a byte offset in storage
+const StorageOffsets = struct {
+    // Vec with some invariants:
+    // - always at least one element: next offset, for calculating size
+    vec: extalloc.Vec(usize),
+    fn init(slice: []usize, next_committed_offset: usize) @This() {
+        var offsets = extalloc.Vec(usize).fromSlice(slice);
+        offsets.append(next_committed_offset) catch unreachable;
+        return .{ .vec = offsets };
+    }
+
+    fn reset(self: *@This(), next_committed_offset: usize) void {
+        self.vec.clear();
+        self.vec.append(next_committed_offset) catch unreachable;
+    }
+
+    fn asSlice(self: @This()) []usize {
+        return self.vec.asSlice();
+    }
+
+    fn eventCount(self: @This()) usize {
+        return self.vec.len - 1;
+    }
+
+    fn last(self: @This()) usize {
+        return self.vec.last() orelse unreachable;
+    }
+
+    fn append(self: *@This(), offset: usize) err.Write!void {
+        try self.vec.append(offset);
+    }
+
+    fn appendSlice(self: *@This(), slice: []const usize) err.Write!void {
+        try self.vec.appendSlice(slice);
+    }
+};
 
 const event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: usize };
@@ -332,8 +360,13 @@ const TestStorage = struct {
         try self.buf.appendSlice(data);
     }
 
-    pub fn read(self: @This(), buf: []u8, offset: usize) void {
-        @memcpy(buf, self.buf.asSlice()[offset .. offset + buf.len]);
+    pub fn read(
+        self: @This(),
+        dest: *extalloc.Vec(u8),
+        offset: usize,
+    ) err.Write!void {
+        const requested = self.buf.asSlice()[offset .. offset + dest.len];
+        try dest.appendSlice(requested);
     }
 };
 
@@ -355,14 +388,22 @@ test "enqueue, commit and read data" {
             .offsets = try allocator.alloc(usize, 3),
         },
     };
+
     var log = Log(TestStorage).init(
         Addr.init(std.Random.Pcg, &rng),
         storage,
         buffers,
     );
 
-    var read_buf = event.Buf.fromSlice(try allocator.alloc(u8, 128));
+    const read_buf_bytes = try allocator.alloc(u8, 128);
+    var read_buf = event.Buf.fromSlice(read_buf_bytes);
     try log.enqueue("I have known the arcane law");
-    try log.readFromEnd(1, &read_buf);
     try std.testing.expectEqual(try log.commit(), 1);
+    try log.readFromEnd(1, &read_buf);
+
+    try std.testing.expectEqualSlices(
+        u8,
+        "I have known the arcane law",
+        read_buf.asSlice(),
+    );
 }

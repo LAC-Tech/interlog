@@ -17,7 +17,7 @@ pub fn VecAligned(comptime T: type, comptime alignment: ?u29) type {
         pub const Slice = if (alignment) |a| ([]align(a) T) else []T;
 
         pub fn capacity(self: *@This()) usize {
-            return self.asSlice().len;
+            return self._slice.len;
         }
 
         pub fn clear(self: *@This()) void {
