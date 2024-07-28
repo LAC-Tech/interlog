@@ -1,7 +1,6 @@
 const std = @import("std");
 const util = @import("./util.zig");
 const err = @import("./err.zig");
-const mem = @import("./mem.zig");
 
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
@@ -98,11 +97,14 @@ const Enqueued = struct {
         const offset = self.offsets.last() + e.storedSize();
         self.offsets.append(offset);
         self.events.append(e);
+        std.debug.assert(self.events.read(self.offsets.eventCount()) != null);
     }
 
     pub fn reset(self: *@This()) void {
-        const last = self.offsets.last();
-        self.offsets.reset(last);
+        // By definiton, the last committed event is the last thing in the
+        // eqneued buffer before reseting, which happens after committing
+        const last_committed_event = self.offsets.last();
+        self.offsets.reset(last_committed_event);
         self.events.clear();
     }
 
@@ -209,7 +211,7 @@ const StorageOffsets = struct {
 
 const event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: usize };
-    pub const Header = extern struct { byte_len: usize, id: ID };
+    pub const Header = extern struct { payload_len: usize, id: ID };
 
     comptime {
         if (@sizeOf(ID) != 24) {
@@ -234,18 +236,10 @@ const event = struct {
     };
 
     fn read(bytes: []const u8, offset: usize) ?Event {
-        const header_region = mem.Region.init(offset, @sizeOf(Header));
-        const header_bytes = header_region.read(u8, bytes) orelse return null;
-        const header = std.mem.bytesAsValue(
-            Header,
-            header_bytes[0..@sizeOf(Header)],
-        );
-
-        const payload_region = mem.Region.init(
-            header_region.end(),
-            header.byte_len,
-        );
-        const payload = payload_region.read(u8, bytes) orelse return null;
+        const header_end = offset + @sizeOf(Header);
+        const header = std.mem.bytesAsValue(Header, bytes[offset..header_end]);
+        const payload_end = header_end + header.payload_len;
+        const payload = bytes[header_end..payload_end];
 
         return .{ .id = header.id, .payload = payload };
     }
@@ -274,40 +268,14 @@ const event = struct {
         }
 
         fn append(self: *@This(), e: *const event.Event) void {
-            const header_region = mem.Region.init(
-                self.bytes.items.len,
-                @sizeOf(Header),
-            );
             const header = .{ .byte_len = e.payload.len, .id = e.id };
-            const header_bytes = std.mem.asBytes(&header);
-
-            const payload_region = mem.Region.init(
-                header_region.end(),
-                e.payload.len,
-            );
-
-            const new_buf_len = self.bytes.items.len + e.storedSize();
-            self.bytes.items.len = new_buf_len;
-            header_region.write(self.asSlice(), header_bytes);
-            payload_region.write(self.asSlice(), e.payload);
+            const header_bytes: []const u8 = std.mem.asBytes(&header);
+            self.bytes.appendSliceAssumeCapacity(header_bytes);
+            self.bytes.appendSliceAssumeCapacity(e.payload);
         }
 
         fn read(self: @This(), offset: usize) ?Event {
-            const bytes = self.bytes.items;
-            const header_region = mem.Region.init(offset, @sizeOf(Header));
-            const header_bytes = header_region.read(u8, bytes) orelse return null;
-            const header = std.mem.bytesAsValue(
-                Header,
-                header_bytes[0..@sizeOf(Header)],
-            );
-
-            const payload_region = mem.Region.init(
-                header_region.end(),
-                header.byte_len,
-            );
-            const payload = payload_region.read(u8, bytes) orelse return null;
-
-            return .{ .id = header.id, .payload = payload };
+            return event.read(self.bytes.items, offset);
         }
 
         fn asSlice(self: @This()) []u8 {
