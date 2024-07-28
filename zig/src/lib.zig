@@ -85,7 +85,7 @@ const Enqueued = struct {
     pub fn init(buffers: Buffers.Enqueued) @This() {
         return .{
             .offsets = StorageOffsets.init(buffers.offsets, 0),
-            .events = event.Buf.fromSlice(buffers.events),
+            .events = event.Buf.init(buffers.events),
         };
     }
 
@@ -162,7 +162,7 @@ const StorageOffsets = struct {
     // - always at least one element: next offset, for calculating size
     vec: extalloc.Vec(usize),
     fn init(slice: []usize, next_committed_offset: usize) @This() {
-        var offsets = extalloc.Vec(usize).fromSlice(slice);
+        var offsets = extalloc.Vec(usize).init(slice);
         offsets.append(next_committed_offset) catch unreachable;
         return .{ .vec = offsets };
     }
@@ -245,25 +245,6 @@ const event = struct {
         return .{ .id = header.id, .payload = payload };
     }
 
-    fn append(
-        buf: *extalloc.Vec(u8),
-        e: *const Event,
-    ) err.Write!void {
-        const header_region = mem.Region.init(buf.len, @sizeOf(Header));
-        const header = .{ .byte_len = e.payload.len, .id = e.id };
-        const header_bytes = std.mem.asBytes(&header);
-
-        const payload_region = mem.Region.init(
-            header_region.end(),
-            e.payload.len,
-        );
-
-        const new_buf_len = buf.len + e.storedSize();
-        try buf.resize(new_buf_len);
-        header_region.write(buf.asSlice(), header_bytes) catch unreachable;
-        payload_region.write(buf.asSlice(), e.payload) catch unreachable;
-    }
-
     // TODO: this should be the iterator for Buf I think
     const Iterator = struct {
         bytes: []const u8,
@@ -283,23 +264,42 @@ const event = struct {
     const Buf = struct {
         bytes: extalloc.Vec(u8),
 
-        fn fromSlice(bytes: []u8) @This() {
-            return .{ .bytes = extalloc.Vec(u8).fromSlice(bytes) };
+        fn init(bytes: []u8) @This() {
+            return .{ .bytes = extalloc.Vec(u8).init(bytes) };
         }
 
-        fn append(self: *@This(), e: *const event.Event) !void {
-            try event.append(&self.bytes, e);
+        fn append(self: *@This(), e: *const event.Event) err.Write!void {
+            const header_region = mem.Region.init(
+                self.bytes.len,
+                @sizeOf(Header),
+            );
+            const header = .{ .byte_len = e.payload.len, .id = e.id };
+            const header_bytes = std.mem.asBytes(&header);
+
+            const payload_region = mem.Region.init(
+                header_region.end(),
+                e.payload.len,
+            );
+
+            const new_buf_len = self.bytes.len + e.storedSize();
+            try self.bytes.resize(new_buf_len);
+            header_region.write(self.asSlice(), header_bytes) catch unreachable;
+            payload_region.write(self.asSlice(), e.payload) catch unreachable;
         }
 
-        pub fn asSlice(self: @This()) []u8 {
+        fn read(self: @This(), offset: usize) ?Event {
+            return event.read(self.bytes.asSlice(), offset);
+        }
+
+        fn asSlice(self: @This()) []u8 {
             return self.bytes.asSlice();
         }
 
-        pub fn clear(self: *@This()) void {
+        fn clear(self: *@This()) void {
             self.bytes.clear();
         }
 
-        pub fn resize(self: *@This(), new_len: usize) err.Write!void {
+        fn resize(self: *@This(), new_len: usize) err.Write!void {
             try self.bytes.resize(new_len);
         }
     };
@@ -308,7 +308,7 @@ const event = struct {
 test "let's write some bytes" {
     const bytes_buf = try std.testing.allocator.alloc(u8, 63);
     defer std.testing.allocator.free(bytes_buf);
-    var buf = event.Buf.fromSlice(bytes_buf);
+    var buf = event.Buf.init(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
@@ -326,7 +326,7 @@ test "let's write some bytes" {
         try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
     }
 
-    const actual = event.read(buf.asSlice(), 0);
+    const actual = buf.read(0);
 
     try std.testing.expectEqualDeep(actual, evt);
 }
@@ -371,7 +371,7 @@ const Msg = struct {
 const TestStorage = struct {
     buf: extalloc.Vec(u8),
     pub fn init(slice: []u8) @This() {
-        return .{ .buf = extalloc.Vec(u8).fromSlice(slice) };
+        return .{ .buf = extalloc.Vec(u8).init(slice) };
     }
 
     pub fn append(self: *@This(), data: []const u8) err.Write!void {
@@ -414,17 +414,17 @@ test "enqueue, commit and read data" {
     );
 
     const read_buf_bytes = try allocator.alloc(u8, 128);
-    var read_buf = event.Buf.fromSlice(read_buf_bytes);
+    var read_buf = event.Buf.init(read_buf_bytes);
     try log.enqueue("I have known the arcane law");
     try std.testing.expectEqual(try log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
 
-    try std.testing.expectEqual(read_buf.asSlice().len, 64);
     var it = event.Iterator.init(read_buf.asSlice());
+    const fist_committed_event = it.next().?.payload;
 
     try std.testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
-        it.next().?.payload,
+        fist_committed_event,
     );
 }

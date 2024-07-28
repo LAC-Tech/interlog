@@ -16,6 +16,12 @@ pub fn VecAligned(comptime T: type, comptime alignment: ?u29) type {
 
         pub const Slice = if (alignment) |a| ([]align(a) T) else []T;
 
+        // Note: the slice contents will be overwritten
+        // It's treated as logically empty
+        pub fn init(slice: Slice) @This() {
+            return .{ ._slice = slice, .len = 0 };
+        }
+
         pub fn capacity(self: *@This()) usize {
             return self._slice.len;
         }
@@ -47,12 +53,6 @@ pub fn VecAligned(comptime T: type, comptime alignment: ?u29) type {
             self.len += items.len;
         }
 
-        // Note: the slice contents will be overwritten
-        // It's treated as logically empty
-        pub fn fromSlice(slice: Slice) @This() {
-            return .{ ._slice = slice, .len = 0 };
-        }
-
         pub fn asSlice(self: @This()) Slice {
             return self._slice[0..self.len];
         }
@@ -70,7 +70,7 @@ pub fn Vec(comptime T: type) type {
 test "fixvec stuff" {
     const buf = try std.testing.allocator.alloc(u64, 8);
     defer std.testing.allocator.free(buf);
-    var fv = Vec(u64).fromSlice(buf);
+    var fv = Vec(u64).init(buf);
 
     try std.testing.expectEqual(fv.capacity(), 8);
     try fv.append(42);
