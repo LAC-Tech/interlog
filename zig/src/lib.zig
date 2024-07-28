@@ -4,6 +4,7 @@ const err = @import("./err.zig");
 const extalloc = @import("./extalloc.zig");
 const mem = @import("./mem.zig");
 
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 pub fn Log(comptime Storage: type) type {
@@ -145,7 +146,12 @@ fn Committed(comptime Storage: type) type {
             buf: *event.Buf,
         ) err.Write!void {
             buf.clear();
-            try self.events.read(&buf.bytes, self.offsets.get(n));
+            var offsets = self.offsets.asSlice();
+            offsets = offsets[offsets.len - 1 - n ..];
+
+            const size = offsets[offsets.len - 1] - offsets[0];
+            try buf.resize(size);
+            try self.events.read(&buf.bytes, offsets[0]);
         }
     };
 }
@@ -170,6 +176,10 @@ const StorageOffsets = struct {
         return self.vec.asSlice()[1..];
     }
 
+    fn asSlice(self: @This()) []usize {
+        return self.vec.asSlice();
+    }
+
     fn eventCount(self: @This()) usize {
         return self.vec.len - 1;
     }
@@ -179,6 +189,7 @@ const StorageOffsets = struct {
     }
 
     fn append(self: *@This(), offset: usize) err.Write!void {
+        assert(offset > self.last());
         try self.vec.append(offset);
     }
 
@@ -287,13 +298,17 @@ const event = struct {
         pub fn clear(self: *@This()) void {
             self.bytes.clear();
         }
+
+        pub fn resize(self: *@This(), new_len: usize) err.Write!void {
+            try self.bytes.resize(new_len);
+        }
     };
 };
 
 test "let's write some bytes" {
     const bytes_buf = try std.testing.allocator.alloc(u8, 63);
     defer std.testing.allocator.free(bytes_buf);
-    var bytes = extalloc.Vec(u8).fromSlice(bytes_buf);
+    var buf = event.Buf.fromSlice(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
@@ -304,15 +319,14 @@ test "let's write some bytes" {
         .payload = "j;fkls",
     };
 
-    try event.append(&bytes, &evt);
-
-    var it = event.Iterator.init(bytes.asSlice());
+    try buf.append(&evt);
+    var it = event.Iterator.init(buf.asSlice());
 
     while (it.next()) |e| {
         try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
     }
 
-    const actual = event.read(bytes.asSlice(), 0);
+    const actual = event.read(buf.asSlice(), 0);
 
     try std.testing.expectEqualDeep(actual, evt);
 }
@@ -405,9 +419,12 @@ test "enqueue, commit and read data" {
     try std.testing.expectEqual(try log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
 
+    try std.testing.expectEqual(read_buf.asSlice().len, 64);
+    var it = event.Iterator.init(read_buf.asSlice());
+
     try std.testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
-        read_buf.asSlice(),
+        it.next().?.payload,
     );
 }
