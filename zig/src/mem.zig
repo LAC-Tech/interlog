@@ -1,8 +1,8 @@
 const std = @import("std");
 const err = @import("./err.zig");
 
-// A region of memory with bounds checked functions for reading & writing
 // Turns pos..pos+len into an object, that can be grown, shifted etc
+// TODO: questioning this whole approach..
 pub const Region = struct {
     pos: usize,
     len: usize,
@@ -31,16 +31,7 @@ pub const Region = struct {
         }
     }
 
-    // "Safe" wrapper around memcpy
-    pub fn write(
-        self: @This(),
-        dest: anytype,
-        src: anytype,
-    ) err.Write!void {
-        if (self.end() > dest.len) {
-            return error.Overrun;
-        }
-
+    pub fn write(self: @This(), dest: anytype, src: anytype) void {
         @memcpy(dest[self.pos..self.end()], src);
     }
 

@@ -1,1 +1,1 @@
-pub const Write = error{Overrun};
+pub const ReadBuf = error{Overrun};

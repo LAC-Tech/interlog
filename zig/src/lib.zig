@@ -60,8 +60,8 @@ pub fn Log(comptime Storage: type) type {
             self: *@This(),
             n: usize,
             buf: *event.Buf,
-        ) err.Write!void {
-            try self.committed.readFromEnd(n, buf);
+        ) err.ReadBuf!void {
+            self.committed.readFromEnd(n, buf);
         }
     };
 }
@@ -149,7 +149,7 @@ fn Committed(comptime Storage: type) type {
             self: @This(),
             n: usize,
             buf: *event.Buf,
-        ) err.Write!void {
+        ) void {
             buf.clear();
             var offsets = self.offsets.asSlice();
             offsets = offsets[offsets.len - 1 - n ..];
@@ -288,8 +288,8 @@ const event = struct {
 
             const new_buf_len = self.bytes.items.len + e.storedSize();
             self.bytes.items.len = new_buf_len;
-            header_region.write(self.asSlice(), header_bytes) catch unreachable;
-            payload_region.write(self.asSlice(), e.payload) catch unreachable;
+            header_region.write(self.asSlice(), header_bytes);
+            payload_region.write(self.asSlice(), e.payload);
         }
 
         fn read(self: @This(), offset: usize) ?Event {
