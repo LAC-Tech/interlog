@@ -288,7 +288,21 @@ const event = struct {
         }
 
         fn read(self: @This(), offset: usize) ?Event {
-            return event.read(self.bytes.asSlice(), offset);
+            const bytes = self.bytes.asSlice();
+            const header_region = mem.Region.init(offset, @sizeOf(Header));
+            const header_bytes = header_region.read(u8, bytes) orelse return null;
+            const header = std.mem.bytesAsValue(
+                Header,
+                header_bytes[0..@sizeOf(Header)],
+            );
+
+            const payload_region = mem.Region.init(
+                header_region.end(),
+                header.byte_len,
+            );
+            const payload = payload_region.read(u8, bytes) orelse return null;
+
+            return .{ .id = header.id, .payload = payload };
         }
 
         fn asSlice(self: @This()) []u8 {
@@ -396,6 +410,7 @@ test "enqueue, commit and read data" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 4096));
     const buffers = Buffers{
         .enqueued = .{
@@ -407,24 +422,20 @@ test "enqueue, commit and read data" {
         },
     };
 
-    var log = Log(TestStorage).init(
-        Addr.init(std.Random.Pcg, &rng),
-        storage,
-        buffers,
-    );
+    var log = Log(TestStorage).init(addr, storage, buffers);
 
-    const read_buf_bytes = try allocator.alloc(u8, 128);
-    var read_buf = event.Buf.init(read_buf_bytes);
+    var read_buf = event.Buf.init(try allocator.alloc(u8, 128));
     try log.enqueue("I have known the arcane law");
     try std.testing.expectEqual(try log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
 
-    var it = event.Iterator.init(read_buf.asSlice());
-    const fist_committed_event = it.next().?.payload;
+    //var it = event.Iterator.init(read_buf.asSlice());
+    //const fist_committed_event = it.next().?.payload;
+    const actual = read_buf.read(0);
 
     try std.testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
-        fist_committed_event,
+        actual.?.payload,
     );
 }
