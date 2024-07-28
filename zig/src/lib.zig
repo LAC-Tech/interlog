@@ -417,7 +417,7 @@ test "enqueue, commit and read data" {
 
     const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 4096));
-    const buffers = HeapMemory{
+    const heap_memory = HeapMemory{
         .enqueued = .{
             .events = try allocator.alloc(u8, 4096),
             .offsets = try allocator.alloc(usize, 3),
@@ -427,7 +427,7 @@ test "enqueue, commit and read data" {
         },
     };
 
-    var log = Log(TestStorage).init(addr, storage, buffers);
+    var log = Log(TestStorage).init(addr, storage, heap_memory);
 
     var read_buf = event.Buf.init(try allocator.alloc(u8, 128));
     log.enqueue("I have known the arcane law");
