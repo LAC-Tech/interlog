@@ -17,12 +17,15 @@ pub fn Log(comptime Storage: type) type {
         pub fn init(
             addr: Addr,
             storage: Storage,
-            buffers: Buffers,
+            heap_memory: HeapMemory,
         ) @This() {
             return .{
                 .addr = addr,
-                .enqueued = Enqueued.init(buffers.enqueued),
-                .committed = Committed(Storage).init(storage, buffers.committed),
+                .enqueued = Enqueued.init(heap_memory.enqueued),
+                .committed = Committed(Storage).init(
+                    storage,
+                    heap_memory.committed,
+                ),
             };
         }
 
@@ -69,7 +72,7 @@ pub fn Log(comptime Storage: type) type {
 // interrupt; result = writes with no checks / error checks i.e. no stalls for
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
-const Buffers = struct {
+const HeapMemory = struct {
     const Committed = struct {
         offsets: []usize,
     };
@@ -84,7 +87,7 @@ const Buffers = struct {
 const Enqueued = struct {
     offsets: StorageOffsets,
     events: event.Buf,
-    pub fn init(buffers: Buffers.Enqueued) @This() {
+    pub fn init(buffers: HeapMemory.Enqueued) @This() {
         return .{
             .offsets = StorageOffsets.init(buffers.offsets, 0),
             .events = event.Buf.init(buffers.events),
@@ -117,7 +120,7 @@ fn Committed(comptime Storage: type) type {
 
         fn init(
             storage: Storage,
-            buffers: Buffers.Committed,
+            buffers: HeapMemory.Committed,
         ) @This() {
             return .{
                 .offsets = StorageOffsets.init(buffers.offsets, 0),
@@ -414,7 +417,7 @@ test "enqueue, commit and read data" {
 
     const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 4096));
-    const buffers = Buffers{
+    const buffers = HeapMemory{
         .enqueued = .{
             .events = try allocator.alloc(u8, 4096),
             .offsets = try allocator.alloc(usize, 3),
@@ -431,8 +434,6 @@ test "enqueue, commit and read data" {
     try std.testing.expectEqual(log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
 
-    //var it = event.Iterator.init(read_buf.asSlice());
-    //const fist_committed_event = it.next().?.payload;
     const actual = read_buf.read(0);
 
     try std.testing.expectEqualSlices(
