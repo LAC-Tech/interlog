@@ -61,7 +61,7 @@ pub fn Log(comptime Storage: type) type {
             n: usize,
             buf: *event.Buf,
         ) err.ReadBuf!void {
-            self.committed.readFromEnd(n, buf);
+            try self.committed.readFromEnd(n, buf);
         }
     };
 }
@@ -149,14 +149,14 @@ fn Committed(comptime Storage: type) type {
             self: @This(),
             n: usize,
             buf: *event.Buf,
-        ) void {
+        ) err.ReadBuf!void {
             buf.clear();
             var offsets = self.offsets.asSlice();
             offsets = offsets[offsets.len - 1 - n ..];
 
             const size = offsets[offsets.len - 1] - offsets[0];
             buf.resize(size);
-            self.events.read(&buf.bytes, offsets[0]);
+            try self.events.read(&buf.bytes, offsets[0]);
         }
     };
 }
@@ -401,7 +401,8 @@ const TestStorage = struct {
         self: @This(),
         dest: *ByteVec,
         offset: usize,
-    ) void {
+    ) err.ReadBuf!void {
+        // TODO: bounds check
         const requested = self.bytes.items[offset .. offset + dest.items.len];
         dest.appendSliceAssumeCapacity(requested);
     }
