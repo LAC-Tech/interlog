@@ -1,5 +1,4 @@
 const std = @import("std");
-const util = @import("./util.zig");
 const err = @import("./err.zig");
 
 const mem = std.mem;
@@ -42,9 +41,10 @@ pub fn Log(comptime Storage: type) type {
         /// Returns number of events committed
         pub fn commit(self: *@This()) usize {
             const result = self.enqueued.offsets.eventCount();
+            const size_in_bytes = self.enqueued.offsets.sizeSpanned();
             self.committed.append(
                 self.enqueued.offsets.tail(),
-                self.enqueued.events.asSlice(),
+                self.enqueued.events.items[0..size_in_bytes],
             );
             self.enqueued.reset();
             return result;
@@ -58,7 +58,7 @@ pub fn Log(comptime Storage: type) type {
         pub fn readFromEnd(
             self: *@This(),
             n: usize,
-            buf: *event.Buf,
+            buf: *event.ReadBuf,
         ) err.ReadBuf!void {
             try self.committed.readFromEnd(n, buf);
         }
@@ -85,19 +85,18 @@ const HeapMemory = struct {
 
 const Enqueued = struct {
     offsets: StorageOffsets,
-    events: event.Buf,
+    events: ByteVec,
     pub fn init(buffers: HeapMemory.Enqueued) @This() {
         return .{
             .offsets = StorageOffsets.init(buffers.offsets, 0),
-            .events = event.Buf.init(buffers.events),
+            .events = ByteVec.initBuffer(buffers.events),
         };
     }
 
     pub fn append(self: *@This(), e: *const event.Event) void {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
-        self.events.append(e);
-        assert(self.events.read(self.offsets.eventCount()) != null);
+        event.append(&self.events, e);
     }
 
     pub fn reset(self: *@This()) void {
@@ -105,7 +104,7 @@ const Enqueued = struct {
         // eqneued buffer before reseting, which happens after committing
         const last_committed_event = self.offsets.last();
         self.offsets.reset(last_committed_event);
-        self.events.clear();
+        self.events.clearRetainingCapacity();
     }
 
     pub fn count(self: *@This()) usize {
@@ -150,7 +149,7 @@ fn Committed(comptime Storage: type) type {
         fn readFromEnd(
             self: @This(),
             n: usize,
-            buf: *event.Buf,
+            buf: *event.ReadBuf,
         ) err.ReadBuf!void {
             buf.clear();
             var offsets = self.offsets.asSlice();
@@ -158,7 +157,7 @@ fn Committed(comptime Storage: type) type {
 
             const size = offsets[offsets.len - 1].n - offsets[0].n;
             buf.resize(size);
-            try self.events.read(&buf.bytes, offsets[0].n);
+            try self.events.read(buf.bytes.items, offsets[0].n);
         }
     };
 }
@@ -210,17 +209,24 @@ const StorageOffsets = struct {
     fn get(self: @This(), index: usize) usize {
         return self.offsets.asSlice()[index];
     }
+
+    fn sizeSpanned(self: @This()) usize {
+        return self.offsets.getLast().n - self.offsets.items[0].n;
+    }
 };
+
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 pub const StorageOffset = packed struct(usize) {
     const zero = @This().init(0);
+
     n: usize,
     fn init(n: usize) @This() {
         // All storage offsets must be 8 byte aligned
         assert(n % 8 == 0);
         return .{ .n = n };
     }
+
     fn next(self: @This(), e: *const event.Event) @This() {
         const result = @sizeOf(event.Header) + e.payload.len;
         // While payload sizes are arbitrary, on disk we want 8 byte alignment
@@ -249,7 +255,7 @@ const event = struct {
         payload: []const u8,
     };
 
-    fn read(bytes: []const u8, offset: StorageOffset) ?Event {
+    fn read(bytes: []const u8, offset: StorageOffset) Event {
         const header_end = offset.n + @sizeOf(Header);
         const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
         const payload_end = header_end + header.payload_len;
@@ -258,42 +264,55 @@ const event = struct {
         return .{ .id = header.id, .payload = payload };
     }
 
+    fn append(byte_vec: *ByteVec, e: *const event.Event) void {
+        const header: Header = .{ .payload_len = e.payload.len, .id = e.id };
+        const header_bytes: []const u8 = std.mem.asBytes(&header);
+        byte_vec.appendSliceAssumeCapacity(header_bytes);
+        byte_vec.appendSliceAssumeCapacity(e.payload);
+
+        const old_len = byte_vec.items.len;
+
+        byte_vec.items.len += (old_len + 7) & ~@as(u8, 7);
+    }
+
     // TODO: this should be the iterator for Buf I think
     const Iterator = struct {
-        bytes: []const u8,
-        index: StorageOffset,
+        read_buf: *ReadBuf,
+        offset_index: StorageOffset,
+        event_index: usize,
 
-        pub fn init(bytes: []const u8) @This() {
-            return .{ .bytes = bytes, .index = StorageOffset.zero };
+        pub fn init(read_buf: *ReadBuf) @This() {
+            return .{
+                .read_buf = read_buf,
+                .offset_index = StorageOffset.zero,
+                .event_index = 0,
+            };
         }
 
         pub fn next(self: *@This()) ?Event {
-            const result = read(self.bytes, self.index) orelse return null;
-            self.index = self.index.next(&result);
+            if (self.event_index == self.read_buf.n_events) return null;
+            const result = self.read_buf.read(self.offset_index);
+            self.offset_index = self.offset_index.next(&result);
+            self.event_index += 1;
             return result;
         }
     };
 
-    const Buf = struct {
+    const ReadBuf = struct {
         bytes: ByteVec,
+        n_events: usize,
 
         fn init(buf: []u8) @This() {
-            return .{ .bytes = ByteVec.initBuffer(buf) };
+            return .{ .bytes = ByteVec.initBuffer(buf), .n_events = 0 };
         }
 
         fn append(self: *@This(), e: *const event.Event) void {
-            const header = .{ .byte_len = e.payload.len, .id = e.id };
-            const header_bytes: []const u8 = std.mem.asBytes(&header);
-            self.bytes.appendSliceAssumeCapacity(header_bytes);
-            self.bytes.appendSliceAssumeCapacity(e.payload);
+            event.append(&self.bytes, e);
+            self.n_events += 1;
         }
 
-        fn read(self: @This(), offset: StorageOffset) ?Event {
+        fn read(self: @This(), offset: StorageOffset) Event {
             return event.read(self.bytes.items, offset);
-        }
-
-        fn asSlice(self: @This()) []u8 {
-            return self.bytes.items;
         }
 
         fn clear(self: *@This()) void {
@@ -307,9 +326,9 @@ const event = struct {
 };
 
 test "let's write some bytes" {
-    const bytes_buf = try std.testing.allocator.alloc(u8, 63);
+    const bytes_buf = try std.testing.allocator.alloc(u8, 127);
     defer std.testing.allocator.free(bytes_buf);
-    var buf = event.Buf.init(bytes_buf);
+    var buf = event.ReadBuf.init(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
@@ -321,7 +340,7 @@ test "let's write some bytes" {
     };
 
     buf.append(&evt);
-    var it = event.Iterator.init(buf.asSlice());
+    var it = event.Iterator.init(&buf);
 
     while (it.next()) |e| {
         try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
@@ -381,12 +400,12 @@ const TestStorage = struct {
 
     pub fn read(
         self: @This(),
-        dest: *ByteVec,
+        dest: []u8,
         offset: usize,
     ) err.ReadBuf!void {
         // TODO: bounds check
-        const requested = self.bytes.items[offset .. offset + dest.items.len];
-        dest.appendSliceAssumeCapacity(requested);
+        const requested = self.bytes.items[offset .. offset + dest.len];
+        @memcpy(dest, requested);
     }
 };
 
@@ -412,7 +431,7 @@ test "enqueue, commit and read data" {
 
     var log = Log(TestStorage).init(addr, storage, heap_memory);
 
-    var read_buf = event.Buf.init(try allocator.alloc(u8, 128));
+    var read_buf = event.ReadBuf.init(try allocator.alloc(u8, 128));
     log.enqueue("I have known the arcane law");
     try std.testing.expectEqual(log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
@@ -422,6 +441,6 @@ test "enqueue, commit and read data" {
     try std.testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
-        actual.?.payload,
+        actual.payload,
     );
 }
