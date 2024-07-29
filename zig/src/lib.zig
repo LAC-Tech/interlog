@@ -247,12 +247,6 @@ const event = struct {
     pub const Event = struct {
         id: ID,
         payload: []const u8,
-
-        //pub fn storedSize(self: @This()) usize {
-        //    const result = @sizeOf(Header) + self.payload.len;
-        //    // While payload sizes are arbitrary, on disk we want 8 byte alignment
-        //    return (result + 7) & ~@as(u8, 7);
-        //}
     };
 
     fn read(bytes: []const u8, offset: StorageOffset) ?Event {
@@ -267,15 +261,15 @@ const event = struct {
     // TODO: this should be the iterator for Buf I think
     const Iterator = struct {
         bytes: []const u8,
-        index: usize,
+        index: StorageOffset,
 
         pub fn init(bytes: []const u8) @This() {
-            return .{ .bytes = bytes, .index = 0 };
+            return .{ .bytes = bytes, .index = StorageOffset.zero };
         }
 
         pub fn next(self: *@This()) ?Event {
             const result = read(self.bytes, self.index) orelse return null;
-            self.index += result.storedSize();
+            self.index = self.index.next(&result);
             return result;
         }
     };
@@ -312,31 +306,31 @@ const event = struct {
     };
 };
 
-//test "let's write some bytes" {
-//    const bytes_buf = try std.testing.allocator.alloc(u8, 63);
-//    defer std.testing.allocator.free(bytes_buf);
-//    var buf = event.Buf.init(bytes_buf);
-//
-//    const seed: u64 = std.crypto.random.int(u64);
-//    var rng = std.Random.Pcg.init(seed);
-//    const id = Addr.init(std.Random.Pcg, &rng);
-//
-//    const evt = event.Event{
-//        .id = .{ .origin = id, .logical_pos = 0 },
-//        .payload = "j;fkls",
-//    };
-//
-//    buf.append(&evt);
-//    var it = event.Iterator.init(buf.asSlice());
-//
-//    while (it.next()) |e| {
-//        try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
-//    }
-//
-//    const actual = buf.read(0);
-//
-//    try std.testing.expectEqualDeep(actual, evt);
-//}
+test "let's write some bytes" {
+    const bytes_buf = try std.testing.allocator.alloc(u8, 63);
+    defer std.testing.allocator.free(bytes_buf);
+    var buf = event.Buf.init(bytes_buf);
+
+    const seed: u64 = std.crypto.random.int(u64);
+    var rng = std.Random.Pcg.init(seed);
+    const id = Addr.init(std.Random.Pcg, &rng);
+
+    const evt = event.Event{
+        .id = .{ .origin = id, .logical_pos = 0 },
+        .payload = "j;fkls",
+    };
+
+    buf.append(&evt);
+    var it = event.Iterator.init(buf.asSlice());
+
+    while (it.next()) |e| {
+        try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
+    }
+
+    const actual = buf.read(StorageOffset.zero);
+
+    try std.testing.expectEqualDeep(actual, evt);
+}
 
 pub const Addr = extern struct {
     word_a: u64,
