@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const Log = lib.Log;
 const Addr = lib.Addr;
 const FixVec = lib.FixVec;
+const StorageOffset = lib.StorageOffset;
 
 const Range = struct {
     at_least: u64,
@@ -89,14 +90,17 @@ pub const Env = struct {
         const storage = Storage.init();
         const buffers = .{
             .enqueued = .{
-                .offsets = try allocator.alloc(usize, config.msg_len.at_most),
+                .offsets = try allocator.alloc(
+                    StorageOffset,
+                    config.msg_len.at_most,
+                ),
                 .events = try allocator.alloc(
                     u8,
                     config.msg_len.at_most * config.payload_size.at_most,
                 ),
             },
             .committed = .{
-                .offsets = try allocator.alloc(usize, 1_000_000),
+                .offsets = try allocator.alloc(StorageOffset, 1_000_000),
             },
         };
         return .{
