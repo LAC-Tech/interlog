@@ -40,12 +40,9 @@ pub fn Log(comptime Storage: type) type {
 
         /// Returns number of events committed
         pub fn commit(self: *@This()) usize {
-            const result = self.enqueued.offsets.eventCount();
-            const size_in_bytes = self.enqueued.offsets.sizeSpanned();
-            self.committed.append(
-                self.enqueued.offsets.tail(),
-                self.enqueued.events.items[0..size_in_bytes],
-            );
+            const txn = self.enqueued.txn();
+            const result = txn.offsets.len;
+            self.committed.append(txn.offsets, txn.events);
             self.enqueued.reset();
             return result;
         }
@@ -84,22 +81,26 @@ const HeapMemory = struct {
 };
 
 const Enqueued = struct {
+    const Transaction = struct {
+        offsets: []const StorageOffset,
+        events: []const u8,
+    };
     offsets: StorageOffsets,
     events: ByteVec,
-    pub fn init(buffers: HeapMemory.Enqueued) @This() {
+    fn init(buffers: HeapMemory.Enqueued) @This() {
         return .{
             .offsets = StorageOffsets.init(buffers.offsets, 0),
             .events = ByteVec.initBuffer(buffers.events),
         };
     }
 
-    pub fn append(self: *@This(), e: *const Event) void {
+    fn append(self: *@This(), e: *const Event) void {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
         Event.append(&self.events, e);
     }
 
-    pub fn reset(self: *@This()) void {
+    fn reset(self: *@This()) void {
         // By definiton, the last committed event is the last thing in the
         // eqneued buffer before reseting, which happens after committing
         const last_committed_event = self.offsets.last();
@@ -107,8 +108,18 @@ const Enqueued = struct {
         self.events.clearRetainingCapacity();
     }
 
-    pub fn count(self: *@This()) usize {
+    fn count(self: *@This()) usize {
         return self.offsets.eventCount();
+    }
+
+    // Returns all relevant data to be committed
+    fn txn(self: @This()) Transaction {
+        const size_in_bytes = self.offsets.sizeSpanned();
+
+        return .{
+            .offsets = self.offsets.tail(),
+            .events = self.events.items[0..size_in_bytes],
+        };
     }
 };
 
