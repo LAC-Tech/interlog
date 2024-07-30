@@ -79,7 +79,7 @@ struct Env {
 
 impl Env {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
-		let config = Config {
+		let config = ExtAllocMem {
 			txn_size: storage::Qty(
 				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max(),
 			),
