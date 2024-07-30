@@ -16,28 +16,26 @@ pub type Res = Result<(), mem::Overrun>;
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
  * This is so it could be used in a #[no_std] context
  */
-#[derive(Clone)]
-pub struct Vec<T> {
-	items: alloc::boxed::Box<[T]>,
+pub struct Vec<'a, T> {
+	items: &'a mut [T],
 	len: usize,
 }
 
-impl<T: core::cmp::PartialEq> PartialEq for Vec<T> {
+impl<'a, T: core::cmp::PartialEq> PartialEq for Vec<'a, T> {
 	fn eq(&self, other: &Self) -> bool {
 		self.items[..self.len] == other.items[..other.len]
 	}
 }
 
-impl<T: fmt::Debug> fmt::Debug for Vec<T> {
+impl<'a, T: fmt::Debug> fmt::Debug for Vec<'a, T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_list().entries(self.items.iter().take(self.len)).finish()
 	}
 }
 
-impl<T: core::default::Default + Clone> Vec<T> {
-	pub fn new(capacity: usize) -> Vec<T> {
-		let elems = vec![T::default(); capacity].into_boxed_slice();
-		Self { items: elems, len: 0 }
+impl<'a, T: core::default::Default + Clone> Vec<'a, T> {
+	pub fn new(items: &'a mut [T]) -> Vec<T> {
+		Self { items, len: 0 }
 	}
 
 	/// TODO is this "unsafe"? it doesn't intialize new areas of memory
@@ -62,21 +60,10 @@ impl<T: core::default::Default + Clone> Vec<T> {
 	}
 }
 
-impl<T> Vec<T> {
+impl<'a, T> Vec<'a, T> {
 	#[inline]
 	pub fn capacity(&self) -> usize {
 		self.items.len()
-	}
-
-	pub fn from_fn<F>(capacity: usize, cb: F) -> Self
-	where
-		F: FnMut(usize) -> T,
-	{
-		let elems = (0..capacity)
-			.map(cb)
-			.collect::<alloc::vec::Vec<_>>()
-			.into_boxed_slice();
-		Self { items: elems, len: 0 }
 	}
 
 	#[inline]
@@ -139,7 +126,7 @@ impl<T> Vec<T> {
 	}
 }
 
-impl<T: Copy> Vec<T> {
+impl<'a, T: Copy> Vec<'a, T> {
 	pub fn extend_from_slice(&mut self, other: &[T]) -> Res {
 		let new_len = self.len + other.len();
 		self.check_capacity(new_len)?;
@@ -149,7 +136,7 @@ impl<T: Copy> Vec<T> {
 	}
 }
 
-impl<T> ops::Deref for Vec<T> {
+impl<'a, T> ops::Deref for Vec<'a, T> {
 	type Target = [T];
 
 	fn deref(&self) -> &Self::Target {
@@ -157,19 +144,19 @@ impl<T> ops::Deref for Vec<T> {
 	}
 }
 
-impl<T> ops::DerefMut for Vec<T> {
+impl<'a, T> ops::DerefMut for Vec<'a, T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.items[..self.len]
 	}
 }
 
-impl AsRef<[u8]> for Vec<u8> {
+impl AsRef<[u8]> for Vec<'_, u8> {
 	fn as_ref(&self) -> &[u8] {
 		&self.items[..self.len]
 	}
 }
 
-impl<'a, T> IntoIterator for &'a Vec<T> {
+impl<'a, T> IntoIterator for &'a Vec<'a, T> {
 	type Item = &'a T;
 	type IntoIter = core::slice::Iter<'a, T>;
 
@@ -178,7 +165,7 @@ impl<'a, T> IntoIterator for &'a Vec<T> {
 	}
 }
 
-impl<'a, T> IntoIterator for &'a mut Vec<T> {
+impl<'a, T> IntoIterator for &'a mut Vec<'a, T> {
 	type Item = &'a T;
 	type IntoIter = core::slice::Iter<'a, T>;
 
@@ -187,7 +174,7 @@ impl<'a, T> IntoIterator for &'a mut Vec<T> {
 	}
 }
 
-impl<T, R> core::ops::Index<R> for Vec<T>
+impl<'a, T, R> core::ops::Index<R> for Vec<'a, T>
 where
 	R: core::ops::RangeBounds<usize>,
 {
@@ -198,7 +185,7 @@ where
 	}
 }
 
-impl<T, R> core::ops::IndexMut<R> for Vec<T>
+impl<'a, T, R> core::ops::IndexMut<R> for Vec<'a, T>
 where
 	R: core::ops::RangeBounds<usize>,
 {
@@ -225,7 +212,8 @@ mod test {
 
 	#[test]
 	fn fixvec_stuff() {
-		let mut fv = Vec::<u64>::new(8);
+		let mut buf = alloc::boxed::Box::new([0u64; 8]);
+		let mut fv = Vec::<u64>::new(buf.as_mut_slice());
 		assert_eq!(fv.len(), 0);
 
 		fv.push(42).unwrap();

@@ -7,16 +7,18 @@ use crate::mem;
 use crate::pervasives::*;
 use crate::storage;
 
-pub struct Log<AOS: storage::AppendOnly> {
+use ext_alloc_mem::ExtAllocMem;
+
+pub struct Log<'a, AOS: storage::AppendOnly> {
 	pub addr: Addr,
-	enqueued: Enqueued,
-	committed: Committed<AOS>,
+	enqueued: Enqueued<'a>,
+	committed: Committed<'a, AOS>,
 }
 
-impl<AOS: storage::AppendOnly> Log<AOS> {
-	pub fn new(addr: Addr, config: Config, aos: AOS) -> Self {
-		let enqueued = Enqueued::new(config.max_txn_events, config.txn_size);
-		let committed = Committed::new(config.max_events, aos);
+impl<'a, AOS: storage::AppendOnly> Log<'a, AOS> {
+	pub fn new(addr: Addr, aos: AOS, bufs: ExtAllocMem<'a>) -> Self {
+		let enqueued = Enqueued::new(bufs.enqueued);
+		let committed = Committed::new(bufs.committed, aos);
 		Self { addr, enqueued, committed }
 	}
 
@@ -77,18 +79,18 @@ impl<AOS: storage::AppendOnly> Log<AOS> {
 	}
 }
 
-struct Enqueued {
-	offsets: Vec<storage::Qty>,
+struct Enqueued<'a> {
+	offsets: Vec<'a, storage::Qty>,
 	next_committed_offset: storage::Qty,
-	events: event::Buf,
+	events: event::Buf<'a>,
 }
 
-impl Enqueued {
-	fn new(max_txn_events: LogicalQty, txn_size: storage::Qty) -> Self {
+impl<'a> Enqueued<'a> {
+	fn new(bufs: ext_alloc_mem::Enqueued<'a>) -> Self {
 		Self {
-			offsets: Vec::new(max_txn_events.0),
+			offsets: Vec::new(bufs.offsets),
 			next_committed_offset: storage::Qty(0),
-			events: event::Buf::new(txn_size),
+			events: event::Buf::new(bufs.events),
 		}
 	}
 
@@ -113,16 +115,16 @@ impl Enqueued {
 	}
 }
 
-struct Committed<AOS: storage::AppendOnly> {
+struct Committed<'a, AOS: storage::AppendOnly> {
 	/// This is always one greater than the number of events stored; the last
 	/// element is the next offset of the next event appended
-	offsets: Vec<storage::Qty>,
+	offsets: Vec<'a, storage::Qty>,
 	events: AOS,
 }
 
-impl<AOS: storage::AppendOnly> Committed<AOS> {
-	fn new(max_events: LogicalQty, aos: AOS) -> Self {
-		let mut offsets = Vec::new(max_events.0);
+impl<'a, AOS: storage::AppendOnly> Committed<'a, AOS> {
+	fn new(bufs: ext_alloc_mem::Committed<'a>, aos: AOS) -> Self {
+		let mut offsets = Vec::new(bufs.offsets);
 		offsets
 			.push(storage::Qty(0))
 			.expect("max events should be more than 0");
@@ -175,10 +177,21 @@ impl<AOS: storage::AppendOnly> Committed<AOS> {
 	}
 }
 
-pub struct Config {
-	pub txn_size: storage::Qty,
-	pub max_txn_events: LogicalQty,
-	pub max_events: LogicalQty,
+mod ext_alloc_mem {
+	use crate::storage;
+
+	pub struct Committed<'a> {
+		pub offsets: &'a mut [storage::Qty],
+	}
+	pub struct Enqueued<'a> {
+		pub offsets: &'a mut [storage::Qty],
+		pub events: &'a mut [u8],
+	}
+
+	pub struct ExtAllocMem<'a> {
+		pub committed: Committed<'a>,
+		pub enqueued: Enqueued<'a>,
+	}
 }
 
 #[derive(Debug)]
@@ -223,11 +236,11 @@ mod tests {
 	use pretty_assertions::assert_eq;
 	use rand::prelude::*;
 
-	struct AppendOnlyMemory(fixcap::Vec<u8>);
+	struct AppendOnlyMemory(fixcap::Vec<'static, u8>);
 
 	impl AppendOnlyMemory {
-		fn new(capacity: usize) -> Self {
-			Self(fixcap::Vec::new(capacity))
+		fn new(slice: &'static mut [u8]) -> Self {
+			Self(fixcap::Vec::new(slice))
 		}
 	}
 
@@ -251,17 +264,25 @@ mod tests {
 	#[test]
 	fn enqueue_commit_and_read() {
 		let mut rng = SmallRng::from_entropy();
+		let addr = Addr::new(&mut rng);
+		let mut storage_slice = Box::new([0u8; 4096]);
+		let storage = AppendOnlyMemory::new(storage_slice.as_mut_slice());
 		let mut log = Log::new(
-			Addr::new(&mut rng),
-			Config {
-				max_events: LogicalQty(3),
-				txn_size: storage::Qty(4096),
-				max_txn_events: LogicalQty(3),
+			addr,
+			storage,
+			ExtAllocMem {
+				committed: ext_alloc_mem::Committed {
+					offsets: Box::new([storage::Qty(0); 3]).as_mut_slice(),
+				},
+				enqueued: ext_alloc_mem::Enqueued {
+					events: Box::new([0u8; 4096]).as_mut_slice(),
+					offsets: Box::new([]).as_mut_slice(),
+				},
 			},
-			AppendOnlyMemory::new(4096),
 		);
 
-		let mut read_buf = event::Buf::new(storage::Qty(128));
+		let mut read_buf_bytes = Box::new([0u8; 128]);
+		let mut read_buf = event::Buf::new(read_buf_bytes.as_mut_slice());
 
 		log.enqueue(b"I have known the arcane law").unwrap();
 		assert_eq!(log.commit(), Ok(1));

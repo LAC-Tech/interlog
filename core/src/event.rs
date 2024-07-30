@@ -126,11 +126,11 @@ impl<'a> Iterator for Iter<'a> {
 	}
 }
 
-pub struct Buf(Vec<mem::Word>);
+pub struct Buf<'a>(Vec<'a, u8>);
 
-impl Buf {
-	pub fn new(capacity: storage::Qty) -> Self {
-		Self(Vec::new(capacity.0))
+impl<'a> Buf<'a> {
+	pub fn new(slice: &'a mut [u8]) -> Self {
+		Self(Vec::new(slice))
 	}
 
 	pub fn push(&mut self, event: &Event) -> fixcap::Res {
@@ -152,13 +152,9 @@ impl Buf {
 	pub fn as_bytes(&mut self) -> &[u8] {
 		&self.0
 	}
-
-	pub fn as_mut_vec(&mut self) -> &mut fixcap::Vec<u8> {
-		&mut self.0
-	}
 }
 
-impl<'a> IntoIterator for &'a Buf {
+impl<'a> IntoIterator for &'a Buf<'a> {
 	type Item = Event<'a>;
 	type IntoIter = Iter<'a>;
 
@@ -191,7 +187,8 @@ mod tests {
 		) {
 			// Setup
 			let mut rng = rand::thread_rng();
-			let mut buf = Vec::new(256);
+			let mut buf_mem = alloc::boxed::Box::new([0u8; 256]);
+			let mut buf = Vec::new(buf_mem.as_mut_slice());
 			let origin = Addr::new(&mut rng);
 			let id = ID::new(origin, LogicalQty(0));
 			let event = Event {id, payload: &e};

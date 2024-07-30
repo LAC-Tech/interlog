@@ -17,7 +17,6 @@
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever) server is out of scope.
 
 #![cfg_attr(not(test), no_std)]
-#[macro_use]
 extern crate alloc;
 
 #[cfg(not(target_pointer_width = "64"))]
