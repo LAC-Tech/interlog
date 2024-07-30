@@ -68,7 +68,7 @@ pub fn Log(comptime Storage: type) type {
 // interrupt; result = writes with no checks / error checks i.e. no stalls for
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
-const HeapMemory = struct {
+pub const HeapMemory = struct {
     const Committed = struct {
         offsets: []StorageOffset,
     };
@@ -177,58 +177,58 @@ const StorageOffsets = struct {
     const Vec = std.ArrayListUnmanaged(StorageOffset);
     // Vec with some invariants:
     // - always at least one element: next offset, for calculating size
-    offsets: Vec,
+    vec: Vec,
     fn init(buf: []StorageOffset, next_committed_offset: usize) @This() {
-        var offsets = Vec.initBuffer(buf);
-        offsets.appendAssumeCapacity(StorageOffset.init(next_committed_offset));
-        return .{ .offsets = offsets };
+        var vec = Vec.initBuffer(buf);
+        vec.appendAssumeCapacity(StorageOffset.init(next_committed_offset));
+        return .{ .vec = vec };
     }
 
     fn reset(self: *@This(), next_committed_offset: StorageOffset) void {
-        self.offsets.clearRetainingCapacity();
-        self.offsets.appendAssumeCapacity(next_committed_offset);
+        self.vec.clearRetainingCapacity();
+        self.vec.appendAssumeCapacity(next_committed_offset);
     }
 
     fn tail(self: @This()) []StorageOffset {
-        return self.offsets.items[1..];
+        return self.vec.items[1..];
     }
 
     fn asSlice(self: @This()) []StorageOffset {
-        return self.offsets.items;
+        return self.vec.items;
     }
 
     fn eventCount(self: @This()) usize {
-        return self.offsets.items.len - 1;
+        return self.vec.items.len - 1;
     }
 
     fn last(self: @This()) StorageOffset {
-        return self.offsets.getLast();
+        return self.vec.getLast();
     }
 
     fn append(self: *@This(), offset: StorageOffset) void {
         assert(offset.n > self.last().n);
-        self.offsets.appendAssumeCapacity(offset);
+        self.vec.appendAssumeCapacity(offset);
     }
 
     fn appendSlice(self: *@This(), slice: []const StorageOffset) void {
         for (slice) |offset| {
-            self.offsets.appendAssumeCapacity(offset);
+            self.vec.appendAssumeCapacity(offset);
         }
     }
 
     fn get(self: @This(), index: usize) usize {
-        return self.offsets.asSlice()[index];
+        return self.vec.asSlice()[index];
     }
 
     fn sizeSpanned(self: @This()) usize {
-        return self.offsets.getLast().n - self.offsets.items[0].n;
+        return self.vec.getLast().n - self.vec.items[0].n;
     }
 };
 
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 pub const StorageOffset = packed struct(usize) {
-    const zero = @This().init(0);
+    pub const zero = @This().init(0);
 
     n: usize,
     fn init(n: usize) @This() {
@@ -284,7 +284,7 @@ const Event = struct {
     }
 };
 
-const ReadBuf = struct {
+pub const ReadBuf = struct {
     const Iterator = struct {
         read_buf: *const ReadBuf,
         offset_index: StorageOffset,
@@ -310,7 +310,7 @@ const ReadBuf = struct {
     bytes: ByteVec,
     n_events: usize,
 
-    fn init(buf: []u8) @This() {
+    pub fn init(buf: []u8) @This() {
         return .{ .bytes = ByteVec.initBuffer(buf), .n_events = 0 };
     }
 
@@ -319,7 +319,7 @@ const ReadBuf = struct {
         self.n_events += 1;
     }
 
-    fn read(self: @This(), offset: StorageOffset) Event {
+    pub fn read(self: @This(), offset: StorageOffset) Event {
         return Event.read(self.bytes.items, offset);
     }
 
@@ -335,7 +335,7 @@ const ReadBuf = struct {
         return self.bytes.addManyAsSliceAssumeCapacity(new_len);
     }
 
-    fn iter(self: *const @This()) Iterator {
+    pub fn iter(self: *const @This()) Iterator {
         return Iterator.init(self);
     }
 };
@@ -403,7 +403,7 @@ const Msg = struct {
     origin: Addr,
 };
 
-const TestStorage = struct {
+pub const TestStorage = struct {
     bytes: ByteVec,
     pub fn init(buf: []u8) @This() {
         return .{ .bytes = ByteVec.initBuffer(buf) };
