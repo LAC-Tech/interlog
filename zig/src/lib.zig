@@ -28,12 +28,12 @@ pub fn Log(comptime Storage: type) type {
         }
 
         pub fn enqueue(self: *@This(), payload: []const u8) void {
-            const id = event.ID{
+            const id = Event.ID{
                 .origin = self.addr,
                 .logical_pos = self.enqueued.count() + self.committed.count(),
             };
 
-            const e = event.Event{ .id = id, .payload = payload };
+            const e = Event{ .id = id, .payload = payload };
 
             self.enqueued.append(&e);
         }
@@ -58,7 +58,7 @@ pub fn Log(comptime Storage: type) type {
         pub fn readFromEnd(
             self: *@This(),
             n: usize,
-            buf: *event.ReadBuf,
+            buf: *ReadBuf,
         ) err.ReadBuf!void {
             try self.committed.readFromEnd(n, buf);
         }
@@ -93,10 +93,10 @@ const Enqueued = struct {
         };
     }
 
-    pub fn append(self: *@This(), e: *const event.Event) void {
+    pub fn append(self: *@This(), e: *const Event) void {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
-        event.append(&self.events, e);
+        Event.append(&self.events, e);
     }
 
     pub fn reset(self: *@This()) void {
@@ -149,15 +149,14 @@ fn Committed(comptime Storage: type) type {
         fn readFromEnd(
             self: @This(),
             n: usize,
-            buf: *event.ReadBuf,
+            buf: *ReadBuf,
         ) err.ReadBuf!void {
             buf.clear();
             var offsets = self.offsets.asSlice();
             offsets = offsets[offsets.len - 1 - n ..];
 
             const size = offsets[offsets.len - 1].n - offsets[0].n;
-            buf.resize(size);
-            try self.events.read(buf.bytes.items, offsets[0].n);
+            try self.events.read(buf.resize(size, n), offsets[0].n);
         }
     };
 }
@@ -227,15 +226,15 @@ pub const StorageOffset = packed struct(usize) {
         return .{ .n = n };
     }
 
-    fn next(self: @This(), e: *const event.Event) @This() {
-        const result = @sizeOf(event.Header) + e.payload.len;
+    fn next(self: @This(), e: *const Event) @This() {
+        const result = @sizeOf(Event.Header) + e.payload.len;
         // While payload sizes are arbitrary, on disk we want 8 byte alignment
         const stored_size = (result + 7) & ~@as(u8, 7);
         return @This().init(self.n + stored_size);
     }
 };
 
-const event = struct {
+const Event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: usize };
     pub const Header = extern struct { payload_len: usize, id: ID };
 
@@ -250,21 +249,10 @@ const event = struct {
         }
     }
 
-    pub const Event = struct {
-        id: ID,
-        payload: []const u8,
-    };
+    id: ID,
+    payload: []const u8,
 
-    fn read(bytes: []const u8, offset: StorageOffset) Event {
-        const header_end = offset.n + @sizeOf(Header);
-        const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
-        const payload_end = header_end + header.payload_len;
-        const payload = bytes[header_end..payload_end];
-
-        return .{ .id = header.id, .payload = payload };
-    }
-
-    fn append(byte_vec: *ByteVec, e: *const event.Event) void {
+    fn append(byte_vec: *ByteVec, e: *const Event) void {
         const header: Header = .{ .payload_len = e.payload.len, .id = e.id };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
         byte_vec.appendSliceAssumeCapacity(header_bytes);
@@ -275,13 +263,23 @@ const event = struct {
         byte_vec.items.len += (old_len + 7) & ~@as(u8, 7);
     }
 
-    // TODO: this should be the iterator for Buf I think
+    fn read(bytes: []const u8, offset: StorageOffset) Event {
+        const header_end = offset.n + @sizeOf(Header);
+        const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
+        const payload_end = header_end + header.payload_len;
+        const payload = bytes[header_end..payload_end];
+
+        return .{ .id = header.id, .payload = payload };
+    }
+};
+
+const ReadBuf = struct {
     const Iterator = struct {
-        read_buf: *ReadBuf,
+        read_buf: *const ReadBuf,
         offset_index: StorageOffset,
         event_index: usize,
 
-        pub fn init(read_buf: *ReadBuf) @This() {
+        fn init(read_buf: *const ReadBuf) @This() {
             return .{
                 .read_buf = read_buf,
                 .offset_index = StorageOffset.zero,
@@ -298,49 +296,55 @@ const event = struct {
         }
     };
 
-    const ReadBuf = struct {
-        bytes: ByteVec,
-        n_events: usize,
+    bytes: ByteVec,
+    n_events: usize,
 
-        fn init(buf: []u8) @This() {
-            return .{ .bytes = ByteVec.initBuffer(buf), .n_events = 0 };
-        }
+    fn init(buf: []u8) @This() {
+        return .{ .bytes = ByteVec.initBuffer(buf), .n_events = 0 };
+    }
 
-        fn append(self: *@This(), e: *const event.Event) void {
-            event.append(&self.bytes, e);
-            self.n_events += 1;
-        }
+    fn append(self: *@This(), e: *const Event) void {
+        Event.append(&self.bytes, e);
+        self.n_events += 1;
+    }
 
-        fn read(self: @This(), offset: StorageOffset) Event {
-            return event.read(self.bytes.items, offset);
-        }
+    fn read(self: @This(), offset: StorageOffset) Event {
+        return Event.read(self.bytes.items, offset);
+    }
 
-        fn clear(self: *@This()) void {
-            self.bytes.clearRetainingCapacity();
-        }
+    fn clear(self: *@This()) void {
+        self.bytes.clearRetainingCapacity();
+        self.n_events = 0;
+    }
 
-        fn resize(self: *@This(), new_len: usize) void {
-            self.bytes.items.len = new_len;
-        }
-    };
+    /// This is meant for pwrite type interfaces
+    /// new area must be written to immediately.
+    fn resize(self: *@This(), new_len: usize, num_new_events: usize) []u8 {
+        self.n_events += num_new_events;
+        return self.bytes.addManyAsSliceAssumeCapacity(new_len);
+    }
+
+    fn iter(self: *const @This()) Iterator {
+        return Iterator.init(self);
+    }
 };
 
 test "let's write some bytes" {
     const bytes_buf = try std.testing.allocator.alloc(u8, 127);
     defer std.testing.allocator.free(bytes_buf);
-    var buf = event.ReadBuf.init(bytes_buf);
+    var buf = ReadBuf.init(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
     const id = Addr.init(std.Random.Pcg, &rng);
 
-    const evt = event.Event{
+    const evt = Event{
         .id = .{ .origin = id, .logical_pos = 0 },
         .payload = "j;fkls",
     };
 
     buf.append(&evt);
-    var it = event.Iterator.init(&buf);
+    var it = buf.iter();
 
     while (it.next()) |e| {
         try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
@@ -382,7 +386,7 @@ comptime {
 }
 
 const Msg = struct {
-    const Inner = union(enum) { sync_res: []event.Event };
+    const Inner = union(enum) { sync_res: []Event };
 
     inner: Inner,
     origin: Addr,
@@ -431,16 +435,41 @@ test "enqueue, commit and read data" {
 
     var log = Log(TestStorage).init(addr, storage, heap_memory);
 
-    var read_buf = event.ReadBuf.init(try allocator.alloc(u8, 128));
+    var read_buf = ReadBuf.init(try allocator.alloc(u8, 128));
     log.enqueue("I have known the arcane law");
     try std.testing.expectEqual(log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
+    try std.testing.expectEqualSlices(
+        u8,
+        "I have known the arcane law",
+        read_buf.read(StorageOffset.zero).payload,
+    );
 
-    const actual = read_buf.read(StorageOffset.zero);
+    log.enqueue("On strange roads, such visions met");
+    try std.testing.expectEqual(log.commit(), 1);
+    try log.readFromEnd(1, &read_buf);
+    var it = read_buf.iter();
+    const next = it.next();
+    const actual = next.?.payload;
+    try std.testing.expectEqualSlices(
+        u8,
+        "On strange roads, such visions met",
+        //read_buf.read(StorageOffset.zero).payload,
+        actual,
+    );
+
+    try log.readFromEnd(2, &read_buf);
+    it = read_buf.iter();
+
+    try std.testing.expectEqualSlices(
+        u8,
+        "On strange roads, such visions met",
+        it.next().?.payload,
+    );
 
     try std.testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
-        actual.payload,
+        it.next().?.payload,
     );
 }
