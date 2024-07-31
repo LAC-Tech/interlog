@@ -5,15 +5,18 @@ const mem = std.mem;
 const testing = std.testing;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const ByteVec = std.ArrayListUnmanaged(u8);
-const AcquaintanceVec = std.ArrayListUnmanaged(Addr);
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
+    return ArrayListUnmanaged(T).initBuffer(buf);
+}
 
 pub fn Log(comptime Storage: type) type {
     return struct {
         addr: Addr,
         enqueued: Enqueued,
         committed: Committed(Storage),
-        acquaintances: AcquaintanceVec,
+        acquaintances: ArrayListUnmanaged(Addr),
 
         pub fn init(
             addr: Addr,
@@ -27,7 +30,7 @@ pub fn Log(comptime Storage: type) type {
                     storage,
                     heap_memory.committed,
                 ),
-                .acquaintances = AcquaintanceVec.initBuffer(heap_memory.acquaintances),
+                .acquaintances = vecFromBuf(Addr, heap_memory.acquaintances),
             };
         }
 
@@ -91,12 +94,9 @@ const Enqueued = struct {
         events: []const u8,
     };
     offsets: StorageOffsets,
-    events: ByteVec,
+    events: ArrayListUnmanaged(u8),
     fn init(buffers: HeapMemory.Enqueued) @This() {
-        return .{
-            .offsets = StorageOffsets.init(buffers.offsets, 0),
-            .events = ByteVec.initBuffer(buffers.events),
-        };
+        return .{ .offsets = StorageOffsets.init(buffers.offsets, 0), .events = vecFromBuf(u8, buffers.events) };
     }
 
     /// Returns bytes enqueued
@@ -276,7 +276,10 @@ const Event = struct {
         return (unaligned_size + 7) & ~@as(u8, 7);
     }
 
-    fn appendWithLongHeaderTo(self: @This(), byte_vec: *ByteVec) void {
+    fn appendWithLongHeaderTo(
+        self: @This(),
+        byte_vec: *ArrayListUnmanaged(u8),
+    ) void {
         const header: LongHeader = .{
             .payload_len = self.payload.len,
             .id = self.id,
@@ -321,11 +324,11 @@ pub const ReadBuf = struct {
         }
     };
 
-    bytes: ByteVec,
+    bytes: ArrayListUnmanaged(u8),
     n_events: u64,
 
     pub fn init(buf: []u8) @This() {
-        return .{ .bytes = ByteVec.initBuffer(buf), .n_events = 0 };
+        return .{ .bytes = vecFromBuf(u8, buf), .n_events = 0 };
     }
 
     fn append(self: *@This(), e: *const Event) void {
@@ -418,9 +421,9 @@ const Msg = struct {
 };
 
 pub const TestStorage = struct {
-    bytes: ByteVec,
+    bytes: ArrayListUnmanaged(u8),
     pub fn init(buf: []u8) @This() {
-        return .{ .bytes = ByteVec.initBuffer(buf) };
+        return .{ .bytes = vecFromBuf(u8, buf) };
     }
 
     pub fn append(self: *@This(), data: []const u8) void {
