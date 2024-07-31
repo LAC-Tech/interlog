@@ -446,7 +446,7 @@ test "enqueue, commit and read data" {
 
     var log = Log(TestStorage).init(addr, storage, heap_memory);
 
-    var read_buf = ReadBuf.init(try allocator.alloc(u8, 128));
+    var read_buf = ReadBuf.init(try allocator.alloc(u8, 136));
     log.enqueue("I have known the arcane law");
     try std.testing.expectEqual(log.commit(), 1);
     try log.readFromEnd(1, &read_buf);
@@ -474,13 +474,13 @@ test "enqueue, commit and read data" {
 
     try std.testing.expectEqualSlices(
         u8,
-        "On strange roads, such visions met",
+        "I have known the arcane law",
         it.next().?.payload,
     );
 
     try std.testing.expectEqualSlices(
         u8,
-        "I have known the arcane law",
+        "On strange roads, such visions met",
         it.next().?.payload,
     );
 }
