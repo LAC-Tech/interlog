@@ -247,17 +247,20 @@ pub const StorageOffset = packed struct(usize) {
 
 const Event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: usize };
-    pub const Header = extern struct { payload_len: usize, id: ID };
+
+    // Stand alone, self describing header
+    pub const LongHeader = extern struct { payload_len: usize, id: ID };
+
+    // Header that points into other parts of the log
+    pub const ShortHeader = packed struct(u64) {
+        payload_len: u48,
+        origin_ptr: u16,
+    };
 
     comptime {
-        if (@sizeOf(ID) != 24) {
-            @compileLog("id size = ", @sizeOf(ID));
-            @compileError("event ID sized has changed");
-        }
-        if (@sizeOf(Header) != 32) {
-            @compileLog("header size = ", @sizeOf(Header));
-            @compileError("event header sized has changed");
-        }
+        assert(@sizeOf(ID) == 24);
+        assert(@sizeOf(LongHeader) == 32);
+        assert(@sizeOf(ShortHeader) == 8);
     }
 
     id: ID,
@@ -265,12 +268,12 @@ const Event = struct {
 
     /// 8 byte aligned size
     fn storedSize(self: @This()) usize {
-        const unaligned_size = @sizeOf(Header) + self.payload.len;
+        const unaligned_size = @sizeOf(LongHeader) + self.payload.len;
         return (unaligned_size + 7) & ~@as(u8, 7);
     }
 
     fn append(byte_vec: *ByteVec, e: *const Event) void {
-        const header: Header = .{ .payload_len = e.payload.len, .id = e.id };
+        const header: LongHeader = .{ .payload_len = e.payload.len, .id = e.id };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
         const old_len = byte_vec.items.len;
         byte_vec.appendSliceAssumeCapacity(header_bytes);
@@ -279,8 +282,8 @@ const Event = struct {
     }
 
     fn read(bytes: []const u8, offset: StorageOffset) Event {
-        const header_end = offset.n + @sizeOf(Header);
-        const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
+        const header_end = offset.n + @sizeOf(LongHeader);
+        const header = std.mem.bytesAsValue(LongHeader, bytes[offset.n..header_end]);
         const payload_end = header_end + header.payload_len;
         const payload = bytes[header_end..payload_end];
 
