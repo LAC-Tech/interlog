@@ -6,12 +6,14 @@ const testing = std.testing;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ByteVec = std.ArrayListUnmanaged(u8);
+const AcquaintanceVec = std.ArrayListUnmanaged(Addr);
 
 pub fn Log(comptime Storage: type) type {
     return struct {
         addr: Addr,
         enqueued: Enqueued,
         committed: Committed(Storage),
+        acquaintances: AcquaintanceVec,
 
         pub fn init(
             addr: Addr,
@@ -25,6 +27,7 @@ pub fn Log(comptime Storage: type) type {
                     storage,
                     heap_memory.committed,
                 ),
+                .acquaintances = AcquaintanceVec.initBuffer(heap_memory.acquaintances),
             };
         }
 
@@ -40,7 +43,7 @@ pub fn Log(comptime Storage: type) type {
         }
 
         /// Returns number of events committed
-        pub fn commit(self: *@This()) usize {
+        pub fn commit(self: *@This()) u64 {
             const txn = self.enqueued.txn();
             const result = txn.offsets.len;
             self.committed.append(txn.offsets, txn.events);
@@ -55,7 +58,7 @@ pub fn Log(comptime Storage: type) type {
         // Returns an error because too small a read buffer should not crash
         pub fn readFromEnd(
             self: *@This(),
-            n: usize,
+            n: u64,
             buf: *ReadBuf,
         ) err.ReadBuf!void {
             try self.committed.readFromEnd(n, buf);
@@ -79,6 +82,7 @@ pub const HeapMemory = struct {
     };
     committed: @This().Committed,
     enqueued: @This().Enqueued,
+    acquaintances: *[std.math.maxInt(u16)]Addr,
 };
 
 const Enqueued = struct {
@@ -96,10 +100,10 @@ const Enqueued = struct {
     }
 
     /// Returns bytes enqueued
-    fn append(self: *@This(), e: *const Event) usize {
+    fn append(self: *@This(), e: *const Event) u64 {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
-        Event.append(&self.events, e);
+        e.appendWithLongHeaderTo(&self.events);
         return self.events.items.len;
     }
 
@@ -111,7 +115,7 @@ const Enqueued = struct {
         self.events.clearRetainingCapacity();
     }
 
-    fn count(self: *@This()) usize {
+    fn count(self: *@This()) u64 {
         return self.offsets.eventCount();
     }
 
@@ -152,17 +156,17 @@ fn Committed(comptime Storage: type) type {
             self.events.append(events);
         }
 
-        fn lastOffset(self: *@This()) usize {
+        fn lastOffset(self: *@This()) u64 {
             return self.offsets.last();
         }
 
-        fn count(self: @This()) usize {
+        fn count(self: @This()) u64 {
             return self.offsets.eventCount();
         }
 
         fn readFromEnd(
             self: @This(),
-            n: usize,
+            n: u64,
             buf: *ReadBuf,
         ) err.ReadBuf!void {
             buf.clear();
@@ -181,7 +185,7 @@ const StorageOffsets = struct {
     // Vec with some invariants:
     // - always at least one element: next offset, for calculating size
     vec: Vec,
-    fn init(buf: []StorageOffset, next_committed_offset: usize) @This() {
+    fn init(buf: []StorageOffset, next_committed_offset: u64) @This() {
         var vec = Vec.initBuffer(buf);
         vec.appendAssumeCapacity(StorageOffset.init(next_committed_offset));
         return .{ .vec = vec };
@@ -200,7 +204,7 @@ const StorageOffsets = struct {
         return self.vec.items;
     }
 
-    fn eventCount(self: @This()) usize {
+    fn eventCount(self: @This()) u64 {
         return self.vec.items.len - 1;
     }
 
@@ -219,22 +223,22 @@ const StorageOffsets = struct {
         }
     }
 
-    fn get(self: @This(), index: usize) usize {
+    fn get(self: @This(), index: u64) u64 {
         return self.vec.asSlice()[index];
     }
 
-    fn sizeSpanned(self: @This()) usize {
+    fn sizeSpanned(self: @This()) u64 {
         return self.vec.getLast().n - self.vec.items[0].n;
     }
 };
 
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
-pub const StorageOffset = packed struct(usize) {
+pub const StorageOffset = packed struct(u64) {
     pub const zero = @This().init(0);
 
-    n: usize,
-    fn init(n: usize) @This() {
+    n: u64,
+    fn init(n: u64) @This() {
         // All storage offsets must be 8 byte aligned
         assert(n % 8 == 0);
         return .{ .n = n };
@@ -246,10 +250,10 @@ pub const StorageOffset = packed struct(usize) {
 };
 
 const Event = struct {
-    pub const ID = extern struct { origin: Addr, logical_pos: usize };
+    pub const ID = extern struct { origin: Addr, logical_pos: u64 };
 
     // Stand alone, self describing header
-    pub const LongHeader = extern struct { payload_len: usize, id: ID };
+    pub const LongHeader = extern struct { payload_len: u64, id: ID };
 
     // Header that points into other parts of the log
     pub const ShortHeader = packed struct(u64) {
@@ -267,18 +271,21 @@ const Event = struct {
     payload: []const u8,
 
     /// 8 byte aligned size
-    fn storedSize(self: @This()) usize {
+    fn storedSize(self: @This()) u64 {
         const unaligned_size = @sizeOf(LongHeader) + self.payload.len;
         return (unaligned_size + 7) & ~@as(u8, 7);
     }
 
-    fn append(byte_vec: *ByteVec, e: *const Event) void {
-        const header: LongHeader = .{ .payload_len = e.payload.len, .id = e.id };
+    fn appendWithLongHeaderTo(self: @This(), byte_vec: *ByteVec) void {
+        const header: LongHeader = .{
+            .payload_len = self.payload.len,
+            .id = self.id,
+        };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
         const old_len = byte_vec.items.len;
         byte_vec.appendSliceAssumeCapacity(header_bytes);
-        byte_vec.appendSliceAssumeCapacity(e.payload);
-        byte_vec.items.len = old_len + e.storedSize();
+        byte_vec.appendSliceAssumeCapacity(self.payload);
+        byte_vec.items.len = old_len + self.storedSize();
     }
 
     fn read(bytes: []const u8, offset: StorageOffset) Event {
@@ -295,7 +302,7 @@ pub const ReadBuf = struct {
     const Iterator = struct {
         read_buf: *const ReadBuf,
         offset_index: StorageOffset,
-        event_index: usize,
+        event_index: u64,
 
         fn init(read_buf: *const ReadBuf) @This() {
             return .{
@@ -315,14 +322,14 @@ pub const ReadBuf = struct {
     };
 
     bytes: ByteVec,
-    n_events: usize,
+    n_events: u64,
 
     pub fn init(buf: []u8) @This() {
         return .{ .bytes = ByteVec.initBuffer(buf), .n_events = 0 };
     }
 
     fn append(self: *@This(), e: *const Event) void {
-        Event.append(&self.bytes, e);
+        e.appendWithLongHeaderTo(&self.bytes);
         self.n_events += 1;
     }
 
@@ -337,7 +344,7 @@ pub const ReadBuf = struct {
 
     /// This is meant for pwrite type interfaces
     /// new area must be written to immediately.
-    fn resize(self: *@This(), new_len: usize, num_new_events: usize) []u8 {
+    fn resize(self: *@This(), new_len: u64, num_new_events: u64) []u8 {
         self.n_events += num_new_events;
         return self.bytes.addManyAsSliceAssumeCapacity(new_len);
     }
@@ -423,7 +430,7 @@ pub const TestStorage = struct {
     pub fn read(
         self: @This(),
         dest: []u8,
-        offset: usize,
+        offset: u64,
     ) err.ReadBuf!void {
         // TODO: bounds check
         const requested = self.bytes.items[offset .. offset + dest.len];
@@ -449,6 +456,7 @@ test "enqueue, commit and read data" {
         .committed = .{
             .offsets = try allocator.alloc(StorageOffset, 5),
         },
+        .acquaintances = try allocator.create([std.math.maxInt(u16)]Addr),
     };
 
     var log = Log(TestStorage).init(addr, storage, heap_memory);

@@ -102,6 +102,7 @@ pub const Env = struct {
             .committed = .{
                 .offsets = try allocator.alloc(StorageOffset, 1_000_000),
             },
+            .acquaintances = try allocator.create([std.math.maxInt(u16)]Addr),
         };
         return .{
             .log = Log(Storage).init(
