@@ -241,10 +241,7 @@ pub const StorageOffset = packed struct(usize) {
     }
 
     fn next(self: @This(), e: *const Event) @This() {
-        const result = @sizeOf(Event.Header) + e.payload.len;
-        // While payload sizes are arbitrary, on disk we want 8 byte alignment
-        const stored_size = (result + 7) & ~@as(u8, 7);
-        return @This().init(self.n + stored_size);
+        return @This().init(self.n + e.storedSize());
     }
 };
 
@@ -266,6 +263,7 @@ const Event = struct {
     id: ID,
     payload: []const u8,
 
+    /// 8 byte aligned size
     fn storedSize(self: @This()) usize {
         const unaligned_size = @sizeOf(Header) + self.payload.len;
         return (unaligned_size + 7) & ~@as(u8, 7);
