@@ -499,4 +499,19 @@ test "enqueue, commit and read data" {
         log.enqueue("For dangers and obstacles of this world"),
     );
     try testing.expectEqual(log.commit(), 2);
+
+    try log.readFromEnd(2, &read_buf);
+    it = read_buf.iter();
+
+    try testing.expectEqualSlices(
+        u8,
+        "That I have no fear, nor concern",
+        it.next().?.payload,
+    );
+
+    try testing.expectEqualSlices(
+        u8,
+        "For dangers and obstacles of this world",
+        it.next().?.payload,
+    );
 }
