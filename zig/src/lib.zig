@@ -2,6 +2,7 @@ const std = @import("std");
 const err = @import("./err.zig");
 
 const mem = std.mem;
+const testing = std.testing;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ByteVec = std.ArrayListUnmanaged(u8);
@@ -27,15 +28,15 @@ pub fn Log(comptime Storage: type) type {
             };
         }
 
-        pub fn enqueue(self: *@This(), payload: []const u8) void {
+        /// Returns bytes enqueued
+        pub fn enqueue(self: *@This(), payload: []const u8) u64 {
             const id = Event.ID{
                 .origin = self.addr,
                 .logical_pos = self.enqueued.count() + self.committed.count(),
             };
 
             const e = Event{ .id = id, .payload = payload };
-
-            self.enqueued.append(&e);
+            return self.enqueued.append(&e);
         }
 
         /// Returns number of events committed
@@ -94,10 +95,12 @@ const Enqueued = struct {
         };
     }
 
-    fn append(self: *@This(), e: *const Event) void {
+    /// Returns bytes enqueued
+    fn append(self: *@This(), e: *const Event) usize {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
         Event.append(&self.events, e);
+        return self.events.items.len;
     }
 
     fn reset(self: *@This()) void {
@@ -112,7 +115,7 @@ const Enqueued = struct {
         return self.offsets.eventCount();
     }
 
-    // Returns all relevant data to be committed
+    /// Returns all relevant data to be committed
     fn txn(self: @This()) Transaction {
         const size_in_bytes = self.offsets.sizeSpanned();
 
@@ -263,15 +266,18 @@ const Event = struct {
     id: ID,
     payload: []const u8,
 
+    fn storedSize(self: @This()) usize {
+        const unaligned_size = @sizeOf(Header) + self.payload.len;
+        return (unaligned_size + 7) & ~@as(u8, 7);
+    }
+
     fn append(byte_vec: *ByteVec, e: *const Event) void {
         const header: Header = .{ .payload_len = e.payload.len, .id = e.id };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
+        const old_len = byte_vec.items.len;
         byte_vec.appendSliceAssumeCapacity(header_bytes);
         byte_vec.appendSliceAssumeCapacity(e.payload);
-
-        const old_len = byte_vec.items.len;
-
-        byte_vec.items.len += (old_len + 7) & ~@as(u8, 7);
+        byte_vec.items.len = old_len + e.storedSize();
     }
 
     fn read(bytes: []const u8, offset: StorageOffset) Event {
@@ -433,54 +439,66 @@ test "enqueue, commit and read data" {
     const allocator = arena.allocator();
 
     const addr = Addr.init(std.Random.Pcg, &rng);
-    const storage = TestStorage.init(try allocator.alloc(u8, 4096));
-    const heap_memory = HeapMemory{
+    const storage = TestStorage.init(try allocator.alloc(u8, 272));
+    const heap_memory = .{
         .enqueued = .{
-            .events = try allocator.alloc(u8, 4096),
+            .events = try allocator.alloc(u8, 136),
             .offsets = try allocator.alloc(StorageOffset, 3),
         },
         .committed = .{
-            .offsets = try allocator.alloc(StorageOffset, 3),
+            .offsets = try allocator.alloc(StorageOffset, 5),
         },
     };
 
     var log = Log(TestStorage).init(addr, storage, heap_memory);
 
     var read_buf = ReadBuf.init(try allocator.alloc(u8, 136));
-    log.enqueue("I have known the arcane law");
-    try std.testing.expectEqual(log.commit(), 1);
+    try testing.expectEqual(64, log.enqueue("I have known the arcane law"));
+    try testing.expectEqual(1, log.commit());
     try log.readFromEnd(1, &read_buf);
-    try std.testing.expectEqualSlices(
+    try testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
         read_buf.read(StorageOffset.zero).payload,
     );
 
-    log.enqueue("On strange roads, such visions met");
-    try std.testing.expectEqual(log.commit(), 1);
+    try testing.expectEqual(
+        72,
+        log.enqueue("On strange roads, such visions met"),
+    );
+    try testing.expectEqual(1, log.commit());
     try log.readFromEnd(1, &read_buf);
     var it = read_buf.iter();
     const next = it.next();
     const actual = next.?.payload;
-    try std.testing.expectEqualSlices(
+    try testing.expectEqualSlices(
         u8,
         "On strange roads, such visions met",
         //read_buf.read(StorageOffset.zero).payload,
         actual,
     );
 
+    // Read multiple things from the buffer
     try log.readFromEnd(2, &read_buf);
     it = read_buf.iter();
 
-    try std.testing.expectEqualSlices(
+    try testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
         it.next().?.payload,
     );
 
-    try std.testing.expectEqualSlices(
+    try testing.expectEqualSlices(
         u8,
         "On strange roads, such visions met",
         it.next().?.payload,
     );
+
+    // Bulk commit two things
+    try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
+    try testing.expectEqual(
+        136,
+        log.enqueue("For dangers and obstacles of this world"),
+    );
+    try testing.expectEqual(log.commit(), 2);
 }
