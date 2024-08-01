@@ -14,23 +14,29 @@ fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
 pub fn Log(comptime Storage: type) type {
     return struct {
         addr: Addr,
-        enqueued: Enqueued,
-        committed: Committed(Storage),
-        acquaintances: ArrayListUnmanaged(Addr),
+        enqd: Enqueued,
+        cmtd: Committed(Storage),
+        /// Acquaintances.
+        /// Addrs the Log has interacted with.
+        /// Storing them here allows us to reference them with a u16 ptr inside
+        /// a committed event, shortening the header
+        as: ArrayListUnmanaged(Addr),
 
         pub fn init(
             addr: Addr,
             storage: Storage,
             heap_memory: HeapMemory,
         ) @This() {
+            var as = vecFromBuf(Addr, heap_memory.acquaintances);
+            as.appendAssumeCapacity(addr);
             return .{
                 .addr = addr,
-                .enqueued = Enqueued.init(heap_memory.enqueued),
-                .committed = Committed(Storage).init(
+                .enqd = Enqueued.init(heap_memory.enqueued, &as.items),
+                .cmtd = Committed(Storage).init(
                     storage,
                     heap_memory.committed,
                 ),
-                .acquaintances = vecFromBuf(Addr, heap_memory.acquaintances),
+                .as = as,
             };
         }
 
@@ -38,24 +44,24 @@ pub fn Log(comptime Storage: type) type {
         pub fn enqueue(self: *@This(), payload: []const u8) u64 {
             const id = Event.ID{
                 .origin = self.addr,
-                .logical_pos = self.enqueued.count() + self.committed.count(),
+                .logical_pos = self.enqd.count() + self.cmtd.count(),
             };
 
             const e = Event{ .id = id, .payload = payload };
-            return self.enqueued.append(&e);
+            return self.enqd.append(&e);
         }
 
         /// Returns number of events committed
         pub fn commit(self: *@This()) u64 {
-            const txn = self.enqueued.txn();
+            const txn = self.enqd.txn();
             const result = txn.offsets.len;
-            self.committed.append(txn.offsets, txn.events);
-            self.enqueued.reset();
+            self.cmtd.append(txn.offsets, txn.events);
+            self.enqd.reset();
             return result;
         }
 
         pub fn rollback(self: *@This()) void {
-            self.enqueued.reset(self.committed.last_offset());
+            self.enqd.reset(self.cmtd.last_offset());
         }
 
         // Returns an error because too small a read buffer should not crash
@@ -64,7 +70,7 @@ pub fn Log(comptime Storage: type) type {
             n: u64,
             buf: *ReadBuf,
         ) err.ReadBuf!void {
-            try self.committed.readFromEnd(n, buf);
+            try self.cmtd.readFromEnd(n, buf);
         }
     };
 }
@@ -95,15 +101,22 @@ const Enqueued = struct {
     };
     offsets: StorageOffsets,
     events: ArrayListUnmanaged(u8),
-    fn init(buffers: HeapMemory.Enqueued) @This() {
-        return .{ .offsets = StorageOffsets.init(buffers.offsets, 0), .events = vecFromBuf(u8, buffers.events) };
+    /// Committed Acquaintances
+    cas: *[]const Addr,
+    fn init(buffers: HeapMemory.Enqueued, cas: *[]const Addr) @This() {
+        return .{
+            .offsets = StorageOffsets.init(buffers.offsets, 0),
+            .events = vecFromBuf(u8, buffers.events),
+            .cas = cas,
+        };
     }
 
     /// Returns bytes enqueued
     fn append(self: *@This(), e: *const Event) u64 {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
-        e.appendWithLongHeaderTo(&self.events);
+        const header = .{ .id = e.id, .payload_len = e.payload.len };
+        e.appendTo(Event.LongHeader, header, &self.events);
         return self.events.items.len;
     }
 
@@ -276,14 +289,12 @@ const Event = struct {
         return (unaligned_size + 7) & ~@as(u8, 7);
     }
 
-    fn appendWithLongHeaderTo(
+    fn appendTo(
         self: @This(),
+        comptime Header: type,
+        header: Header,
         byte_vec: *ArrayListUnmanaged(u8),
     ) void {
-        const header: LongHeader = .{
-            .payload_len = self.payload.len,
-            .id = self.id,
-        };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
         const old_len = byte_vec.items.len;
         byte_vec.appendSliceAssumeCapacity(header_bytes);
@@ -332,7 +343,12 @@ pub const ReadBuf = struct {
     }
 
     fn append(self: *@This(), e: *const Event) void {
-        e.appendWithLongHeaderTo(&self.bytes);
+        const header = .{
+            .id = e.id,
+            .payload_len = e.payload.len,
+        };
+        e.appendTo(Event.LongHeader, header, &self.bytes);
+
         self.n_events += 1;
     }
 
