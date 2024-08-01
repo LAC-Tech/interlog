@@ -19,7 +19,7 @@ pub fn Log(comptime Storage: type) type {
         /// Acquaintances.
         /// Addrs the Log has interacted with.
         /// Storing them here allows us to reference them with a u16 ptr inside
-        /// a committed event, shortening the header
+        /// a committed event, allowing a shorter header for storaage.
         as: ArrayListUnmanaged(Addr),
 
         pub fn init(
