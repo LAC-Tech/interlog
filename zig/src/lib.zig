@@ -44,7 +44,7 @@ pub fn Log(comptime Storage: type) type {
         pub fn enqueue(self: *@This(), payload: []const u8) u64 {
             const id = Event.ID{
                 .origin = self.addr,
-                .logical_pos = self.enqd.count() + self.cmtd.count(),
+                .logical_pos = self.enqd.eventCount() + self.cmtd.eventCount(),
             };
 
             const e = Event{ .id = id, .payload = payload };
@@ -128,7 +128,7 @@ const Enqueued = struct {
         self.events.clearRetainingCapacity();
     }
 
-    fn count(self: *@This()) u64 {
+    fn eventCount(self: *@This()) u64 {
         return self.offsets.eventCount();
     }
 
@@ -173,7 +173,7 @@ fn Committed(comptime Storage: type) type {
             return self.offsets.last();
         }
 
-        fn count(self: @This()) u64 {
+        fn eventCount(self: @This()) u64 {
             return self.offsets.eventCount();
         }
 
