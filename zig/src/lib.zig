@@ -19,7 +19,6 @@ pub fn Log(comptime Storage: type) type {
     return struct {
         const Iterator = struct {
             const Index = struct { start: usize, end: usize };
-
             storage: Storage,
             index: Index,
         };
