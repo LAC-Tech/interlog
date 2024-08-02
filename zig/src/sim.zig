@@ -101,8 +101,8 @@ pub const Env = struct {
             },
             .cmtd = .{
                 .offsets = try allocator.alloc(StorageOffset, 1_000_000),
+                .acqs = try allocator.create([std.math.maxInt(u16)]Addr),
             },
-            .acqs = try allocator.create([std.math.maxInt(u16)]Addr),
         };
         return .{
             .log = Log(Storage).init(Addr.init(R, rng), storage, heap_mem),

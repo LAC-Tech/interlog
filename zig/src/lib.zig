@@ -20,27 +20,17 @@ pub fn Log(comptime Storage: type) type {
         addr: Addr,
         enqd: Enqueued,
         cmtd: Committed(Storage),
-        acqs: Acquaintances,
 
         pub fn init(
             addr: Addr,
             storage: Storage,
             heap_mem: HeapMem,
         ) @This() {
-            var acqs = vecFromBuf(Addr, heap_mem.acqs);
-            acqs.appendAssumeCapacity(addr);
-
-            if (heap_mem.acqs.len > std.math.maxInt(u16)) {
-                @panic("Must be able to index acquaintances with a u16");
-            }
+            const cmtd = Committed(Storage).init(addr, storage, heap_mem.cmtd);
             return .{
                 .addr = addr,
-                .enqd = Enqueued.init(heap_mem.enqd, &acqs.items),
-                .cmtd = Committed(Storage).init(
-                    storage,
-                    heap_mem.cmtd,
-                ),
-                .acqs = Acquaintances.init(heap_mem.acqs),
+                .enqd = Enqueued.init(heap_mem.enqd, &cmtd.acqs.asSlice()),
+                .cmtd = cmtd,
             };
         }
 
@@ -88,6 +78,7 @@ pub fn Log(comptime Storage: type) type {
 pub const HeapMem = struct {
     const Committed = struct {
         offsets: []StorageOffset,
+        acqs: []Addr,
     };
     const Enqueued = struct {
         offsets: []StorageOffset,
@@ -95,7 +86,6 @@ pub const HeapMem = struct {
     };
     cmtd: @This().Committed,
     enqd: @This().Enqueued,
-    acqs: []Addr,
 };
 
 const Enqueued = struct {
@@ -107,13 +97,12 @@ const Enqueued = struct {
     };
     offsets: StorageOffsets,
     events: ArrayListUnmanaged(u8),
-    /// Committed Acquaintances
-    cas: *[]const Addr,
-    fn init(buffers: HeapMem.Enqueued, cas: *[]const Addr) @This() {
+    cmtd_acqs: *const []const Addr,
+    fn init(buffers: HeapMem.Enqueued, cmtd_acqs: *const []const Addr) @This() {
         return .{
             .offsets = StorageOffsets.init(buffers.offsets, 0),
             .events = vecFromBuf(u8, buffers.events),
-            .cas = cas,
+            .cmtd_acqs = cmtd_acqs,
         };
     }
 
@@ -155,14 +144,20 @@ fn Committed(comptime Storage: type) type {
         /// element is the next offset of the next event appended
         offsets: StorageOffsets,
         events: Storage,
+        acqs: Acquaintances,
 
         fn init(
+            addr: Addr,
             storage: Storage,
-            buffers: HeapMem.Committed,
+            heap_mem: HeapMem.Committed,
         ) @This() {
+            var acqs = Acquaintances.init(heap_mem.acqs);
+            acqs.append(addr);
+
             return .{
-                .offsets = StorageOffsets.init(buffers.offsets, 0),
+                .offsets = StorageOffsets.init(heap_mem.offsets, 0),
                 .events = storage,
+                .acqs = acqs,
             };
         }
 
@@ -273,11 +268,23 @@ pub const StorageOffset = packed struct(u64) {
 const Acquaintances = struct {
     vec: ArrayListUnmanaged(Addr),
     fn init(buf: []Addr) @This() {
-        return .{ .vec = ArrayListUnmanaged(Addr).initBuffer(buf) };
+        if (buf.len > std.math.maxInt(u16)) {
+            @panic("Must be able to index acquaintances with a u16");
+        }
+
+        return .{ .vec = vecFromBuf(Addr, buf) };
     }
 
     fn get(self: @This(), index: u16) Addr {
         return self.vec.items[index];
+    }
+
+    fn append(self: *@This(), addr: Addr) void {
+        return self.vec.appendAssumeCapacity(addr);
+    }
+
+    fn asSlice(self: @This()) []Addr {
+        return self.vec.items;
     }
 };
 
@@ -498,8 +505,8 @@ test "enqueue, commit and read data" {
         },
         .cmtd = .{
             .offsets = try allocator.alloc(StorageOffset, 5),
+            .acqs = try allocator.alloc(Addr, 1),
         },
-        .acqs = try allocator.alloc(Addr, 1),
     };
 
     var log = Log(TestStorage).init(addr, storage, heap_mem);
