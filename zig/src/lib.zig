@@ -108,8 +108,7 @@ const Enqueued = struct {
     fn append(self: *@This(), e: *const Event) u64 {
         const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
-        const header = .{ .id = e.id, .payload_len = e.payload.len };
-        e.appendTo(header, &self.events);
+        e.appendTo(&self.events);
         return self.events.items.len;
     }
 
@@ -308,9 +307,9 @@ const Event = struct {
 
     fn appendTo(
         self: @This(),
-        header: Header,
         byte_vec: *ArrayListUnmanaged(u8),
     ) void {
+        const header = Header{ .id = self.id, .payload_len = self.payload.len };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
         byte_vec.appendSliceAssumeCapacity(header_bytes);
         byte_vec.appendSliceAssumeCapacity(self.payload);
@@ -362,9 +361,7 @@ pub const ReadBuf = struct {
     }
 
     fn append(self: *@This(), e: *const Event) void {
-        const header = .{ .id = e.id, .payload_len = e.payload.len };
-        e.appendTo(header, &self.bytes);
-
+        e.appendTo(&self.bytes);
         self.n_events += 1;
     }
 
