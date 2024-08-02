@@ -111,7 +111,7 @@ const Enqueued = struct {
         const offset = self.offsets.last().next(Header, e);
         self.offsets.append(offset);
         const header = .{ .id = e.id, .payload_len = e.payload.len };
-        e.appendTo(Header, header, &self.events);
+        e.appendTo(header, &self.events);
         return self.events.items.len;
     }
 
@@ -291,6 +291,8 @@ const Acquaintances = struct {
 const Event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: u64 };
 
+    // Stand alone, self describing header
+    pub const Header = extern struct { payload_len: u64, id: Event.ID };
     // Header that points into other parts of the log
     pub const ShortHeader = packed struct(u64) {
         payload_len: u48,
@@ -300,6 +302,7 @@ const Event = struct {
     comptime {
         assert(@sizeOf(ID) == 24);
         assert(@sizeOf(ShortHeader) == 8);
+        assert(@sizeOf(Header) == 32);
     }
 
     id: ID,
@@ -313,7 +316,6 @@ const Event = struct {
 
     fn appendTo(
         self: @This(),
-        comptime Header: type,
         header: Header,
         byte_vec: *ArrayListUnmanaged(u8),
     ) void {
@@ -325,7 +327,6 @@ const Event = struct {
     }
 
     fn read(
-        comptime Header: type,
         bytes: []const u8,
         offset: StorageOffset,
     ) Event {
@@ -339,11 +340,6 @@ const Event = struct {
 };
 
 pub const ReadBuf = struct {
-    // Stand alone, self describing header
-    pub const Header = extern struct { payload_len: u64, id: Event.ID };
-    comptime {
-        assert(@sizeOf(Header) == 32);
-    }
     const Iterator = struct {
         read_buf: *const ReadBuf,
         offset_index: StorageOffset,
@@ -360,7 +356,7 @@ pub const ReadBuf = struct {
         pub fn next(self: *@This()) ?Event {
             if (self.event_index == self.read_buf.n_events) return null;
             const result = self.read_buf.read(self.offset_index);
-            self.offset_index = self.offset_index.next(Header, &result);
+            self.offset_index = self.offset_index.next(Event.Header, &result);
             self.event_index += 1;
             return result;
         }
@@ -378,13 +374,13 @@ pub const ReadBuf = struct {
             .id = e.id,
             .payload_len = e.payload.len,
         };
-        e.appendTo(Header, header, &self.bytes);
+        e.appendTo(header, &self.bytes);
 
         self.n_events += 1;
     }
 
     pub fn read(self: @This(), offset: StorageOffset) Event {
-        return Event.read(Header, self.bytes.items, offset);
+        return Event.read(self.bytes.items, offset);
     }
 
     fn clear(self: *@This()) void {
