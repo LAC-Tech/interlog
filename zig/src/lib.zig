@@ -11,6 +11,10 @@ fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
     return ArrayListUnmanaged(T).initBuffer(buf);
 }
 
+fn alignTo8(unaligned: u64) u64 {
+    return (unaligned + 7) & ~@as(u8, 7);
+}
+
 pub fn Log(comptime Storage: type) type {
     return struct {
         addr: Addr,
@@ -19,7 +23,7 @@ pub fn Log(comptime Storage: type) type {
         /// Acquaintances.
         /// Addrs the Log has interacted with.
         /// Storing them here allows us to reference them with a u16 ptr inside
-        /// a committed event, allowing a shorter header for storaage.
+        /// a committed event, allowing shortening the header for storaage.
         as: ArrayListUnmanaged(Addr),
 
         pub fn init(
@@ -95,6 +99,8 @@ pub const HeapMemory = struct {
 };
 
 const Enqueued = struct {
+    // TODO: Shorten Header, 8 bytes, len and acq ptr
+    const Header = extern struct { payload_len: u64, id: Event.ID };
     const Transaction = struct {
         offsets: []const StorageOffset,
         events: []const u8,
@@ -113,10 +119,10 @@ const Enqueued = struct {
 
     /// Returns bytes enqueued
     fn append(self: *@This(), e: *const Event) u64 {
-        const offset = self.offsets.last().next(e);
+        const offset = self.offsets.last().next(Header, e);
         self.offsets.append(offset);
         const header = .{ .id = e.id, .payload_len = e.payload.len };
-        e.appendTo(Event.LongHeader, header, &self.events);
+        e.appendTo(Header, header, &self.events);
         return self.events.items.len;
     }
 
@@ -257,16 +263,13 @@ pub const StorageOffset = packed struct(u64) {
         return .{ .n = n };
     }
 
-    fn next(self: @This(), e: *const Event) @This() {
-        return @This().init(self.n + e.storedSize());
+    fn next(self: @This(), comptime Header: type, e: *const Event) @This() {
+        return @This().init(self.n + alignTo8(@sizeOf(Header) + e.payload.len));
     }
 };
 
 const Event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: u64 };
-
-    // Stand alone, self describing header
-    pub const LongHeader = extern struct { payload_len: u64, id: ID };
 
     // Header that points into other parts of the log
     pub const ShortHeader = packed struct(u64) {
@@ -276,7 +279,6 @@ const Event = struct {
 
     comptime {
         assert(@sizeOf(ID) == 24);
-        assert(@sizeOf(LongHeader) == 32);
         assert(@sizeOf(ShortHeader) == 8);
     }
 
@@ -284,10 +286,10 @@ const Event = struct {
     payload: []const u8,
 
     /// 8 byte aligned size
-    fn storedSize(self: @This()) u64 {
-        const unaligned_size = @sizeOf(LongHeader) + self.payload.len;
-        return (unaligned_size + 7) & ~@as(u8, 7);
-    }
+    //fn storedSize(self: @This()) u64 {
+    //    const unaligned_size = @sizeOf(LongHeader) + self.payload.len;
+    //    return (unaligned_size + 7) & ~@as(u8, 7);
+    //}
 
     fn appendTo(
         self: @This(),
@@ -296,15 +298,19 @@ const Event = struct {
         byte_vec: *ArrayListUnmanaged(u8),
     ) void {
         const header_bytes: []const u8 = std.mem.asBytes(&header);
-        const old_len = byte_vec.items.len;
         byte_vec.appendSliceAssumeCapacity(header_bytes);
         byte_vec.appendSliceAssumeCapacity(self.payload);
-        byte_vec.items.len = old_len + self.storedSize();
+        const unaligned_size = byte_vec.items.len;
+        byte_vec.items.len = alignTo8(unaligned_size);
     }
 
-    fn read(bytes: []const u8, offset: StorageOffset) Event {
-        const header_end = offset.n + @sizeOf(LongHeader);
-        const header = std.mem.bytesAsValue(LongHeader, bytes[offset.n..header_end]);
+    fn read(
+        comptime Header: type,
+        bytes: []const u8,
+        offset: StorageOffset,
+    ) Event {
+        const header_end = offset.n + @sizeOf(Header);
+        const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
         const payload_end = header_end + header.payload_len;
         const payload = bytes[header_end..payload_end];
 
@@ -313,6 +319,11 @@ const Event = struct {
 };
 
 pub const ReadBuf = struct {
+    // Stand alone, self describing header
+    pub const Header = extern struct { payload_len: u64, id: Event.ID };
+    comptime {
+        assert(@sizeOf(Header) == 32);
+    }
     const Iterator = struct {
         read_buf: *const ReadBuf,
         offset_index: StorageOffset,
@@ -329,7 +340,7 @@ pub const ReadBuf = struct {
         pub fn next(self: *@This()) ?Event {
             if (self.event_index == self.read_buf.n_events) return null;
             const result = self.read_buf.read(self.offset_index);
-            self.offset_index = self.offset_index.next(&result);
+            self.offset_index = self.offset_index.next(Header, &result);
             self.event_index += 1;
             return result;
         }
@@ -347,13 +358,13 @@ pub const ReadBuf = struct {
             .id = e.id,
             .payload_len = e.payload.len,
         };
-        e.appendTo(Event.LongHeader, header, &self.bytes);
+        e.appendTo(Header, header, &self.bytes);
 
         self.n_events += 1;
     }
 
     pub fn read(self: @This(), offset: StorageOffset) Event {
-        return Event.read(self.bytes.items, offset);
+        return Event.read(Header, self.bytes.items, offset);
     }
 
     fn clear(self: *@This()) void {
