@@ -20,11 +20,7 @@ pub fn Log(comptime Storage: type) type {
         addr: Addr,
         enqd: Enqueued,
         cmtd: Committed(Storage),
-        /// Acquaintances.
-        /// Addrs the Log has interacted with.
-        /// Storing them here allows us to reference them with a u16 ptr inside
-        /// a committed event, allowing shortening the header for storaage.
-        acqs: ArrayListUnmanaged(Addr),
+        acqs: Acquaintances,
 
         pub fn init(
             addr: Addr,
@@ -44,7 +40,7 @@ pub fn Log(comptime Storage: type) type {
                     storage,
                     heap_mem.cmtd,
                 ),
-                .acqs = acqs,
+                .acqs = Acquaintances.init(heap_mem.acqs),
             };
         }
 
@@ -203,13 +199,12 @@ fn Committed(comptime Storage: type) type {
 }
 
 /// Maps a logical position (nth event) to a byte offset in storage
+/// Wrapper around a Vec with some invariants:
+/// - always at least one element: next offset, for calculating size
 const StorageOffsets = struct {
-    const Vec = std.ArrayListUnmanaged(StorageOffset);
-    // Vec with some invariants:
-    // - always at least one element: next offset, for calculating size
-    vec: Vec,
+    vec: ArrayListUnmanaged(StorageOffset),
     fn init(buf: []StorageOffset, next_committed_offset: u64) @This() {
-        var vec = Vec.initBuffer(buf);
+        var vec = ArrayListUnmanaged(StorageOffset).initBuffer(buf);
         vec.appendAssumeCapacity(StorageOffset.init(next_committed_offset));
         return .{ .vec = vec };
     }
@@ -269,6 +264,20 @@ pub const StorageOffset = packed struct(u64) {
 
     fn next(self: @This(), comptime Header: type, e: *const Event) @This() {
         return @This().init(self.n + alignTo8(@sizeOf(Header) + e.payload.len));
+    }
+};
+
+/// Addrs the Log has interacted with.
+/// Storing them here allows us to reference them with a u16 ptr inside
+/// a committed event, allowing shortening the header for storaage.
+const Acquaintances = struct {
+    vec: ArrayListUnmanaged(Addr),
+    fn init(buf: []Addr) @This() {
+        return .{ .vec = ArrayListUnmanaged(Addr).initBuffer(buf) };
+    }
+
+    fn get(self: @This(), index: u16) Addr {
+        return self.vec.items[index];
     }
 };
 
