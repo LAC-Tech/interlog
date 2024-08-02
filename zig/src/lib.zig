@@ -362,10 +362,7 @@ pub const ReadBuf = struct {
     }
 
     fn append(self: *@This(), e: *const Event) void {
-        const header = .{
-            .id = e.id,
-            .payload_len = e.payload.len,
-        };
+        const header = .{ .id = e.id, .payload_len = e.payload.len };
         e.appendTo(header, &self.bytes);
 
         self.n_events += 1;
