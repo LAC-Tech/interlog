@@ -108,7 +108,7 @@ const Enqueued = struct {
 
     /// Returns bytes enqueued
     fn append(self: *@This(), e: *const Event) u64 {
-        const offset = self.offsets.last().next(Header, e);
+        const offset = self.offsets.last().next(e);
         self.offsets.append(offset);
         const header = .{ .id = e.id, .payload_len = e.payload.len };
         e.appendTo(header, &self.events);
@@ -257,8 +257,8 @@ pub const StorageOffset = packed struct(u64) {
         return .{ .n = n };
     }
 
-    fn next(self: @This(), comptime Header: type, e: *const Event) @This() {
-        return @This().init(self.n + alignTo8(@sizeOf(Header) + e.payload.len));
+    fn next(self: @This(), e: *const Event) @This() {
+        return @This().init(self.n + alignTo8(@sizeOf(Event.Header) + e.payload.len));
     }
 };
 
@@ -308,12 +308,6 @@ const Event = struct {
     id: ID,
     payload: []const u8,
 
-    /// 8 byte aligned size
-    //fn storedSize(self: @This()) u64 {
-    //    const unaligned_size = @sizeOf(LongHeader) + self.payload.len;
-    //    return (unaligned_size + 7) & ~@as(u8, 7);
-    //}
-
     fn appendTo(
         self: @This(),
         header: Header,
@@ -356,7 +350,7 @@ pub const ReadBuf = struct {
         pub fn next(self: *@This()) ?Event {
             if (self.event_index == self.read_buf.n_events) return null;
             const result = self.read_buf.read(self.offset_index);
-            self.offset_index = self.offset_index.next(Event.Header, &result);
+            self.offset_index = self.offset_index.next(&result);
             self.event_index += 1;
             return result;
         }
