@@ -17,6 +17,12 @@ fn alignTo8(unaligned: u64) u64 {
 
 pub fn Log(comptime Storage: type) type {
     return struct {
+        const Iterator = struct {
+            const Index = struct { start: usize, end: usize };
+
+            storage: Storage,
+            index: Index,
+        };
         addr: Addr,
         enqd: Enqueued,
         cmtd: Committed(Storage),
