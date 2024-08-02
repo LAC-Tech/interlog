@@ -88,8 +88,8 @@ pub const Env = struct {
         allocator: std.mem.Allocator,
     ) !@This() {
         const storage = Storage.init();
-        const buffers = .{
-            .enqueued = .{
+        const heap_mem = .{
+            .enqd = .{
                 .offsets = try allocator.alloc(
                     StorageOffset,
                     config.msg_len.at_most,
@@ -99,17 +99,13 @@ pub const Env = struct {
                     config.msg_len.at_most * config.payload_size.at_most,
                 ),
             },
-            .committed = .{
+            .cmtd = .{
                 .offsets = try allocator.alloc(StorageOffset, 1_000_000),
             },
-            .acquaintances = try allocator.create([std.math.maxInt(u16)]Addr),
+            .acqs = try allocator.create([std.math.maxInt(u16)]Addr),
         };
         return .{
-            .log = Log(Storage).init(
-                Addr.init(R, rng),
-                storage,
-                buffers,
-            ),
+            .log = Log(Storage).init(Addr.init(R, rng), storage, heap_mem),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
     }

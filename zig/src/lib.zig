@@ -24,23 +24,27 @@ pub fn Log(comptime Storage: type) type {
         /// Addrs the Log has interacted with.
         /// Storing them here allows us to reference them with a u16 ptr inside
         /// a committed event, allowing shortening the header for storaage.
-        as: ArrayListUnmanaged(Addr),
+        acqs: ArrayListUnmanaged(Addr),
 
         pub fn init(
             addr: Addr,
             storage: Storage,
-            heap_memory: HeapMemory,
+            heap_mem: HeapMem,
         ) @This() {
-            var as = vecFromBuf(Addr, heap_memory.acquaintances);
-            as.appendAssumeCapacity(addr);
+            var acqs = vecFromBuf(Addr, heap_mem.acqs);
+            acqs.appendAssumeCapacity(addr);
+
+            if (heap_mem.acqs.len > std.math.maxInt(u16)) {
+                @panic("Must be able to index acquaintances with a u16");
+            }
             return .{
                 .addr = addr,
-                .enqd = Enqueued.init(heap_memory.enqueued, &as.items),
+                .enqd = Enqueued.init(heap_mem.enqd, &acqs.items),
                 .cmtd = Committed(Storage).init(
                     storage,
-                    heap_memory.committed,
+                    heap_mem.cmtd,
                 ),
-                .as = as,
+                .acqs = acqs,
             };
         }
 
@@ -85,7 +89,7 @@ pub fn Log(comptime Storage: type) type {
 // interrupt; result = writes with no checks / error checks i.e. no stalls for
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
-pub const HeapMemory = struct {
+pub const HeapMem = struct {
     const Committed = struct {
         offsets: []StorageOffset,
     };
@@ -93,9 +97,9 @@ pub const HeapMemory = struct {
         offsets: []StorageOffset,
         events: []u8,
     };
-    committed: @This().Committed,
-    enqueued: @This().Enqueued,
-    acquaintances: *[std.math.maxInt(u16)]Addr,
+    cmtd: @This().Committed,
+    enqd: @This().Enqueued,
+    acqs: []Addr,
 };
 
 const Enqueued = struct {
@@ -109,7 +113,7 @@ const Enqueued = struct {
     events: ArrayListUnmanaged(u8),
     /// Committed Acquaintances
     cas: *[]const Addr,
-    fn init(buffers: HeapMemory.Enqueued, cas: *[]const Addr) @This() {
+    fn init(buffers: HeapMem.Enqueued, cas: *[]const Addr) @This() {
         return .{
             .offsets = StorageOffsets.init(buffers.offsets, 0),
             .events = vecFromBuf(u8, buffers.events),
@@ -158,7 +162,7 @@ fn Committed(comptime Storage: type) type {
 
         fn init(
             storage: Storage,
-            buffers: HeapMemory.Committed,
+            buffers: HeapMem.Committed,
         ) @This() {
             return .{
                 .offsets = StorageOffsets.init(buffers.offsets, 0),
@@ -478,18 +482,18 @@ test "enqueue, commit and read data" {
 
     const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 272));
-    const heap_memory = .{
-        .enqueued = .{
+    const heap_mem = .{
+        .enqd = .{
             .events = try allocator.alloc(u8, 136),
             .offsets = try allocator.alloc(StorageOffset, 3),
         },
-        .committed = .{
+        .cmtd = .{
             .offsets = try allocator.alloc(StorageOffset, 5),
         },
-        .acquaintances = try allocator.create([std.math.maxInt(u16)]Addr),
+        .acqs = try allocator.alloc(Addr, 1),
     };
 
-    var log = Log(TestStorage).init(addr, storage, heap_memory);
+    var log = Log(TestStorage).init(addr, storage, heap_mem);
 
     var read_buf = ReadBuf.init(try allocator.alloc(u8, 136));
     try testing.expectEqual(64, log.enqueue("I have known the arcane law"));
