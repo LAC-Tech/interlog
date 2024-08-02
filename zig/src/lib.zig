@@ -89,8 +89,6 @@ pub const HeapMem = struct {
 };
 
 const Enqueued = struct {
-    // TODO: Shorten Header, 8 bytes, len and acq ptr
-    const Header = extern struct { payload_len: u64, id: Event.ID };
     const Transaction = struct {
         offsets: []const StorageOffset,
         events: []const u8,
