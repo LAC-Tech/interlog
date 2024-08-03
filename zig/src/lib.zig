@@ -312,13 +312,6 @@ const Event = struct {
         };
     }
 
-    fn id(self: @This(), acqs: []const Addr, logical_pos: usize) ID {
-        return .{
-            .origin = acqs.get(self.header.origin_ptr),
-            .logical_pos = logical_pos,
-        };
-    }
-
     fn appendTo(
         self: @This(),
         byte_vec: *ArrayListUnmanaged(u8),
