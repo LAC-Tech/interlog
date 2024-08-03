@@ -260,32 +260,6 @@ pub const StorageOffset = packed struct(u64) {
     }
 };
 
-// TODO: this is separate from the "core"
-const DirectIOStorage = struct {
-    // Syscalls
-    const linux = std.os.linux;
-    const open = linux.open;
-    const pread = linux.pread;
-    const write = linux.write;
-    const close = linux.close;
-
-    const O = linux.O;
-    const S = linux.S;
-
-    const flags = O.DIRECT | O.CREATE | O.APPEND | O.RDWR | O.DSYNC;
-    const mode = S.IRUSR | S.IWUSR;
-
-    fd: usize,
-
-    fn init(path: [*:0]const u8) @This() {
-        return .{ .fd = open(path, flags, mode) };
-    }
-
-    fn deinit(self: @This()) void {
-        close(self.fd);
-    }
-};
-
 /// Addrs the Log has interacted with.
 /// Storing them here allows us to reference them with a u16 ptr inside
 /// a committed event, allowing shortening the header for storaage.
@@ -408,8 +382,8 @@ const Event = struct {
 };
 
 test "let's write some bytes" {
-    const bytes_buf = try std.testing.allocator.alloc(u8, 127);
-    defer std.testing.allocator.free(bytes_buf);
+    const bytes_buf = try testing.allocator.alloc(u8, 127);
+    defer testing.allocator.free(bytes_buf);
     var buf = Event.Buf.init(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
@@ -425,12 +399,12 @@ test "let's write some bytes" {
     var it = buf.iter();
 
     while (it.next()) |e| {
-        try std.testing.expectEqualSlices(u8, evt.payload, e.payload);
+        try testing.expectEqualSlices(u8, evt.payload, e.payload);
     }
 
     const actual = buf.read(StorageOffset.zero);
 
-    try std.testing.expectEqualDeep(actual, evt);
+    try testing.expectEqualDeep(actual, evt);
 }
 
 pub const Addr = extern struct {
@@ -494,7 +468,7 @@ test "enqueue, commit and read data" {
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
 
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
