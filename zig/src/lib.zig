@@ -62,8 +62,8 @@ pub fn Log(comptime Storage: type) type {
         pub fn readFromEnd(
             self: *@This(),
             n: u64,
-            buf: *ReadBuf,
-        ) err.ReadBuf!void {
+            buf: *Event.Buf,
+        ) err.Buf!void {
             try self.cmtd.readFromEnd(n, buf);
         }
     };
@@ -178,8 +178,8 @@ fn Committed(comptime Storage: type) type {
         fn readFromEnd(
             self: @This(),
             n: u64,
-            buf: *ReadBuf,
-        ) err.ReadBuf!void {
+            buf: *Event.Buf,
+        ) err.Buf!void {
             buf.clear();
             var offsets = self.offsets.asSlice();
             offsets = offsets[offsets.len - 1 - n ..];
@@ -324,68 +324,67 @@ const Event = struct {
 
         return .{ .id = header.id, .payload = payload };
     }
-};
+    pub const Buf = struct {
+        const Iterator = struct {
+            events: *const Buf,
+            offset_index: StorageOffset,
+            event_index: u64,
 
-pub const ReadBuf = struct {
-    const Iterator = struct {
-        read_buf: *const ReadBuf,
-        offset_index: StorageOffset,
-        event_index: u64,
+            fn init(events: *const Buf) @This() {
+                return .{
+                    .events = events,
+                    .offset_index = StorageOffset.zero,
+                    .event_index = 0,
+                };
+            }
 
-        fn init(read_buf: *const ReadBuf) @This() {
-            return .{
-                .read_buf = read_buf,
-                .offset_index = StorageOffset.zero,
-                .event_index = 0,
-            };
+            pub fn next(self: *@This()) ?Event {
+                if (self.event_index == self.events.n_events) return null;
+                const result = self.events.read(self.offset_index);
+                self.offset_index = self.offset_index.next(&result);
+                self.event_index += 1;
+                return result;
+            }
+        };
+
+        bytes: ArrayListUnmanaged(u8),
+        n_events: u64,
+
+        pub fn init(buf: []u8) @This() {
+            return .{ .bytes = vecFromBuf(u8, buf), .n_events = 0 };
         }
 
-        pub fn next(self: *@This()) ?Event {
-            if (self.event_index == self.read_buf.n_events) return null;
-            const result = self.read_buf.read(self.offset_index);
-            self.offset_index = self.offset_index.next(&result);
-            self.event_index += 1;
-            return result;
+        fn append(self: *@This(), e: *const Event) void {
+            e.appendTo(&self.bytes);
+            self.n_events += 1;
+        }
+
+        pub fn read(self: @This(), offset: StorageOffset) Event {
+            return Event.read(self.bytes.items, offset);
+        }
+
+        fn clear(self: *@This()) void {
+            self.bytes.clearRetainingCapacity();
+            self.n_events = 0;
+        }
+
+        /// This is meant for pwrite type interfaces
+        /// new area must be written to immediately.
+        fn resize(self: *@This(), new_len: u64, num_new_events: u64) []u8 {
+            self.n_events += num_new_events;
+            return self.bytes.addManyAsSliceAssumeCapacity(new_len);
+        }
+
+        pub fn iter(self: *const @This()) Iterator {
+            return Iterator.init(self);
         }
     };
-
-    bytes: ArrayListUnmanaged(u8),
-    n_events: u64,
-
-    pub fn init(buf: []u8) @This() {
-        return .{ .bytes = vecFromBuf(u8, buf), .n_events = 0 };
-    }
-
-    fn append(self: *@This(), e: *const Event) void {
-        e.appendTo(&self.bytes);
-        self.n_events += 1;
-    }
-
-    pub fn read(self: @This(), offset: StorageOffset) Event {
-        return Event.read(self.bytes.items, offset);
-    }
-
-    fn clear(self: *@This()) void {
-        self.bytes.clearRetainingCapacity();
-        self.n_events = 0;
-    }
-
-    /// This is meant for pwrite type interfaces
-    /// new area must be written to immediately.
-    fn resize(self: *@This(), new_len: u64, num_new_events: u64) []u8 {
-        self.n_events += num_new_events;
-        return self.bytes.addManyAsSliceAssumeCapacity(new_len);
-    }
-
-    pub fn iter(self: *const @This()) Iterator {
-        return Iterator.init(self);
-    }
 };
 
 test "let's write some bytes" {
     const bytes_buf = try std.testing.allocator.alloc(u8, 127);
     defer std.testing.allocator.free(bytes_buf);
-    var buf = ReadBuf.init(bytes_buf);
+    var buf = Event.Buf.init(bytes_buf);
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
@@ -459,7 +458,7 @@ pub const TestStorage = struct {
         self: @This(),
         dest: []u8,
         offset: u64,
-    ) err.ReadBuf!void {
+    ) err.Buf!void {
         // TODO: bounds check
         const requested = self.bytes.items[offset .. offset + dest.len];
         @memcpy(dest, requested);
@@ -489,7 +488,7 @@ test "enqueue, commit and read data" {
 
     var log = Log(TestStorage).init(addr, storage, heap_mem);
 
-    var read_buf = ReadBuf.init(try allocator.alloc(u8, 136));
+    var read_buf = Event.Buf.init(try allocator.alloc(u8, 136));
     try testing.expectEqual(64, log.enqueue("I have known the arcane law"));
     try testing.expectEqual(1, log.commit());
     try log.readFromEnd(1, &read_buf);
