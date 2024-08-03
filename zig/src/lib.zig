@@ -255,7 +255,8 @@ pub const StorageOffset = packed struct(u64) {
     }
 
     fn next(self: @This(), e: *const Event) @This() {
-        return @This().init(self.n + alignTo8(@sizeOf(Event.Header) + e.payload.len));
+        const size = @sizeOf(Event.Header) + e.payload.len;
+        return @This().init(self.n + alignTo8(size));
     }
 };
 
@@ -289,16 +290,11 @@ const Event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: u64 };
 
     // Stand alone, self describing header
+    // All info here is needed to rebuild the log from a binary file.
     pub const Header = extern struct { payload_len: u64, id: Event.ID };
-    // Header that points into other parts of the log
-    pub const ShortHeader = packed struct(u64) {
-        payload_len: u48,
-        origin_ptr: u16,
-    };
 
     comptime {
         assert(@sizeOf(ID) == 24);
-        assert(@sizeOf(ShortHeader) == 8);
         assert(@sizeOf(Header) == 32);
     }
 
