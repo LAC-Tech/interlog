@@ -17,11 +17,6 @@ fn alignTo8(unaligned: u64) u64 {
 
 pub fn Log(comptime Storage: type) type {
     return struct {
-        const Iterator = struct {
-            const Index = struct { start: usize, end: usize };
-            storage: Storage,
-            index: Index,
-        };
         addr: Addr,
         enqd: Enqueued,
         cmtd: Committed(Storage),
@@ -41,7 +36,12 @@ pub fn Log(comptime Storage: type) type {
 
         /// Returns bytes enqueued
         pub fn enqueue(self: *@This(), payload: []const u8) u64 {
-            const e = Event.init(payload, 0);
+            const id = Event.ID{
+                .origin = self.addr,
+                .logical_pos = self.enqd.eventCount() + self.cmtd.eventCount(),
+            };
+
+            const e = Event{ .id = id, .payload = payload };
             return self.enqd.append(&e);
         }
 
@@ -288,35 +288,29 @@ const Acquaintances = struct {
 const Event = struct {
     pub const ID = extern struct { origin: Addr, logical_pos: u64 };
 
+    // Stand alone, self describing header
+    pub const Header = extern struct { payload_len: u64, id: Event.ID };
     // Header that points into other parts of the log
-    pub const Header = packed struct(u64) {
+    pub const ShortHeader = packed struct(u64) {
         payload_len: u48,
         origin_ptr: u16,
     };
 
     comptime {
         assert(@sizeOf(ID) == 24);
-        assert(@sizeOf(Header) == 8);
+        assert(@sizeOf(ShortHeader) == 8);
+        assert(@sizeOf(Header) == 32);
     }
 
-    header: Header,
+    id: ID,
     payload: []const u8,
-
-    fn init(payload: []const u8, origin_ptr: u16) @This() {
-        return .{
-            .header = .{
-                .payload_len = @intCast(payload.len),
-                .origin_ptr = origin_ptr,
-            },
-            .payload = payload,
-        };
-    }
 
     fn appendTo(
         self: @This(),
         byte_vec: *ArrayListUnmanaged(u8),
     ) void {
-        const header_bytes: []const u8 = std.mem.asBytes(&self.header);
+        const header = Header{ .id = self.id, .payload_len = self.payload.len };
+        const header_bytes: []const u8 = std.mem.asBytes(&header);
         byte_vec.appendSliceAssumeCapacity(header_bytes);
         byte_vec.appendSliceAssumeCapacity(self.payload);
         const unaligned_size = byte_vec.items.len;
@@ -331,7 +325,8 @@ const Event = struct {
         const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
         const payload_end = header_end + header.payload_len;
         const payload = bytes[header_end..payload_end];
-        return .{ .header = header.*, .payload = payload };
+
+        return .{ .id = header.id, .payload = payload };
     }
 };
 
@@ -396,11 +391,14 @@ test "let's write some bytes" {
     defer std.testing.allocator.free(bytes_buf);
     var buf = ReadBuf.init(bytes_buf);
 
-    //const seed: u64 = std.crypto.random.int(u64);
-    //var rng = std.Random.Pcg.init(seed);
-    //const addr = Addr.init(std.Random.Pcg, &rng);
+    const seed: u64 = std.crypto.random.int(u64);
+    var rng = std.Random.Pcg.init(seed);
+    const id = Addr.init(std.Random.Pcg, &rng);
 
-    const evt = Event.init("j;fkls", 0);
+    const evt = Event{
+        .id = .{ .origin = id, .logical_pos = 0 },
+        .payload = "j;fkls",
+    };
 
     buf.append(&evt);
     var it = buf.iter();
@@ -496,7 +494,7 @@ test "enqueue, commit and read data" {
     var log = Log(TestStorage).init(addr, storage, heap_mem);
 
     var read_buf = ReadBuf.init(try allocator.alloc(u8, 136));
-    try testing.expectEqual(40, log.enqueue("I have known the arcane law"));
+    try testing.expectEqual(64, log.enqueue("I have known the arcane law"));
     try testing.expectEqual(1, log.commit());
     try log.readFromEnd(1, &read_buf);
     try testing.expectEqualSlices(
@@ -506,7 +504,7 @@ test "enqueue, commit and read data" {
     );
 
     try testing.expectEqual(
-        48,
+        72,
         log.enqueue("On strange roads, such visions met"),
     );
     try testing.expectEqual(1, log.commit());
@@ -538,9 +536,9 @@ test "enqueue, commit and read data" {
     );
 
     // Bulk commit two things
-    try testing.expectEqual(40, log.enqueue("That I have no fear, nor concern"));
+    try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
     try testing.expectEqual(
-        88,
+        136,
         log.enqueue("For dangers and obstacles of this world"),
     );
     try testing.expectEqual(log.commit(), 2);
