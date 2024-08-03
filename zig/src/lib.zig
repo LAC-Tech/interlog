@@ -260,6 +260,32 @@ pub const StorageOffset = packed struct(u64) {
     }
 };
 
+// TODO: this is separate from the "core"
+const DirectIOStorage = struct {
+    // Syscalls
+    const linux = std.os.linux;
+    const open = linux.open;
+    const pread = linux.pread;
+    const write = linux.write;
+    const close = linux.close;
+
+    const O = linux.O;
+    const S = linux.S;
+
+    const flags = O.DIRECT | O.CREATE | O.APPEND | O.RDWR | O.DSYNC;
+    const mode = S.IRUSR | S.IWUSR;
+
+    fd: usize,
+
+    fn init(path: [*:0]const u8) @This() {
+        return .{ .fd = open(path, flags, mode) };
+    }
+
+    fn deinit(self: @This()) void {
+        close(self.fd);
+    }
+};
+
 /// Addrs the Log has interacted with.
 /// Storing them here allows us to reference them with a u16 ptr inside
 /// a committed event, allowing shortening the header for storaage.
@@ -459,7 +485,6 @@ pub const TestStorage = struct {
         dest: []u8,
         offset: u64,
     ) err.Buf!void {
-        // TODO: bounds check
         const requested = self.bytes.items[offset .. offset + dest.len];
         @memcpy(dest, requested);
     }
