@@ -1,10 +1,9 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const assert = std.debug.assert;
-const Log = lib.Log;
-const Addr = lib.Addr;
-const FixVec = lib.FixVec;
-const StorageOffset = lib.StorageOffset;
+const Log = lib.core.Log;
+const Addr = lib.core.Addr;
+const StorageOffset = lib.core.StorageOffset;
 
 const Range = struct {
     at_least: u64,
