@@ -34,10 +34,6 @@ impl<'a, T: fmt::Debug> fmt::Debug for Vec<'a, T> {
 }
 
 impl<'a, T: core::default::Default + Clone> Vec<'a, T> {
-	pub fn new(items: &'a mut [T]) -> Vec<T> {
-		Self { items, len: 0 }
-	}
-
 	/// TODO is this "unsafe"? it doesn't intialize new areas of memory
 	pub fn resize(&mut self, new_len: usize) -> Res {
 		self.check_capacity(new_len)?;
@@ -61,6 +57,9 @@ impl<'a, T: core::default::Default + Clone> Vec<'a, T> {
 }
 
 impl<'a, T> Vec<'a, T> {
+	pub fn new(items: &'a mut [T]) -> Vec<'a, T> {
+		Self { items, len: 0 }
+	}
 	#[inline]
 	pub fn capacity(&self) -> usize {
 		self.items.len()
