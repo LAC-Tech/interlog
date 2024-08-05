@@ -25,18 +25,12 @@ compile_error!("code assumes usize is u64");
 compile_error!("code assumes little-endian");
 
 pub mod fixcap;
-mod log;
-pub mod mem;
-mod pervasives;
 pub mod storage;
 #[cfg(test)]
 mod test_utils;
 
-/*
-pub use log::*;
-pub use pervasives::*;
-*/
-
+use core::iter;
+use event::Event;
 use fixcap::Vec;
 
 struct Log<'a, S: Storage> {
@@ -67,6 +61,12 @@ struct Committed<'a, S: Storage> {
 	storage: S,
 }
 
+// TODO:
+// "hey lewis… small trick for log buffers… never check for buffer overruns;
+// mark a readonly page at the end of the buffer; the OS notifies you with an
+// interrupt; result = writes with no checks / error checks i.e. no stalls for
+// CPU code pipeline flushes because of branch mispredictions"
+// - filasieno
 struct ExtAllocMem<'a> {
 	cmtd_offsets: &'a mut [StorageOffset],
 	cmtd_acqs: &'a mut [Addr],
@@ -74,15 +74,32 @@ struct ExtAllocMem<'a> {
 	enqd_events: &'a mut [u8],
 }
 
-struct StorageOffsets<'a>(Vec<'a, StorageOffset>);
+/// Maps a logical position (nth event) to a byte offset in storage
+/// Wrapper around a Vec with some invariants:
+/// - always at least one element: next offset, for calculating size
+struct StorageOffsets<'a>(
+	// This is always one greater than the number of events stored; the last
+	// element is the next offset of the next event appended
+	Vec<'a, StorageOffset>,
+);
+
+/// Q - why bother with with this seperate type?
+/// A - because I actually found a bug because when it was just a usize
 #[derive(Clone, Copy)]
 struct StorageOffset(usize);
 
+/// Addrs the Log has interacted with.
 struct Acquaintances<'a>(Vec<'a, Addr>);
 
-trait Storage {
-	// TODO: return type with all the wonderful things that can go wrong
-	fn append(&mut self, bytes: &[u8]);
+/// Where the events are persisted.
+/// Written right now so I can simulate faulty storage.
+/// Possible concrete implementations:
+/// - Disk
+/// - In-memory
+/// - In-browser (WASM that calls to indexedDB?)
+pub trait Storage {
+	fn append(&mut self, data: &[u8]);
+	fn read(&self, buf: &mut [u8], offset: usize);
 }
 
 impl<'a, S: Storage> Log<'a, S> {
@@ -103,10 +120,10 @@ impl<'a, S: Storage> Log<'a, S> {
 	fn enqueue(&mut self, payload: &[u8]) -> usize {
 		let logical_pos =
 			self.enqd.offsets.event_count() + self.cmtd.offsets.event_count();
-		let logical_pos = logical_pos as u64;
+		let logical_pos = u64::try_from(logical_pos).unwrap();
 
 		let id = event::ID { addr: self.addr, logical_pos };
-		let e = event::Event { id, payload };
+		let e = Event { id, payload };
 		self.enqd.append(&e)
 	}
 
@@ -124,13 +141,52 @@ impl<'a, S: Storage> Log<'a, S> {
 	}
 }
 
+/*
+struct LogIterator<'a, S: Storage> {
+	storage: S,
+	byte_index: usize,
+	// TODO probably won't need this later as storage will have allocated cache
+	_marker: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a, S: Storage> Iterator for LogIterator<'a, S> {
+	type Item = Event<'a>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		let header = {
+			// TODO: core::array::try_from_fn is in nightly
+			let mut header_bytes = [0u8; event::Header::SIZE];
+			for i in 0..event::Header::SIZE {
+				header_bytes[i] = self.storage.read(self.byte_index)?;
+			}
+			event::Header::from_bytes(&header_bytes);
+		}
+
+		let payload = {
+			let mut payload = [0u8; ]
+		}
+
+		// Get Payload
+		panic!("TODO: collect Header, then collect Payload");
+	}
+}
+impl<'a, S: Storage> IntoIterator for Log<'a, S> {
+	type Item = Event<'a>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		self.data.into_iter()
+	}
+}
+*/
 impl<'a> Enqueued<'a> {
-	fn append(&mut self, e: &event::Event) -> usize {
+	/// Returns bytes enqueued
+	fn append(&mut self, e: &Event) -> usize {
 		self.offsets.update(e);
 		e.append_to(&mut self.events);
 		self.events.len()
 	}
 
+	/// Returns all relevant data to be committed
 	fn txn(&'a self) -> Transaction<'a> {
 		let offsets = self.offsets.tail();
 		let events = &self.events[0..self.offsets.size_spanned()];
@@ -165,7 +221,7 @@ impl<'a> StorageOffsets<'a> {
 		self.0.last().copied().unwrap()
 	}
 
-	fn update(&mut self, e: &event::Event) {
+	fn update(&mut self, e: &Event) {
 		let last = self.0.last().copied().unwrap();
 		let offset = last.next(e);
 		core::assert!(offset.0 > last.0);
@@ -185,6 +241,8 @@ impl<'a> StorageOffsets<'a> {
 	}
 
 	fn reset(&mut self) {
+		// By definiton, the last committed event is the first thing in the
+		// eqneued buffer before reseting, which happens after committing
 		let last_cmtd_event = self.0.first().copied().unwrap();
 		self.0.clear();
 		self.0.push(last_cmtd_event);
@@ -193,11 +251,12 @@ impl<'a> StorageOffsets<'a> {
 
 impl StorageOffset {
 	fn new(n: usize) -> Self {
+		// All storage offsets must be 8 byte aligned
 		core::assert!(n % 8 == 0);
 		Self(n)
 	}
 
-	fn next(&self, e: &event::Event) -> Self {
+	fn next(&self, e: &Event) -> Self {
 		let size = event::Header::SIZE + e.payload.len();
 		Self::new(self.0 + align_to_8(size))
 	}
@@ -221,20 +280,20 @@ mod event {
 		pub fn append_to(&self, byte_vec: &mut Vec<u8>) {
 			let header =
 				Header { id: self.id, payload_len: self.payload.len() as u64 };
-			let header_bytes: &[u8; 32] = unsafe { mem::transmute(&header) };
 
-			byte_vec.extend_from_slice(header_bytes);
+			byte_vec.extend_from_slice(header.as_bytes());
 			byte_vec.extend_from_slice(self.payload);
 			byte_vec.resize(align_to_8(byte_vec.len()));
 		}
 
 		fn read(bytes: &'a [u8], offset: StorageOffset) -> Event<'a> {
 			let header_end = offset.0 + Header::SIZE;
-			let header_bytes: &[u8] = &bytes[offset.0..header_end];
-			let header: &Header =
-				unsafe { mem::transmute(header_bytes.as_ptr()) };
+			let header_bytes: &[u8; Header::SIZE] =
+				&bytes[offset.0..header_end].try_into().unwrap();
+			let header = Header::from_bytes(header_bytes);
 
-			let payload_end = header_end + header.payload_len as usize;
+			let payload_end =
+				header_end + usize::try_from(header.payload_len).unwrap();
 			let payload = &bytes[header_end..payload_end];
 
 			Self { id: header.id, payload }
@@ -248,6 +307,8 @@ mod event {
 		pub logical_pos: u64,
 	}
 
+	/// Stand alone, self describing header
+	/// All info here is needed to rebuild the log from a binary file.
 	#[repr(C)]
 	pub struct Header {
 		id: ID,
@@ -255,10 +316,56 @@ mod event {
 	}
 
 	impl Header {
-		pub const SIZE: usize = mem::size_of::<Header>();
+		pub const SIZE: usize = mem::size_of::<Self>();
+
+		fn as_bytes(&self) -> &[u8; Self::SIZE] {
+			unsafe { mem::transmute(&self) }
+		}
+
+		pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> &Self {
+			unsafe { mem::transmute(bytes.as_ptr()) }
+		}
 	}
+
+	const _: () = assert!(mem::size_of::<ID>() == 24);
+	const _: () = assert!(Header::SIZE == 32);
 }
 
 fn align_to_8(n: usize) -> usize {
 	(n + 7) & !7
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use pretty_assertions::assert_eq;
+
+	#[test]
+	fn lets_write_some_bytes() {
+		/*
+		const bytes_buf = try testing.allocator.alloc(u8, 127);
+		defer testing.allocator.free(bytes_buf);
+		var buf = Event.Buf.init(bytes_buf);
+
+		const seed: u64 = std.crypto.random.int(u64);
+		var rng = std.Random.Pcg.init(seed);
+		const id = Addr.init(std.Random.Pcg, &rng);
+
+		const evt = Event{
+			.id = .{ .origin = id, .logical_pos = 0 },
+			.payload = "j;fkls",
+		};
+
+		buf.append(&evt);
+		var it = buf.iter();
+
+		while (it.next()) |e| {
+			try testing.expectEqualSlices(u8, evt.payload, e.payload);
+		}
+
+		const actual = buf.read(StorageOffset.zero);
+
+		try testing.expectEqualDeep(actual, evt);
+		*/
+	}
 }

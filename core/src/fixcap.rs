@@ -2,7 +2,12 @@ use core::fmt;
 use core::ops;
 use core::slice::SliceIndex;
 
-use crate::mem;
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct Overrun {
+	pub capacity: usize,
+	pub requested: usize,
+}
 
 /**
  * Fixed Capacity Data Structures.
@@ -10,7 +15,7 @@ use crate::mem;
  * Heavily inspired by Tigerbeetle:
  * https://tigerbeetle.com/blog/a-database-without-dynamic-memory
  */
-pub type Res = Result<(), mem::Overrun>;
+pub type Res = Result<(), Overrun>;
 
 /**
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
@@ -84,7 +89,7 @@ impl<'a, T> Vec<'a, T> {
 		let capacity = self.capacity();
 		(capacity >= requested)
 			.then_some(())
-			.ok_or(mem::Overrun { capacity, requested })
+			.ok_or(Overrun { capacity, requested })
 	}
 
 	pub fn push(&mut self, value: T) -> Res {
