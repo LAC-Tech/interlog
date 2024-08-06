@@ -38,7 +38,9 @@ struct Log<'a, S: Storage> {
 	cmtd: Committed<'a, S>,
 }
 
+#[cfg_attr(test, derive(PartialEq, Debug))]
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Addr {
 	word_a: u64,
 	word_b: u64,
@@ -298,7 +300,7 @@ mod event {
 			let header =
 				Header { id: self.id, payload_len: self.payload.len() as u64 };
 
-			byte_vec.extend_from_slice_unchecked(header.as_bytes());
+			byte_vec.extend_from_slice_unchecked(&header.as_bytes());
 			byte_vec.extend_from_slice_unchecked(self.payload);
 			byte_vec.resize(align_to_8(byte_vec.len())).unwrap();
 		}
@@ -389,14 +391,18 @@ mod event {
 	}
 
 	#[derive(Clone, Copy)]
+	#[cfg_attr(test, derive(PartialEq, Debug))]
 	#[repr(C)]
 	pub struct ID {
 		pub addr: Addr,
 		pub logical_pos: u64,
 	}
 
+	const _: () = assert!(mem::size_of::<ID>() == 24);
+
 	/// Stand alone, self describing header
 	/// All info here is needed to rebuild the log from a binary file.
+	#[cfg_attr(test, derive(PartialEq, Debug, Clone, Copy))]
 	#[repr(C)]
 	pub struct Header {
 		id: ID,
@@ -406,22 +412,39 @@ mod event {
 	impl Header {
 		pub const SIZE: usize = mem::size_of::<Self>();
 
-		fn as_bytes(&self) -> &[u8; Self::SIZE] {
-			unsafe { mem::transmute(&self) }
+		fn as_bytes(self) -> [u8; Self::SIZE] {
+			unsafe { mem::transmute(self) }
 		}
 
-		pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> &Self {
-			unsafe { mem::transmute(bytes.as_ptr()) }
+		pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> Self {
+			unsafe { mem::transmute(*bytes) }
 		}
 	}
 
-	const _: () = assert!(mem::size_of::<ID>() == 24);
 	const _: () = assert!(Header::SIZE == 32);
 
 	#[cfg(test)]
 	mod tests {
 		use super::*;
 		use pretty_assertions::assert_eq;
+		use proptest::prelude::*;
+
+		proptest! {
+			#[test]
+			fn header_serde(
+				rand_word_a in any::<u64>(),
+				rand_word_b in any::<u64>(),
+				logical_pos: u64,
+				payload_len: u64,
+			) {
+				let addr = Addr::new(rand_word_a, rand_word_b);
+				let id = ID {addr, logical_pos};
+				let expected = Header { id, payload_len };
+
+				let actual = Header::from_bytes(&expected.as_bytes());
+				assert_eq!(actual, expected);
+			}
+		}
 
 		#[test]
 		fn lets_write_some_bytes() {
