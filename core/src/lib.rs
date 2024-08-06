@@ -24,15 +24,14 @@ compile_error!("code assumes usize is u64");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
-mod fixcap;
-
+pub mod fixcap;
 mod linux;
 
 use event::Event;
 use fixcap::Vec;
 
 pub struct Log<'a, S: Storage> {
-	addr: Addr,
+	pub addr: Addr,
 	enqd: Enqueued<'a>,
 	cmtd: Committed<'a, S>,
 }
@@ -68,10 +67,10 @@ struct Committed<'a, S: Storage> {
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
 pub struct ExtAllocMem<'a> {
-	cmtd_offsets: &'a mut [StorageOffset],
-	cmtd_acqs: &'a mut [Addr],
-	enqd_offsets: &'a mut [StorageOffset],
-	enqd_events: &'a mut [u8],
+	pub cmtd_offsets: &'a mut [StorageOffset],
+	pub cmtd_acqs: &'a mut [Addr],
+	pub enqd_offsets: &'a mut [StorageOffset],
+	pub enqd_events: &'a mut [u8],
 }
 
 /// Maps a logical position (nth event) to a byte offset in storage
@@ -87,7 +86,7 @@ struct StorageOffsets<'a>(
 /// A - because I actually found a bug because when it was just a usize
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug))]
-struct StorageOffset(usize);
+pub struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
 struct Acquaintances<'a>(Vec<'a, Addr>);
@@ -147,8 +146,7 @@ impl<'a, S: Storage> Log<'a, S> {
 }
 
 impl Addr {
-	#[cfg(test)]
-	const ZERO: Self = Self { word_a: 0, word_b: 0 };
+	pub const ZERO: Self = Self { word_a: 0, word_b: 0 };
 
 	pub fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
 		Self { word_a: rand_word_a, word_b: rand_word_b }
@@ -237,7 +235,7 @@ impl<'a> StorageOffsets<'a> {
 }
 
 impl StorageOffset {
-	const ZERO: Self = Self(0);
+	pub const ZERO: Self = Self(0);
 
 	fn new(n: usize) -> Self {
 		// All storage offsets must be 8 byte aligned

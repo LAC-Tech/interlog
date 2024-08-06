@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 use std::iter;
 use std::panic::{self, AssertUnwindSafe};
 
+use interlog_core::{ExtAllocMem, Storage, StorageOffset};
+
 const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
 
 mod config {
-	use interlog_core::storage;
-
 	pub struct Range(usize, usize);
 
 	impl Range {
@@ -33,35 +33,33 @@ mod config {
 		}
 	}
 
-	pub const N_LOGS: Range = max(256);
+	pub const MAX_LOGS: usize = 256;
+	pub const N_LOGS: Range = max(MAX_LOGS);
 	pub const PAYLOADS_PER_LOG: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
 	pub const MSG_LEN: Range = Range(0, 50);
 	pub const CHANCE_OF_WRITE_PER_TICK: Range = Range(1, 50);
 
 	// Currently just something "big enough", later handle disk overflow
-	pub const STORAGE_CAPACITY: storage::Qty = storage::Qty(10_000_000);
+	pub const STORAGE_CAPACITY: usize = 10_000_000;
 }
 
 // TODO: introduce faults
-struct AppendOnlyMemory(fixcap::Vec<u8>);
+struct AppendOnlyMemory<'a>(fixcap::Vec<'a, u8>);
 
-impl AppendOnlyMemory {
-	fn new() -> Self {
-		Self(fixcap::Vec::new(config::STORAGE_CAPACITY.0))
+impl<'a> AppendOnlyMemory<'a> {
+	fn new(byte_buf: &'a mut [u8]) -> Self {
+		Self(fixcap::Vec::new(byte_buf))
+	}
+
+	fn used(&self) -> usize {
+		self.0.len()
 	}
 }
 
-impl storage::AppendOnly for AppendOnlyMemory {
-	fn used(&self) -> storage::Qty {
-		storage::Qty(self.0.len())
-	}
-
-	fn append(&mut self, data: &[u8]) -> Result<(), storage::Overrun> {
-		self.0
-			.extend_from_slice(data)
-			// TODO: should storage overrun have the same fields?
-			.map_err(|mem::Overrun { .. }| storage::Overrun)
+impl<'a> Storage for AppendOnlyMemory<'a> {
+	fn append(&mut self, data: &[u8]) {
+		self.0.extend_from_slice_unchecked(data);
 	}
 
 	fn read(&self, buf: &mut [u8], offset: usize) {
@@ -70,24 +68,38 @@ impl storage::AppendOnly for AppendOnlyMemory {
 }
 
 // An environment, representing some source of messages, and a log
-struct Env {
-	log: Log<AppendOnlyMemory>,
+struct Env<'a> {
+	log: Log<'a, AppendOnlyMemory<'a>>,
 	// The dimensions of each of the messages sent are pre-calculated
 	msg_lens: Vec<usize>,
 	payload_sizes: Vec<usize>,
 }
 
-impl Env {
+impl<'a> Env<'a> {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
-		let config = ExtAllocMem {
-			txn_size: storage::Qty(
-				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max(),
-			),
-			max_txn_events: LogicalQty(config::MSG_LEN.max()),
-			max_events: LogicalQty(1_000_000),
+		let addr = Addr::new(rng.gen(), rng.gen());
+
+		let storage = AppendOnlyMemory::new(
+			Box::new([0u8; config::STORAGE_CAPACITY]).as_mut_slice(),
+		);
+
+		let ext_alloc_mem = ExtAllocMem {
+			cmtd_offsets: Box::new([StorageOffset::ZERO; 1_000_000])
+				.as_mut_slice(),
+
+			cmtd_acqs: Box::new([Addr::ZERO; config::MAX_LOGS]).as_mut_slice(),
+			enqd_offsets: Box::new(
+				[StorageOffset::ZERO; config::MSG_LEN.max()],
+			)
+			.as_mut_slice(),
+
+			enqd_events: Box::new(
+				[0u8; config::MSG_LEN.max() * config::PAYLOAD_SIZE.max()],
+			)
+			.as_mut_slice(),
 		};
 
-		let log = Log::new(Addr::new(rng), config, AppendOnlyMemory::new());
+		let log = Log::new(addr, storage, ext_alloc_mem);
 		let payloads_per_actor = config::PAYLOADS_PER_LOG.gen(rng);
 
 		let msg_lens: Vec<usize> =
@@ -156,10 +168,10 @@ impl Env {
 	}
 }
 
-struct Context<const N: usize> {
+struct Context<'a, const N: usize> {
 	stats: Stats,
 	payload_buf: [u8; N],
-	payload_lens: fixcap::Vec<usize>,
+	payload_lens: fixcap::Vec<'a, usize>,
 }
 
 #[derive(Debug)]
