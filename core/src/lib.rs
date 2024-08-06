@@ -25,12 +25,12 @@ compile_error!("code assumes usize is u64");
 compile_error!("code assumes little-endian");
 
 pub mod fixcap;
-pub mod storage;
 #[cfg(test)]
 mod test_utils;
 
 mod linux;
 
+use core::ops::RangeBounds;
 use event::Event;
 use fixcap::Vec;
 
@@ -140,6 +140,14 @@ impl<'a, S: Storage> Log<'a, S> {
 	fn rollback(&mut self) {
 		self.enqd.reset();
 	}
+
+	fn read(
+		&self,
+		range: impl RangeBounds<usize>,
+		buf: &mut event::Buf,
+	) -> fixcap::Res {
+		self.cmtd.read(range, buf)
+	}
 }
 
 /*
@@ -205,6 +213,30 @@ impl<'a, S: Storage> Committed<'a, S> {
 		self.offsets.extend(offsets);
 		self.storage.append(events);
 	}
+
+	fn read<R: RangeBounds<usize>>(
+		&self,
+		range: R,
+		buf: &mut event::Buf,
+	) -> fixcap::Res {
+		buf.clear();
+		let range = (
+			range.start_bound().cloned(),
+			range.end_bound().cloned().map(|n| n + 1),
+		);
+
+		let offsets: &[StorageOffset] = &self.offsets.0[range];
+
+		let offsets = offsets
+			.first()
+			.cloned()
+			.zip(offsets.last().cloned())
+			.map(|(start, end)| (start.0, end.0 - start.0));
+
+		offsets.map_or(Ok(()), |(offset, len)| {
+			buf.fill(len, |words| self.storage.read(words, offset))
+		})
+	}
 }
 
 impl<'a> StorageOffsets<'a> {
@@ -258,8 +290,7 @@ impl StorageOffset {
 	}
 
 	fn next(&self, e: &Event) -> Self {
-		let size = event::Header::SIZE + e.payload.len();
-		Self::new(self.0 + align_to_8(size))
+		Self::new(self.0 + e.stored_size())
 	}
 }
 
@@ -270,7 +301,7 @@ impl<'a> Acquaintances<'a> {
 }
 
 mod event {
-	use super::{align_to_8, Addr, StorageOffset, Vec};
+	use super::{align_to_8, fixcap, Addr, StorageOffset, Vec};
 	use core::mem;
 	pub struct Event<'a> {
 		pub id: ID,
@@ -298,6 +329,37 @@ mod event {
 			let payload = &bytes[header_end..payload_end];
 
 			Self { id: header.id, payload }
+		}
+
+		/// How much space it will take in storage, in bytes
+		pub fn stored_size(&self) -> usize {
+			return Header::SIZE + align_to_8(self.payload.len());
+		}
+	}
+
+	pub struct Buf<'a> {
+		num_events: usize,
+		bytes: Vec<'a, u8>,
+	}
+
+	impl<'a> Buf<'a> {
+		fn push(&mut self, e: Event) {
+			e.append_to(&mut self.bytes)
+		}
+
+		pub fn clear(&mut self) {
+			self.num_events = 0;
+			self.bytes.clear();
+		}
+
+		pub fn fill(
+			&mut self,
+			len: usize,
+			f: impl Fn(&mut [u8]),
+		) -> fixcap::Res {
+			self.bytes.resize(len)?;
+			f(&mut self.bytes);
+			Ok(())
 		}
 	}
 
