@@ -24,15 +24,14 @@ compile_error!("code assumes usize is u64");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
-pub mod fixcap;
+mod fixcap;
 
 mod linux;
 
-use core::ops::RangeBounds;
 use event::Event;
 use fixcap::Vec;
 
-struct Log<'a, S: Storage> {
+pub struct Log<'a, S: Storage> {
 	addr: Addr,
 	enqd: Enqueued<'a>,
 	cmtd: Committed<'a, S>,
@@ -41,7 +40,7 @@ struct Log<'a, S: Storage> {
 #[cfg_attr(test, derive(PartialEq, Debug))]
 #[derive(Clone, Copy)]
 #[repr(C)]
-struct Addr {
+pub struct Addr {
 	word_a: u64,
 	word_b: u64,
 }
@@ -56,12 +55,6 @@ struct Transaction<'a> {
 	events: &'a [u8],
 }
 
-struct Segment {
-	event_count: usize,
-	offset: usize,
-	len: usize,
-}
-
 struct Committed<'a, S: Storage> {
 	offsets: StorageOffsets<'a>,
 	acqs: Acquaintances<'a>,
@@ -74,7 +67,7 @@ struct Committed<'a, S: Storage> {
 // interrupt; result = writes with no checks / error checks i.e. no stalls for
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
-struct ExtAllocMem<'a> {
+pub struct ExtAllocMem<'a> {
 	cmtd_offsets: &'a mut [StorageOffset],
 	cmtd_acqs: &'a mut [Addr],
 	enqd_offsets: &'a mut [StorageOffset],
@@ -93,6 +86,7 @@ struct StorageOffsets<'a>(
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
@@ -110,7 +104,7 @@ pub trait Storage {
 }
 
 impl<'a, S: Storage> Log<'a, S> {
-	fn new(addr: Addr, storage: S, ext_alloc_mem: ExtAllocMem<'a>) -> Self {
+	pub fn new(addr: Addr, storage: S, ext_alloc_mem: ExtAllocMem<'a>) -> Self {
 		let enqd = Enqueued {
 			offsets: StorageOffsets::new(ext_alloc_mem.enqd_offsets),
 			events: Vec::new(ext_alloc_mem.enqd_events),
@@ -124,7 +118,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	}
 
 	/// Returns bytes enqueued
-	fn enqueue(&mut self, payload: &[u8]) -> usize {
+	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
 		let logical_pos =
 			self.enqd.offsets.event_count() + self.cmtd.offsets.event_count();
 		let logical_pos = u64::try_from(logical_pos).unwrap();
@@ -135,7 +129,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	}
 
 	/// Returns number of events committed
-	fn commit(&mut self) -> usize {
+	pub fn commit(&mut self) -> usize {
 		let txn = self.enqd.txn();
 		let result = txn.offsets.len();
 		self.cmtd.write(txn.offsets, txn.events);
@@ -143,16 +137,12 @@ impl<'a, S: Storage> Log<'a, S> {
 		result
 	}
 
-	fn rollback(&mut self) {
+	pub fn rollback(&mut self) {
 		self.enqd.reset();
 	}
 
-	fn read(
-		&self,
-		range: impl RangeBounds<usize>,
-		buf: &mut event::Buf,
-	) -> fixcap::Res {
-		self.cmtd.read(range, buf)
+	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
+		self.cmtd.read_from_end(n, buf)
 	}
 }
 
@@ -160,7 +150,7 @@ impl Addr {
 	#[cfg(test)]
 	const ZERO: Self = Self { word_a: 0, word_b: 0 };
 
-	fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
+	pub fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
 		Self { word_a: rand_word_a, word_b: rand_word_b }
 	}
 }
@@ -175,8 +165,9 @@ impl<'a> Enqueued<'a> {
 
 	/// Returns all relevant data to be committed
 	fn txn(&'a self) -> Transaction<'a> {
+		let size = self.offsets.size_spanned();
 		let offsets = self.offsets.tail();
-		let events = &self.events[0..self.offsets.size_spanned()];
+		let events = &self.events[0..size];
 		Transaction { offsets, events }
 	}
 
@@ -192,21 +183,13 @@ impl<'a, S: Storage> Committed<'a, S> {
 		self.storage.append(events);
 	}
 
-	fn read<R: RangeBounds<usize>>(
-		&self,
-		range: R,
-		buf: &mut event::Buf,
-	) -> fixcap::Res {
-		buf.clear();
+	fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
+		let offsets = self.offsets.as_slice();
+		let offsets = &offsets[offsets.len() - 1 - n..];
+		let first = offsets[0];
+		let size = offsets[offsets.len() - 1].0 - first.0;
 
-		self.offsets.segment(range).map_or(
-			Ok(()),
-			|Segment { event_count, offset, len }| {
-				buf.fill(event_count, len, |words| {
-					self.storage.read(words, offset)
-				})
-			},
-		)
+		buf.fill(n, size, |words| self.storage.read(words, first.0))
 	}
 }
 
@@ -219,10 +202,6 @@ impl<'a> StorageOffsets<'a> {
 
 	fn event_count(&self) -> usize {
 		self.0.len() - 1
-	}
-
-	fn last(&self) -> StorageOffset {
-		self.0.last().copied().unwrap()
 	}
 
 	fn update(&mut self, e: &Event) {
@@ -247,26 +226,13 @@ impl<'a> StorageOffsets<'a> {
 	fn reset(&mut self) {
 		// By definiton, the last committed event is the first thing in the
 		// eqneued buffer before reseting, which happens after committing
-		let last_cmtd_event = self.0.first().copied().unwrap();
+		let last_cmtd_event = self.0.last().copied().unwrap();
 		self.0.clear();
 		self.0.push_unchecked(last_cmtd_event);
 	}
 
-	fn segment(&self, range: impl RangeBounds<usize>) -> Option<Segment> {
-		let range = (
-			range.start_bound().cloned(),
-			range.end_bound().cloned().map(|n| n + 1),
-		);
-
-		let offsets: &[StorageOffset] = &self.0[range];
-
-		offsets.first().cloned().zip(offsets.last().cloned()).map(
-			|(start, end)| Segment {
-				event_count: offsets.len(),
-				offset: start.0,
-				len: end.0 - start.0,
-			},
-		)
+	fn as_slice(&self) -> &[StorageOffset] {
+		&self.0
 	}
 }
 
@@ -301,8 +267,10 @@ mod event {
 
 	impl<'a> Event<'a> {
 		pub fn append_to(&self, byte_vec: &mut Vec<u8>) {
-			let header =
-				Header { id: self.id, payload_len: self.payload.len() as u64 };
+			let header = Header {
+				id: self.id,
+				payload_len: u64::try_from(self.payload.len()).unwrap(),
+			};
 
 			byte_vec.extend_from_slice_unchecked(&header.as_bytes());
 			byte_vec.extend_from_slice_unchecked(self.payload);
@@ -416,6 +384,10 @@ mod event {
 	impl Header {
 		pub const SIZE: usize = mem::size_of::<Self>();
 
+		// SAFETY: Header:
+		// - has a fixed C representation
+		// - a const time checked size of 32
+		// - is memcpyable - has a flat memory structrure with no pointers
 		fn as_bytes(self) -> [u8; Self::SIZE] {
 			unsafe { mem::transmute(self) }
 		}
@@ -502,7 +474,7 @@ mod tests {
 		let ext_alloc_mem = ExtAllocMem {
 			enqd_events: &mut [0u8; 136],
 			enqd_offsets: &mut [StorageOffset::ZERO; 3],
-			cmtd_offsets: &mut [StorageOffset::ZERO; 3],
+			cmtd_offsets: &mut [StorageOffset::ZERO; 5],
 			cmtd_acqs: &mut [Addr::ZERO; 1],
 		};
 
@@ -513,62 +485,44 @@ mod tests {
 		{
 			assert_eq!(log.enqueue(b"I have known the arcane law"), 64);
 			assert_eq!(log.commit(), 1);
-			log.read(..1, &mut read_buf).unwrap();
+			log.read_from_end(1, &mut read_buf).unwrap();
 			let actual = read_buf.iter().next().unwrap().payload;
-			assert_eq!(actual, b"I have known the arcane law")
+			assert_eq!(actual, b"I have known the arcane law");
 		}
 
 		{
 			assert_eq!(log.enqueue(b"On strange roads, such visions met"), 72);
 			assert_eq!(log.commit(), 1);
-			log.read(1.., &mut read_buf).unwrap();
-			let actual =
-				core::str::from_utf8(read_buf.iter().next().unwrap().payload)
-					.unwrap();
-			assert_eq!(actual, "On strange roads, such visions met");
+			log.read_from_end(1, &mut read_buf).unwrap();
+			let actual = read_buf.iter().next().unwrap().payload;
+			assert_eq!(actual, b"On strange roads, such visions met");
 		}
 
-		/*
-
-
 		// Read multiple things from the buffer
-		try log.readFromEnd(2, &read_buf);
-		it = read_buf.iter();
-
-		try testing.expectEqualSlices(
-			u8,
-			"I have known the arcane law",
-			it.next().?.payload,
-		);
-
-		try testing.expectEqualSlices(
-			u8,
-			"On strange roads, such visions met",
-			it.next().?.payload,
-		);
+		{
+			log.read_from_end(2, &mut read_buf).unwrap();
+			let mut it = read_buf.iter();
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, b"I have known the arcane law");
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, b"On strange roads, such visions met");
+		}
 
 		// Bulk commit two things
-		try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
-		try testing.expectEqual(
-			136,
-			log.enqueue("For dangers and obstacles of this world"),
-		);
-		try testing.expectEqual(log.commit(), 2);
+		{
+			assert_eq!(log.enqueue(b"That I have no fear, nor concern"), 64);
+			assert_eq!(
+				log.enqueue(b"For dangers and obstacles of this world"),
+				136
+			);
+			assert_eq!(log.commit(), 2);
 
-		try log.readFromEnd(2, &read_buf);
-		it = read_buf.iter();
-
-		try testing.expectEqualSlices(
-			u8,
-			"That I have no fear, nor concern",
-			it.next().?.payload,
-		);
-
-		try testing.expectEqualSlices(
-			u8,
-			"For dangers and obstacles of this world",
-			it.next().?.payload,
-		);
-		*/
+			log.read_from_end(2, &mut read_buf).unwrap();
+			let mut it = read_buf.iter();
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, b"That I have no fear, nor concern");
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, b"For dangers and obstacles of this world");
+		}
 	}
 }
