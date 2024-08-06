@@ -54,6 +54,12 @@ struct Transaction<'a> {
 	events: &'a [u8],
 }
 
+struct Segment {
+	event_count: usize,
+	offset: usize,
+	len: usize,
+}
+
 struct Committed<'a, S: Storage> {
 	offsets: StorageOffsets<'a>,
 	acqs: Acquaintances<'a>,
@@ -188,9 +194,14 @@ impl<'a, S: Storage> Committed<'a, S> {
 	) -> fixcap::Res {
 		buf.clear();
 
-		self.offsets.offset_len_pair(range).map_or(Ok(()), |(offset, len)| {
-			buf.fill(len, |words| self.storage.read(words, offset))
-		})
+		self.offsets.segment(range).map_or(
+			Ok(()),
+			|Segment { event_count, offset, len }| {
+				buf.fill(event_count, len, |words| {
+					self.storage.read(words, offset)
+				})
+			},
+		)
 	}
 }
 
@@ -236,23 +247,21 @@ impl<'a> StorageOffsets<'a> {
 		self.0.push_unchecked(last_cmtd_event);
 	}
 
-	fn offset_len_pair(
-		&self,
-		range: impl RangeBounds<usize>,
-	) -> Option<(usize, usize)> {
+	fn segment(&self, range: impl RangeBounds<usize>) -> Option<Segment> {
 		let range = (
 			range.start_bound().cloned(),
 			range.end_bound().cloned().map(|n| n + 1),
 		);
 
-		// TODO: should this stuff be part of StorageOffsets
 		let offsets: &[StorageOffset] = &self.0[range];
 
-		offsets
-			.first()
-			.cloned()
-			.zip(offsets.last().cloned())
-			.map(|(start, end)| (start.0, end.0 - start.0))
+		offsets.first().cloned().zip(offsets.last().cloned()).map(
+			|(start, end)| Segment {
+				event_count: offsets.len(),
+				offset: start.0,
+				len: end.0 - start.0,
+			},
+		)
 	}
 }
 
@@ -314,31 +323,34 @@ mod event {
 	}
 
 	pub struct Buf<'a> {
-		num_events: usize,
+		event_count: usize,
 		bytes: Vec<'a, u8>,
 	}
 
 	impl<'a> Buf<'a> {
 		pub fn new(buf: &'a mut [u8]) -> Self {
-			Self { num_events: 0, bytes: Vec::new(buf) }
+			Self { event_count: 0, bytes: Vec::new(buf) }
 		}
 
 		fn push(&mut self, e: &Event) {
-			e.append_to(&mut self.bytes)
+			e.append_to(&mut self.bytes);
+			self.event_count += 1;
 		}
 
 		pub fn clear(&mut self) {
-			self.num_events = 0;
+			self.event_count = 0;
 			self.bytes.clear();
 		}
 
 		pub fn fill(
 			&mut self,
-			len: usize,
+			event_count: usize,
+			byte_len: usize,
 			f: impl Fn(&mut [u8]),
 		) -> fixcap::Res {
-			self.bytes.resize(len)?;
+			self.bytes.resize(byte_len)?;
 			f(&mut self.bytes);
+			self.event_count = event_count;
 			Ok(())
 		}
 
@@ -365,7 +377,7 @@ mod event {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			if self.event_index == self.buf.num_events {
+			if self.event_index == self.buf.event_count {
 				return None;
 			}
 
