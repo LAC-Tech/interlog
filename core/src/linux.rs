@@ -3,8 +3,7 @@ use fs::OFlags;
 use rustix::fd::AsFd;
 use rustix::{fd, fs, io};
 
-use crate::fixed_capacity::Vec;
-use crate::mem;
+use crate::fixcap::Vec;
 
 type O = OFlags;
 
@@ -15,18 +14,20 @@ pub enum AppendErr {
 }
 
 #[derive(Debug)]
-pub struct Log(fd::OwnedFd);
+struct AppendOnlyFile(fd::OwnedFd);
 
-impl Log {
+impl AppendOnlyFile {
 	pub fn open(path: &str) -> io::Result<Self> {
 		let flags = O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC;
 		let mode = fs::Mode::RUSR | fs::Mode::WUSR;
-		fs::open(path, flags, mode).map(Log)
+		let fd = fs::open(path, flags, mode)?;
+
+		Ok(Self(fd))
 	}
 
 	pub fn append<B>(&self, bytes: B) -> Result<usize, AppendErr>
 	where
-		B: AsRef<[mem::Word]>,
+		B: AsRef<[u8]>,
 	{
 		let bytes = bytes.as_ref();
 		let fd = self.0.as_fd();
@@ -44,7 +45,7 @@ impl Log {
 	/// Returns number of bytes read
 	pub fn read(
 		&self,
-		buf: &mut Vec<mem::Word>,
+		buf: &mut Vec<u8>,
 		byte_offset: usize,
 	) -> io::Result<()> {
 		let fd = self.0.as_fd();

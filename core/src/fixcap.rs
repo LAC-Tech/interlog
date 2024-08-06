@@ -47,6 +47,10 @@ impl<'a, T: core::default::Default + Clone> Vec<'a, T> {
 		Ok(())
 	}
 
+	pub fn resize_unchecked(&mut self, new_len: usize) {
+		self.resize(new_len).expect("Vec does not have enough capacity")
+	}
+
 	pub fn fill(&mut self, len: usize, f: impl Fn(&mut [T])) -> Res {
 		self.resize(len)?;
 		f(&mut self.items[..len]);
@@ -99,6 +103,10 @@ impl<'a, T> Vec<'a, T> {
 		Ok(())
 	}
 
+	pub fn push_unchecked(&mut self, value: T) {
+		self.push(value).expect("Vec to have enough capacity")
+	}
+
 	pub fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> Res {
 		for elem in iter {
 			self.push(elem)?;
@@ -137,6 +145,10 @@ impl<'a, T: Copy> Vec<'a, T> {
 		self.items[self.len..new_len].copy_from_slice(other);
 		self.len = new_len;
 		Ok(())
+	}
+
+	pub fn extend_from_slice_unchecked(&mut self, other: &[T]) {
+		self.extend_from_slice(other).expect("Vec to have enough capacity")
 	}
 }
 

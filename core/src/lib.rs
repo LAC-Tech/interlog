@@ -29,7 +29,8 @@ pub mod storage;
 #[cfg(test)]
 mod test_utils;
 
-use core::iter;
+mod linux;
+
 use event::Event;
 use fixcap::Vec;
 
@@ -209,7 +210,7 @@ impl<'a, S: Storage> Committed<'a, S> {
 impl<'a> StorageOffsets<'a> {
 	fn new(buf: &'a mut [StorageOffset]) -> Self {
 		let mut vec = Vec::new(buf);
-		vec.push(StorageOffset::new(0));
+		vec.push_unchecked(StorageOffset::new(0));
 		Self(vec)
 	}
 
@@ -225,7 +226,7 @@ impl<'a> StorageOffsets<'a> {
 		let last = self.0.last().copied().unwrap();
 		let offset = last.next(e);
 		core::assert!(offset.0 > last.0);
-		self.0.push(offset).unwrap();
+		self.0.push_unchecked(offset);
 	}
 
 	fn size_spanned(&self) -> usize {
@@ -245,7 +246,7 @@ impl<'a> StorageOffsets<'a> {
 		// eqneued buffer before reseting, which happens after committing
 		let last_cmtd_event = self.0.first().copied().unwrap();
 		self.0.clear();
-		self.0.push(last_cmtd_event);
+		self.0.push_unchecked(last_cmtd_event);
 	}
 }
 
@@ -281,9 +282,9 @@ mod event {
 			let header =
 				Header { id: self.id, payload_len: self.payload.len() as u64 };
 
-			byte_vec.extend_from_slice(header.as_bytes());
-			byte_vec.extend_from_slice(self.payload);
-			byte_vec.resize(align_to_8(byte_vec.len()));
+			byte_vec.extend_from_slice_unchecked(header.as_bytes());
+			byte_vec.extend_from_slice_unchecked(self.payload);
+			byte_vec.resize(align_to_8(byte_vec.len())).unwrap();
 		}
 
 		fn read(bytes: &'a [u8], offset: StorageOffset) -> Event<'a> {
