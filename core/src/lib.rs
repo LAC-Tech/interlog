@@ -66,7 +66,8 @@ struct Committed<'a, S: Storage> {
 // interrupt; result = writes with no checks / error checks i.e. no stalls for
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
-pub struct ExtAllocMem<'a> {
+/// Memory provided to the log from the outisde. A log never allocates.
+pub struct ExternalMemory<'a> {
 	pub cmtd_offsets: &'a mut [StorageOffset],
 	pub cmtd_acqs: &'a mut [Addr],
 	pub enqd_offsets: &'a mut [StorageOffset],
@@ -103,14 +104,14 @@ pub trait Storage {
 }
 
 impl<'a, S: Storage> Log<'a, S> {
-	pub fn new(addr: Addr, storage: S, ext_alloc_mem: ExtAllocMem<'a>) -> Self {
+	pub fn new(addr: Addr, storage: S, ext_mem: ExternalMemory<'a>) -> Self {
 		let enqd = Enqueued {
-			offsets: StorageOffsets::new(ext_alloc_mem.enqd_offsets),
-			events: Vec::new(ext_alloc_mem.enqd_events),
+			offsets: StorageOffsets::new(ext_mem.enqd_offsets),
+			events: Vec::new(ext_mem.enqd_events),
 		};
 		let cmtd = Committed {
-			offsets: StorageOffsets::new(ext_alloc_mem.cmtd_offsets),
-			acqs: Acquaintances::new(ext_alloc_mem.cmtd_acqs),
+			offsets: StorageOffsets::new(ext_mem.cmtd_offsets),
+			acqs: Acquaintances::new(ext_mem.cmtd_acqs),
 			storage,
 		};
 		Self { addr, enqd, cmtd }
@@ -469,14 +470,14 @@ mod tests {
 	fn enqueue_commit_and_read_data() {
 		let mut test_storage_buf = [0u8; 272];
 		let storage = TestStorage::new(&mut test_storage_buf);
-		let ext_alloc_mem = ExtAllocMem {
+		let ext_mem = ExternalMemory {
 			enqd_events: &mut [0u8; 136],
 			enqd_offsets: &mut [StorageOffset::ZERO; 3],
 			cmtd_offsets: &mut [StorageOffset::ZERO; 5],
 			cmtd_acqs: &mut [Addr::ZERO; 1],
 		};
 
-		let mut log = Log::new(Addr::ZERO, storage, ext_alloc_mem);
+		let mut log = Log::new(Addr::ZERO, storage, ext_mem);
 		let mut read_buf = [0u8; 136];
 		let mut read_buf = event::Buf::new(&mut read_buf);
 
