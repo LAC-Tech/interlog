@@ -157,6 +157,9 @@ impl<'a, S: Storage> Log<'a, S> {
 }
 
 impl Addr {
+	#[cfg(test)]
+	const ZERO: Self = Self { word_a: 0, word_b: 0 };
+
 	fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
 		Self { word_a: rand_word_a, word_b: rand_word_b }
 	}
@@ -210,7 +213,7 @@ impl<'a, S: Storage> Committed<'a, S> {
 impl<'a> StorageOffsets<'a> {
 	fn new(buf: &'a mut [StorageOffset]) -> Self {
 		let mut vec = Vec::new(buf);
-		vec.push_unchecked(StorageOffset::new(0));
+		vec.push_unchecked(StorageOffset::ZERO);
 		Self(vec)
 	}
 
@@ -238,7 +241,7 @@ impl<'a> StorageOffsets<'a> {
 	}
 
 	fn extend(&mut self, other: &[StorageOffset]) {
-		self.0.extend_from_slice(&other).unwrap();
+		self.0.extend_from_slice_unchecked(other);
 	}
 
 	fn reset(&mut self) {
@@ -268,6 +271,8 @@ impl<'a> StorageOffsets<'a> {
 }
 
 impl StorageOffset {
+	const ZERO: Self = Self(0);
+
 	fn new(n: usize) -> Self {
 		// All storage offsets must be 8 byte aligned
 		core::assert!(n % 8 == 0);
@@ -287,7 +292,6 @@ impl<'a> Acquaintances<'a> {
 
 mod event {
 	use super::{align_to_8, fixcap, Addr, StorageOffset, Vec};
-	use core::iter;
 	use core::mem;
 
 	pub struct Event<'a> {
@@ -320,7 +324,7 @@ mod event {
 
 		/// How much space it will take in storage, in bytes
 		pub fn stored_size(&self) -> usize {
-			return Header::SIZE + align_to_8(self.payload.len());
+			Header::SIZE + align_to_8(self.payload.len())
 		}
 	}
 
@@ -360,9 +364,9 @@ mod event {
 			&self.bytes
 		}
 
-		fn iter(&'a self) -> BufIterator<'a> {
+		pub fn iter(&'a self) -> BufIterator<'a> {
 			BufIterator {
-				buf: &self,
+				buf: self,
 				event_index: 0,
 				offset_index: StorageOffset::new(0),
 			}
@@ -430,6 +434,7 @@ mod event {
 		use proptest::prelude::*;
 
 		proptest! {
+			// There we go now my transmuting is safe
 			#[test]
 			fn header_serde(
 				rand_word_a in any::<u64>(),
@@ -464,4 +469,106 @@ mod event {
 
 fn align_to_8(n: usize) -> usize {
 	(n + 7) & !7
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use pretty_assertions::assert_eq;
+	use proptest::prelude::*;
+
+	struct TestStorage<'a>(fixcap::Vec<'a, u8>);
+
+	impl<'a> TestStorage<'a> {
+		fn new(slice: &'a mut [u8]) -> Self {
+			Self(Vec::new(slice))
+		}
+	}
+
+	impl<'a> Storage for TestStorage<'a> {
+		fn append(&mut self, data: &[u8]) {
+			self.0.extend_from_slice_unchecked(data)
+		}
+
+		fn read(&self, buf: &mut [u8], offset: usize) {
+			buf.copy_from_slice(&self.0[offset..offset + buf.len()])
+		}
+	}
+
+	#[test]
+	fn enqueue_commit_and_read_data() {
+		let mut test_storage_buf = [0u8; 272];
+		let storage = TestStorage::new(&mut test_storage_buf);
+		let ext_alloc_mem = ExtAllocMem {
+			enqd_events: &mut [0u8; 136],
+			enqd_offsets: &mut [StorageOffset::ZERO; 3],
+			cmtd_offsets: &mut [StorageOffset::ZERO; 3],
+			cmtd_acqs: &mut [Addr::ZERO; 1],
+		};
+
+		let mut log = Log::new(Addr::ZERO, storage, ext_alloc_mem);
+		let mut read_buf = [0u8; 136];
+		let mut read_buf = event::Buf::new(&mut read_buf);
+
+		{
+			assert_eq!(log.enqueue(b"I have known the arcane law"), 64);
+			assert_eq!(log.commit(), 1);
+			log.read(..1, &mut read_buf).unwrap();
+			let actual = read_buf.iter().next().unwrap().payload;
+			assert_eq!(actual, b"I have known the arcane law")
+		}
+
+		{
+			assert_eq!(log.enqueue(b"On strange roads, such visions met"), 72);
+			assert_eq!(log.commit(), 1);
+			log.read(1.., &mut read_buf).unwrap();
+			let actual =
+				core::str::from_utf8(read_buf.iter().next().unwrap().payload)
+					.unwrap();
+			assert_eq!(actual, "On strange roads, such visions met");
+		}
+
+		/*
+
+
+		// Read multiple things from the buffer
+		try log.readFromEnd(2, &read_buf);
+		it = read_buf.iter();
+
+		try testing.expectEqualSlices(
+			u8,
+			"I have known the arcane law",
+			it.next().?.payload,
+		);
+
+		try testing.expectEqualSlices(
+			u8,
+			"On strange roads, such visions met",
+			it.next().?.payload,
+		);
+
+		// Bulk commit two things
+		try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
+		try testing.expectEqual(
+			136,
+			log.enqueue("For dangers and obstacles of this world"),
+		);
+		try testing.expectEqual(log.commit(), 2);
+
+		try log.readFromEnd(2, &read_buf);
+		it = read_buf.iter();
+
+		try testing.expectEqualSlices(
+			u8,
+			"That I have no fear, nor concern",
+			it.next().?.payload,
+		);
+
+		try testing.expectEqualSlices(
+			u8,
+			"For dangers and obstacles of this world",
+			it.next().?.payload,
+		);
+		*/
+	}
 }
