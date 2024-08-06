@@ -1,4 +1,4 @@
-//! The core of interlog.
+//! The core of interog.
 //!
 //! Each log is
 //! - single threaded
@@ -25,8 +25,6 @@ compile_error!("code assumes usize is u64");
 compile_error!("code assumes little-endian");
 
 pub mod fixcap;
-#[cfg(test)]
-mod test_utils;
 
 mod linux;
 
@@ -150,43 +148,12 @@ impl<'a, S: Storage> Log<'a, S> {
 	}
 }
 
-/*
-struct LogIterator<'a, S: Storage> {
-	storage: S,
-	byte_index: usize,
-	// TODO probably won't need this later as storage will have allocated cache
-	_marker: core::marker::PhantomData<&'a ()>,
-}
-
-impl<'a, S: Storage> Iterator for LogIterator<'a, S> {
-	type Item = Event<'a>;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		let header = {
-			// TODO: core::array::try_from_fn is in nightly
-			let mut header_bytes = [0u8; event::Header::SIZE];
-			for i in 0..event::Header::SIZE {
-				header_bytes[i] = self.storage.read(self.byte_index)?;
-			}
-			event::Header::from_bytes(&header_bytes);
-		}
-
-		let payload = {
-			let mut payload = [0u8; ]
-		}
-
-		// Get Payload
-		panic!("TODO: collect Header, then collect Payload");
+impl Addr {
+	fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
+		Self { word_a: rand_word_a, word_b: rand_word_b }
 	}
 }
-impl<'a, S: Storage> IntoIterator for Log<'a, S> {
-	type Item = Event<'a>;
 
-	fn into_iter(self) -> Self::IntoIter {
-		self.data.into_iter()
-	}
-}
-*/
 impl<'a> Enqueued<'a> {
 	/// Returns bytes enqueued
 	fn append(&mut self, e: &Event) -> usize {
@@ -220,20 +187,8 @@ impl<'a, S: Storage> Committed<'a, S> {
 		buf: &mut event::Buf,
 	) -> fixcap::Res {
 		buf.clear();
-		let range = (
-			range.start_bound().cloned(),
-			range.end_bound().cloned().map(|n| n + 1),
-		);
 
-		let offsets: &[StorageOffset] = &self.offsets.0[range];
-
-		let offsets = offsets
-			.first()
-			.cloned()
-			.zip(offsets.last().cloned())
-			.map(|(start, end)| (start.0, end.0 - start.0));
-
-		offsets.map_or(Ok(()), |(offset, len)| {
+		self.offsets.offset_len_pair(range).map_or(Ok(()), |(offset, len)| {
 			buf.fill(len, |words| self.storage.read(words, offset))
 		})
 	}
@@ -280,6 +235,25 @@ impl<'a> StorageOffsets<'a> {
 		self.0.clear();
 		self.0.push_unchecked(last_cmtd_event);
 	}
+
+	fn offset_len_pair(
+		&self,
+		range: impl RangeBounds<usize>,
+	) -> Option<(usize, usize)> {
+		let range = (
+			range.start_bound().cloned(),
+			range.end_bound().cloned().map(|n| n + 1),
+		);
+
+		// TODO: should this stuff be part of StorageOffsets
+		let offsets: &[StorageOffset] = &self.0[range];
+
+		offsets
+			.first()
+			.cloned()
+			.zip(offsets.last().cloned())
+			.map(|(start, end)| (start.0, end.0 - start.0))
+	}
 }
 
 impl StorageOffset {
@@ -302,7 +276,9 @@ impl<'a> Acquaintances<'a> {
 
 mod event {
 	use super::{align_to_8, fixcap, Addr, StorageOffset, Vec};
+	use core::iter;
 	use core::mem;
+
 	pub struct Event<'a> {
 		pub id: ID,
 		pub payload: &'a [u8],
@@ -343,7 +319,11 @@ mod event {
 	}
 
 	impl<'a> Buf<'a> {
-		fn push(&mut self, e: Event) {
+		pub fn new(buf: &'a mut [u8]) -> Self {
+			Self { num_events: 0, bytes: Vec::new(buf) }
+		}
+
+		fn push(&mut self, e: &Event) {
 			e.append_to(&mut self.bytes)
 		}
 
@@ -360,6 +340,39 @@ mod event {
 			self.bytes.resize(len)?;
 			f(&mut self.bytes);
 			Ok(())
+		}
+
+		fn as_slice(&self) -> &[u8] {
+			&self.bytes
+		}
+
+		fn iter(&'a self) -> BufIterator<'a> {
+			BufIterator {
+				buf: &self,
+				event_index: 0,
+				offset_index: StorageOffset::new(0),
+			}
+		}
+	}
+
+	pub struct BufIterator<'a> {
+		buf: &'a Buf<'a>,
+		event_index: usize,
+		offset_index: StorageOffset,
+	}
+
+	impl<'a> Iterator for BufIterator<'a> {
+		type Item = Event<'a>;
+
+		fn next(&mut self) -> Option<Self::Item> {
+			if self.event_index == self.buf.num_events {
+				return None;
+			}
+
+			let e = Event::read(self.buf.as_slice(), self.offset_index);
+			self.event_index += 1;
+			self.offset_index = self.offset_index.next(&e);
+			Some(e)
 		}
 	}
 
@@ -392,43 +405,28 @@ mod event {
 
 	const _: () = assert!(mem::size_of::<ID>() == 24);
 	const _: () = assert!(Header::SIZE == 32);
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+		use pretty_assertions::assert_eq;
+
+		#[test]
+		fn lets_write_some_bytes() {
+			let mut bytes_buf = [0u8; 127];
+			let mut buf = Buf::new(&mut bytes_buf);
+			let addr = Addr::new(0, 0);
+
+			let e =
+				Event { id: ID { addr, logical_pos: 0 }, payload: b"j;fkls" };
+
+			buf.push(&e);
+
+			assert_eq!(e.payload, buf.iter().next().unwrap().payload);
+		}
+	}
 }
 
 fn align_to_8(n: usize) -> usize {
 	(n + 7) & !7
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use pretty_assertions::assert_eq;
-
-	#[test]
-	fn lets_write_some_bytes() {
-		/*
-		const bytes_buf = try testing.allocator.alloc(u8, 127);
-		defer testing.allocator.free(bytes_buf);
-		var buf = Event.Buf.init(bytes_buf);
-
-		const seed: u64 = std.crypto.random.int(u64);
-		var rng = std.Random.Pcg.init(seed);
-		const id = Addr.init(std.Random.Pcg, &rng);
-
-		const evt = Event{
-			.id = .{ .origin = id, .logical_pos = 0 },
-			.payload = "j;fkls",
-		};
-
-		buf.append(&evt);
-		var it = buf.iter();
-
-		while (it.next()) |e| {
-			try testing.expectEqualSlices(u8, evt.payload, e.payload);
-		}
-
-		const actual = buf.read(StorageOffset.zero);
-
-		try testing.expectEqualDeep(actual, evt);
-		*/
-	}
 }
