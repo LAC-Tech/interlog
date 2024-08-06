@@ -272,7 +272,7 @@ mod event {
 				payload_len: u64::try_from(self.payload.len()).unwrap(),
 			};
 
-			byte_vec.extend_from_slice_unchecked(&header.as_bytes());
+			byte_vec.extend_from_slice_unchecked(header.as_bytes());
 			byte_vec.extend_from_slice_unchecked(self.payload);
 			byte_vec.resize(align_to_8(byte_vec.len())).unwrap();
 		}
@@ -388,12 +388,12 @@ mod event {
 		// - has a fixed C representation
 		// - a const time checked size of 32
 		// - is memcpyable - has a flat memory structrure with no pointers
-		fn as_bytes(self) -> [u8; Self::SIZE] {
+		fn as_bytes(&self) -> &[u8; Self::SIZE] {
 			unsafe { mem::transmute(self) }
 		}
 
-		pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> Self {
-			unsafe { mem::transmute(*bytes) }
+		pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> &Self {
+			unsafe { mem::transmute(bytes) }
 		}
 	}
 
@@ -418,8 +418,8 @@ mod event {
 				let id = ID {addr, logical_pos};
 				let expected = Header { id, payload_len };
 
-				let actual = Header::from_bytes(&expected.as_bytes());
-				assert_eq!(actual, expected);
+				let actual = Header::from_bytes(expected.as_bytes());
+				assert_eq!(*actual, expected);
 			}
 		}
 
