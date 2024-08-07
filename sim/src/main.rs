@@ -77,7 +77,7 @@ struct Env<'a> {
 
 impl<'a> Env<'a> {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
-		let addr = Addr::new(rng.gen(), rng.gen());
+		let addr = Address::new(rng.gen(), rng.gen());
 
 		let storage = AppendOnlyMemory::new(Box::leak(Box::new(
 			[0u8; config::STORAGE_CAPACITY],
@@ -85,7 +85,7 @@ impl<'a> Env<'a> {
 		let ext_mem = ExternalMemory {
 			cmtd_offsets: Box::leak(Box::new([StorageOffset::ZERO; 1_000_000])),
 
-			cmtd_acqs: Box::leak(Box::new([Addr::ZERO; config::MAX_LOGS])),
+			cmtd_acqs: Box::leak(Box::new([Address::ZERO; config::MAX_LOGS])),
 			enqd_offsets: Box::leak(Box::new(
 				[StorageOffset::ZERO; config::MSG_LEN.max()],
 			)),
@@ -199,7 +199,7 @@ fn main() {
 
 	let n_logs = config::N_LOGS.gen(&mut rng);
 
-	let mut environments: BTreeMap<Addr, Env> =
+	let mut environments: BTreeMap<Address, Env> =
 		std::iter::repeat_with(|| Env::new(&mut rng))
 			.map(|env| (env.log.addr, env))
 			.take(n_logs)
@@ -214,7 +214,7 @@ fn main() {
 		payload_lens: fixcap::Vec::new(config::MSG_LEN.max()),
 	};
 
-	let mut dead_addrs: Vec<Addr> = vec![];
+	let mut dead_addrs: Vec<Address> = vec![];
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for addr in &dead_addrs {

@@ -17,6 +17,8 @@
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever) server is out of scope.
 
 #![cfg_attr(not(test), no_std)]
+
+#[cfg(test)]
 extern crate alloc;
 
 #[cfg(not(target_pointer_width = "64"))]
@@ -31,7 +33,7 @@ use event::Event;
 use fixcap::Vec;
 
 pub struct Log<'a, S: Storage> {
-	pub addr: Addr,
+	pub addr: Address,
 	enqd: Enqueued<'a>,
 	cmtd: Committed<'a, S>,
 }
@@ -39,7 +41,7 @@ pub struct Log<'a, S: Storage> {
 #[cfg_attr(test, derive(PartialEq, Debug))]
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct Addr {
+pub struct Address {
 	word_a: u64,
 	word_b: u64,
 }
@@ -69,7 +71,7 @@ struct Committed<'a, S: Storage> {
 /// Memory provided to the log from the outisde. A log never allocates.
 pub struct ExternalMemory<'a> {
 	pub cmtd_offsets: &'a mut [StorageOffset],
-	pub cmtd_acqs: &'a mut [Addr],
+	pub cmtd_acqs: &'a mut [Address],
 	pub enqd_offsets: &'a mut [StorageOffset],
 	pub enqd_events: &'a mut [u8],
 }
@@ -90,7 +92,7 @@ struct StorageOffsets<'a>(
 pub struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
-struct Acquaintances<'a>(Vec<'a, Addr>);
+struct Acquaintances<'a>(Vec<'a, Address>);
 
 /// Where the events are persisted.
 /// Written right now so I can simulate faulty storage.
@@ -104,7 +106,7 @@ pub trait Storage {
 }
 
 impl<'a, S: Storage> Log<'a, S> {
-	pub fn new(addr: Addr, storage: S, ext_mem: ExternalMemory<'a>) -> Self {
+	pub fn new(addr: Address, storage: S, ext_mem: ExternalMemory<'a>) -> Self {
 		let enqd = Enqueued {
 			offsets: StorageOffsets::new(ext_mem.enqd_offsets),
 			events: Vec::new(ext_mem.enqd_events),
@@ -146,7 +148,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	}
 }
 
-impl Addr {
+impl Address {
 	pub const ZERO: Self = Self { word_a: 0, word_b: 0 };
 
 	pub fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
@@ -250,13 +252,13 @@ impl StorageOffset {
 }
 
 impl<'a> Acquaintances<'a> {
-	fn new(buf: &'a mut [Addr]) -> Self {
+	fn new(buf: &'a mut [Address]) -> Self {
 		Self(Vec::new(buf))
 	}
 }
 
 mod event {
-	use super::{align_to_8, fixcap, Addr, StorageOffset, Vec};
+	use super::{align_to_8, fixcap, Address, StorageOffset, Vec};
 	use core::mem;
 
 	pub struct Event<'a> {
@@ -365,7 +367,7 @@ mod event {
 	#[cfg_attr(test, derive(PartialEq, Debug))]
 	#[repr(C)]
 	pub struct ID {
-		pub addr: Addr,
+		pub addr: Address,
 		pub logical_pos: u64,
 	}
 
@@ -413,7 +415,7 @@ mod event {
 				logical_pos: u64,
 				payload_len: u64,
 			) {
-				let addr = Addr::new(rand_word_a, rand_word_b);
+				let addr = Address::new(rand_word_a, rand_word_b);
 				let id = ID {addr, logical_pos};
 				let expected = Header { id, payload_len };
 
@@ -426,7 +428,7 @@ mod event {
 		fn lets_write_some_bytes() {
 			let mut bytes_buf = [0u8; 127];
 			let mut buf = Buf::new(&mut bytes_buf);
-			let addr = Addr::new(0, 0);
+			let addr = Address::new(0, 0);
 
 			let e =
 				Event { id: ID { addr, logical_pos: 0 }, payload: b"j;fkls" };
@@ -446,7 +448,6 @@ fn align_to_8(n: usize) -> usize {
 mod tests {
 	use super::*;
 	use pretty_assertions::assert_eq;
-	use proptest::prelude::*;
 
 	struct TestStorage<'a>(fixcap::Vec<'a, u8>);
 
@@ -474,10 +475,10 @@ mod tests {
 			enqd_events: &mut [0u8; 136],
 			enqd_offsets: &mut [StorageOffset::ZERO; 3],
 			cmtd_offsets: &mut [StorageOffset::ZERO; 5],
-			cmtd_acqs: &mut [Addr::ZERO; 1],
+			cmtd_acqs: &mut [Address::ZERO; 1],
 		};
 
-		let mut log = Log::new(Addr::ZERO, storage, ext_mem);
+		let mut log = Log::new(Address::ZERO, storage, ext_mem);
 		let mut read_buf = [0u8; 136];
 		let mut read_buf = event::Buf::new(&mut read_buf);
 
