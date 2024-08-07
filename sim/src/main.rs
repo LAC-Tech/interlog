@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::iter;
 use std::panic::{self, AssertUnwindSafe};
 
-use interlog_core::{ExtAllocMem, Storage, StorageOffset};
+use interlog_core::{ExternalMemory, Storage, StorageOffset};
 
 const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
 
@@ -79,27 +79,23 @@ impl<'a> Env<'a> {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
 		let addr = Addr::new(rng.gen(), rng.gen());
 
-		let storage = AppendOnlyMemory::new(
-			Box::new([0u8; config::STORAGE_CAPACITY]).as_mut_slice(),
-		);
+		let storage = AppendOnlyMemory::new(Box::leak(Box::new(
+			[0u8; config::STORAGE_CAPACITY],
+		)));
+		let ext_mem = ExternalMemory {
+			cmtd_offsets: Box::leak(Box::new([StorageOffset::ZERO; 1_000_000])),
 
-		let ext_alloc_mem = ExtAllocMem {
-			cmtd_offsets: Box::new([StorageOffset::ZERO; 1_000_000])
-				.as_mut_slice(),
-
-			cmtd_acqs: Box::new([Addr::ZERO; config::MAX_LOGS]).as_mut_slice(),
-			enqd_offsets: Box::new(
+			cmtd_acqs: Box::leak(Box::new([Addr::ZERO; config::MAX_LOGS])),
+			enqd_offsets: Box::leak(Box::new(
 				[StorageOffset::ZERO; config::MSG_LEN.max()],
-			)
-			.as_mut_slice(),
+			)),
 
-			enqd_events: Box::new(
+			enqd_events: Box::leak(Box::new(
 				[0u8; config::MSG_LEN.max() * config::PAYLOAD_SIZE.max()],
-			)
-			.as_mut_slice(),
+			)),
 		};
 
-		let log = Log::new(addr, storage, ext_alloc_mem);
+		let log = Log::new(addr, storage, ext_mem);
 		let payloads_per_actor = config::PAYLOADS_PER_LOG.gen(rng);
 
 		let msg_lens: Vec<usize> =
