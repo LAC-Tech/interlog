@@ -38,8 +38,8 @@ pub struct Log<'a, S: Storage> {
 	cmtd: Committed<'a, S>,
 }
 
-#[cfg_attr(test, derive(PartialEq, Debug))]
-#[derive(Clone, Copy)]
+#[cfg_attr(test, derive(PartialEq))]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Address {
 	word_a: u64,
@@ -482,20 +482,27 @@ mod tests {
 		let mut read_buf = [0u8; 136];
 		let mut read_buf = event::Buf::new(&mut read_buf);
 
+		let lyrics: [&[u8]; 4] = [
+			b"I have known the arcane law",
+			b"On strange roads, such visions met",
+			b"That I have no fear, nor concern",
+			b"For dangers and obstacles of this world",
+		];
+
 		{
-			assert_eq!(log.enqueue(b"I have known the arcane law"), 64);
+			assert_eq!(log.enqueue(lyrics[0]), 64);
 			assert_eq!(log.commit(), 1);
 			log.read_from_end(1, &mut read_buf).unwrap();
 			let actual = read_buf.iter().next().unwrap().payload;
-			assert_eq!(actual, b"I have known the arcane law");
+			assert_eq!(actual, lyrics[0]);
 		}
 
 		{
-			assert_eq!(log.enqueue(b"On strange roads, such visions met"), 72);
+			assert_eq!(log.enqueue(lyrics[1]), 72);
 			assert_eq!(log.commit(), 1);
 			log.read_from_end(1, &mut read_buf).unwrap();
 			let actual = read_buf.iter().next().unwrap().payload;
-			assert_eq!(actual, b"On strange roads, such visions met");
+			assert_eq!(actual, lyrics[1]);
 		}
 
 		// Read multiple things from the buffer
@@ -503,26 +510,23 @@ mod tests {
 			log.read_from_end(2, &mut read_buf).unwrap();
 			let mut it = read_buf.iter();
 			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, b"I have known the arcane law");
+			assert_eq!(actual, lyrics[0]);
 			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, b"On strange roads, such visions met");
+			assert_eq!(actual, lyrics[1]);
 		}
 
 		// Bulk commit two things
 		{
-			assert_eq!(log.enqueue(b"That I have no fear, nor concern"), 64);
-			assert_eq!(
-				log.enqueue(b"For dangers and obstacles of this world"),
-				136
-			);
+			assert_eq!(log.enqueue(lyrics[2]), 64);
+			assert_eq!(log.enqueue(lyrics[3]), 136);
 			assert_eq!(log.commit(), 2);
 
 			log.read_from_end(2, &mut read_buf).unwrap();
 			let mut it = read_buf.iter();
 			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, b"That I have no fear, nor concern");
+			assert_eq!(actual, lyrics[2]);
 			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, b"For dangers and obstacles of this world");
+			assert_eq!(actual, lyrics[3]);
 		}
 	}
 }
