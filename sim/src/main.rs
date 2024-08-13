@@ -123,11 +123,11 @@ impl<'a> Env<'a> {
 	}
 
 	/// returns true if it will produce new data next tick
-	pub fn tick<R: rand::Rng, const N: usize>(
+	pub fn tick<R: rand::Rng>(
 		&mut self,
 		ms: u64,
 		rng: &mut R,
-		ctx: &mut Context<N>,
+		ctx: &mut Context,
 	) -> bool {
 		match self.msg_lens.pop() {
 			None => {
@@ -159,10 +159,20 @@ impl<'a> Env<'a> {
 	}
 }
 
-struct Context<'a, const N: usize> {
+struct Context<'a> {
 	stats: Stats,
-	payload_buf: [u8; N],
+	payload_buf: [u8; config::PAYLOAD_SIZE.max()],
 	payload_lens: fixcap::Vec<'a, usize>,
+}
+
+impl<'a> Context<'a> {
+	fn new(lens: &'a mut [usize]) -> Self {
+		Self {
+			stats: Stats { total_events_committed: 0, total_commits: 0 },
+			payload_buf: [0u8; config::PAYLOAD_SIZE.max()],
+			payload_lens: fixcap::Vec::new(lens),
+		}
+	}
 }
 
 #[derive(Debug)]
@@ -206,7 +216,9 @@ fn main() {
 	let mut ctx = Context {
 		stats: Stats { total_events_committed: 0, total_commits: 0 },
 		payload_buf: [0u8; config::PAYLOAD_SIZE.max()],
-		payload_lens: fixcap::Vec::new(config::MSG_LEN.max()),
+		payload_lens: fixcap::Vec::new(Box::leak(Box::new(
+			[0usize; config::MSG_LEN.max()],
+		))),
 	};
 
 	let mut dead_addrs: Vec<Address> = vec![];
