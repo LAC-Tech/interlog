@@ -147,15 +147,10 @@ impl<'a> Env<'a> {
 				for &len in &ctx.payload_lens {
 					let payload = &mut ctx.payload_buf[..len];
 					rng.fill(payload);
-					self.log
-						.enqueue(payload)
-						.expect("log to have enough txn buffer");
+					self.log.enqueue(payload);
 				}
 
-				let events_committed = self
-					.log
-					.commit()
-					.expect("log to have enough space to persist all events");
+				let events_committed = self.log.commit();
 
 				ctx.stats.update(events_committed);
 				true

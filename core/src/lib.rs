@@ -38,8 +38,7 @@ pub struct Log<'a, S: Storage> {
 	cmtd: Committed<'a, S>,
 }
 
-#[cfg_attr(test, derive(PartialEq))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
 pub struct Address {
 	word_a: u64,
@@ -448,6 +447,7 @@ fn align_to_8(n: usize) -> usize {
 mod tests {
 	use super::*;
 	use pretty_assertions::assert_eq;
+	use proptest::prelude::*;
 
 	struct TestStorage<'a>(fixcap::Vec<'a, u8>);
 
