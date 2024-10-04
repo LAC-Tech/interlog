@@ -1,10 +1,13 @@
+//! Deterministic core of interlog.
+//! Allows for different storage implementations.
+//! - no memory allocations
+//! - no libc
+
 const std = @import("std");
 const err = @import("./err.zig");
 
-const mem = std.mem;
 const testing = std.testing;
 const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
