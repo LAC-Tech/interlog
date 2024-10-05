@@ -77,6 +77,7 @@ const Storage = struct {
 };
 
 // An environment, representing some source of messages, and a log
+// TODO: this object is stupid. its only purpose is to group
 pub const Env = struct {
     log: Log(Storage),
     payload_src: PayloadSrc,
@@ -88,16 +89,13 @@ pub const Env = struct {
     ) !@This() {
         const storage = Storage.init();
         const heap_mem = .{
-            .enqd = .{
-                .offsets = try allocator.alloc(
-                    StorageOffset,
-                    config.msg_len.at_most,
-                ),
-                .events = try allocator.alloc(
-                    u8,
-                    config.msg_len.at_most * config.payload_size.at_most,
-                ),
-            },
+            .enqd = .{ .offsets = try allocator.alloc(
+                StorageOffset,
+                config.msg_len.at_most,
+            ), .events = try allocator.alloc(
+                u8,
+                config.msg_len.at_most * config.payload_size.at_most,
+            ) },
             .cmtd = .{
                 .offsets = try allocator.alloc(StorageOffset, 1_000_000),
                 .acqs = try allocator.create([std.math.maxInt(u16)]Addr),
@@ -109,15 +107,15 @@ pub const Env = struct {
         };
     }
 
+    // TODO: Useless name. who cares if it 'pops'? the point is this generates
+    // payload lens
+    // TODO: just have it generate all the data?
     pub fn popPayloadLens(
         self: *@This(),
         buf: *std.ArrayListUnmanaged(usize),
     ) void {
         if (self.payload_src.msg_lens.popOrNull()) |msg_len| {
             for (msg_len) |_| {
-                //if (self.payload_src.payload_sizes.popNull()) |payload_size| {
-                //    buf.appendAssumeCapacity(payload_size);
-                //}
                 const payload_size = self.payload_src.payload_sizes.pop();
                 buf.appendAssumeCapacity(payload_size);
             }
@@ -126,5 +124,20 @@ pub const Env = struct {
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.payload_src.deinit(allocator);
+    }
+};
+
+pub const Stats = struct {
+    total_cmtd_events: usize,
+    total_commits: usize,
+
+    pub fn init() @This() {
+        return .{ .total_cmtd_events = 0, .total_commits = 0 };
+    }
+
+    pub fn update(self: *@This(), n_events_cmtd: usize) void {
+        // Recall: zig does runtime checks for overflow by default
+        self.total_cmtd_events += n_events_cmtd;
+        self.total_commits += 1;
     }
 };

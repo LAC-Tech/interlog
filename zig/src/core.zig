@@ -4,11 +4,14 @@
 //! - no libc
 
 const std = @import("std");
-const err = @import("./err.zig");
 
 const testing = std.testing;
 const assert = std.debug.assert;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+const err = struct {
+    pub const Buf = error{Overrun};
+};
 
 fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
     return ArrayListUnmanaged(T).initBuffer(buf);
@@ -91,6 +94,8 @@ pub const HeapMem = struct {
     enqd: @This().Enqueued,
 };
 
+// Staging area for events to be committed later
+// This allows bulk put semantics, and also allows us to apply the headers.
 const Enqueued = struct {
     const Transaction = struct {
         offsets: []const StorageOffset,
@@ -138,6 +143,7 @@ const Enqueued = struct {
     }
 };
 
+// Events that have already been committed, or persisted, to storage
 fn Committed(comptime Storage: type) type {
     return struct {
         /// This is always one greater than the number of events stored; the last
@@ -186,7 +192,6 @@ fn Committed(comptime Storage: type) type {
             buf.clear();
             var offsets = self.offsets.asSlice();
             offsets = offsets[offsets.len - 1 - n ..];
-
             const size = offsets[offsets.len - 1].n - offsets[0].n;
             try self.events.read(buf.resize(size, n), offsets[0].n);
         }
