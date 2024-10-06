@@ -38,7 +38,7 @@ pub struct Log<'a, S: Storage> {
 	cmtd: Committed<'a, S>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
 pub struct Address {
 	word_a: u64,
@@ -86,7 +86,7 @@ struct StorageOffsets<'a>(
 
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 #[cfg_attr(test, derive(Debug))]
 pub struct StorageOffset(usize);
 
@@ -148,8 +148,6 @@ impl<'a, S: Storage> Log<'a, S> {
 }
 
 impl Address {
-	pub const ZERO: Self = Self { word_a: 0, word_b: 0 };
-
 	pub fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
 		Self { word_a: rand_word_a, word_b: rand_word_b }
 	}
