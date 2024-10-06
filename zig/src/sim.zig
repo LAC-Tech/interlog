@@ -5,6 +5,8 @@ const Log = lib.core.Log;
 const Addr = lib.core.Addr;
 const StorageOffset = lib.core.StorageOffset;
 
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
 const Range = struct {
     at_least: u64,
     at_most: u64,
@@ -26,12 +28,14 @@ pub const config = .{
     .payload_size = range(0, 4096),
     .msg_len = range(0, 16),
     .source_msgs_per_actor = range(0, 100),
+    // Currently just something "big enough", later handle disk overflow
+    .storage_capacity = 10_000_000,
 };
 
 // Represents a local source of data for an actor
 const PayloadSrc = struct {
-    msg_lens: std.ArrayListUnmanaged(usize),
-    payload_sizes: std.ArrayListUnmanaged(usize),
+    msg_lens: ArrayListUnmanaged(usize),
+    payload_sizes: ArrayListUnmanaged(usize),
 
     fn init(
         comptime R: anytype,
@@ -55,10 +59,8 @@ const PayloadSrc = struct {
         }
 
         return .{
-            .msg_lens = std.ArrayListUnmanaged(usize).fromOwnedSlice(
-                msg_lens,
-            ),
-            .payload_sizes = std.ArrayListUnmanaged(usize).fromOwnedSlice(
+            .msg_lens = ArrayListUnmanaged(usize).fromOwnedSlice(msg_lens),
+            .payload_sizes = ArrayListUnmanaged(usize).fromOwnedSlice(
                 payload_sizes,
             ),
         };
@@ -68,11 +70,31 @@ const PayloadSrc = struct {
         self.msg_lens.deinit(allocator);
         self.payload_sizes.deinit(allocator);
     }
+
+    // TODO: Useless name. who cares if it 'pops'? the point is this generates
+    // payload lens
+    // TODO: just have it generate all the data?
+    pub fn popPayloadLens(
+        self: *@This(),
+        buf: *ArrayListUnmanaged(usize),
+    ) void {
+        if (self.msg_lens.popOrNull()) |msg_len| {
+            for (msg_len) |_| {
+                const payload_size = self.payload_sizes.pop();
+                buf.appendAssumeCapacity(payload_size);
+            }
+        }
+    }
 };
 
 const Storage = struct {
-    pub fn init() @This() {
-        return .{};
+    bytes: ArrayListUnmanaged(u8),
+    fn init(buf: []u8) @This() {
+        return .{ .bytes = ArrayListUnmanaged(u8).fromOwnedSlice(buf) };
+    }
+
+    pub fn append(self: *@This(), bytes: []const u8) void {
+        self.bytes.appendSliceAssumeCapacity(bytes);
     }
 };
 
@@ -87,15 +109,20 @@ pub const Env = struct {
         rng: *R,
         allocator: std.mem.Allocator,
     ) !@This() {
-        const storage = Storage.init();
+        const storage = Storage.init(
+            try allocator.alloc(u8, config.storage_capacity),
+        );
         const heap_mem = .{
-            .enqd = .{ .offsets = try allocator.alloc(
-                StorageOffset,
-                config.msg_len.at_most,
-            ), .events = try allocator.alloc(
-                u8,
-                config.msg_len.at_most * config.payload_size.at_most,
-            ) },
+            .enqd = .{
+                .offsets = try allocator.alloc(
+                    StorageOffset,
+                    config.msg_len.at_most,
+                ),
+                .events = try allocator.alloc(
+                    u8,
+                    config.msg_len.at_most * config.payload_size.at_most,
+                ),
+            },
             .cmtd = .{
                 .offsets = try allocator.alloc(StorageOffset, 1_000_000),
                 .acqs = try allocator.create([std.math.maxInt(u16)]Addr),
@@ -105,21 +132,6 @@ pub const Env = struct {
             .log = Log(Storage).init(Addr.init(R, rng), storage, heap_mem),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
-    }
-
-    // TODO: Useless name. who cares if it 'pops'? the point is this generates
-    // payload lens
-    // TODO: just have it generate all the data?
-    pub fn popPayloadLens(
-        self: *@This(),
-        buf: *std.ArrayListUnmanaged(usize),
-    ) void {
-        if (self.payload_src.msg_lens.popOrNull()) |msg_len| {
-            for (msg_len) |_| {
-                const payload_size = self.payload_src.payload_sizes.pop();
-                buf.appendAssumeCapacity(payload_size);
-            }
-        }
     }
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -141,3 +153,12 @@ pub const Stats = struct {
         self.total_commits += 1;
     }
 };
+
+test "set up and tear down simulated env" {
+    const seed: u64 = std.crypto.random.int(u64);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var rng = std.Random.Pcg.init(seed);
+    const allocator = arena.allocator();
+    _ = try Env.init(std.Random.Pcg, &rng, allocator);
+}

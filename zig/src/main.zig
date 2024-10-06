@@ -48,12 +48,16 @@ pub fn main() !void {
 
         while (it.next()) |env| {
             payload_lens.clearRetainingCapacity();
-            env.popPayloadLens(&payload_lens);
+            env.payload_src.popPayloadLens(&payload_lens);
 
             for (payload_lens.items) |payload_len| {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
-                assert(payload.len == env.log.enqueue(payload));
+                const bytes_enqueued = env.log.enqueue(payload);
+                debug.print("payload len: {}\n", .{payload.len});
+                debug.print("bytes enqueued: {}\n", .{bytes_enqueued});
+                // TODO: I think the header means more bytes are enqueued?
+                assert(payload.len == bytes_enqueued);
             }
 
             assert(payload_lens.items.len == env.log.commit());
