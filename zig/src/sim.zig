@@ -129,7 +129,7 @@ pub const Env = struct {
             },
         };
         return .{
-            .log = Log(Storage).init(Addr.init(R, rng), storage, heap_mem),
+            .log = try Log(Storage).init(Addr.init(R, rng), storage, heap_mem),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
     }

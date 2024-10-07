@@ -4,14 +4,23 @@
 //! - no libc
 
 const std = @import("std");
-
-const testing = std.testing;
 const assert = std.debug.assert;
+const testing = std.testing;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
-const err = struct {
-    pub const Buf = error{Overrun};
+// All errors, whether expected or unexpected, get an explicit err code.
+// Why not use asserts?
+// - they can't be caught, which I want to do for the inspector
+// - poor dev experience, they don't tell me much in the console
+// - an err union is one place where everything that can go wrong is documented
+// - allows me to defer the decision on whether an err is recoverable or not
+const Err = error{
+    BufOverrun,
+    StorageOffsetNonMonotonic,
+    StorageOffsetNot8ByteAligned,
 };
+
+// Convenience functions
 
 fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
     return ArrayListUnmanaged(T).initBuffer(buf);
@@ -21,6 +30,7 @@ fn alignTo8(unaligned: u64) u64 {
     return (unaligned + 7) & ~@as(u8, 7);
 }
 
+// TODO: explicitly list errors returned by each function
 pub fn Log(comptime Storage: type) type {
     return struct {
         addr: Addr,
@@ -31,17 +41,22 @@ pub fn Log(comptime Storage: type) type {
             addr: Addr,
             storage: Storage,
             heap_mem: HeapMem,
-        ) @This() {
-            const cmtd = Committed(Storage).init(addr, storage, heap_mem.cmtd);
+        ) !@This() {
+            const cmtd = try Committed(Storage).init(
+                addr,
+                storage,
+                heap_mem.cmtd,
+            );
+
             return .{
                 .addr = addr,
-                .enqd = Enqueued.init(heap_mem.enqd, &cmtd.acqs.asSlice()),
+                .enqd = try Enqueued.init(heap_mem.enqd, &cmtd.acqs.asSlice()),
                 .cmtd = cmtd,
             };
         }
 
         /// Returns bytes enqueued
-        pub fn enqueue(self: *@This(), payload: []const u8) u64 {
+        pub fn enqueue(self: *@This(), payload: []const u8) !u64 {
             const id = Event.ID{
                 .origin = self.addr,
                 .logical_pos = self.enqd.eventCount() + self.cmtd.eventCount(),
@@ -69,7 +84,7 @@ pub fn Log(comptime Storage: type) type {
             self: *@This(),
             n: u64,
             buf: *Event.Buf,
-        ) err.Buf!void {
+        ) error{BufOverrun}!void {
             try self.cmtd.readFromEnd(n, buf);
         }
     };
@@ -104,18 +119,21 @@ const Enqueued = struct {
     offsets: StorageOffsets,
     events: ArrayListUnmanaged(u8),
     cmtd_acqs: *const []const Addr,
-    fn init(buffers: HeapMem.Enqueued, cmtd_acqs: *const []const Addr) @This() {
+    fn init(
+        buffers: HeapMem.Enqueued,
+        cmtd_acqs: *const []const Addr,
+    ) !@This() {
         return .{
-            .offsets = StorageOffsets.init(buffers.offsets, 0),
+            .offsets = try StorageOffsets.init(buffers.offsets, 0),
             .events = vecFromBuf(u8, buffers.events),
             .cmtd_acqs = cmtd_acqs,
         };
     }
 
     /// Returns bytes enqueued
-    fn append(self: *@This(), e: *const Event) u64 {
-        const offset = self.offsets.last().next(e);
-        self.offsets.append(offset);
+    fn append(self: *@This(), e: *const Event) !u64 {
+        const offset = try self.offsets.last().next(e);
+        try self.offsets.append(offset);
         e.appendTo(&self.events);
         return self.events.items.len;
     }
@@ -156,12 +174,12 @@ fn Committed(comptime Storage: type) type {
             addr: Addr,
             storage: Storage,
             heap_mem: HeapMem.Committed,
-        ) @This() {
+        ) !@This() {
             var acqs = Acquaintances.init(heap_mem.acqs);
             acqs.append(addr);
 
             return .{
-                .offsets = StorageOffsets.init(heap_mem.offsets, 0),
+                .offsets = try StorageOffsets.init(heap_mem.offsets, 0),
                 .events = storage,
                 .acqs = acqs,
             };
@@ -188,7 +206,7 @@ fn Committed(comptime Storage: type) type {
             self: @This(),
             n: u64,
             buf: *Event.Buf,
-        ) err.Buf!void {
+        ) error{BufOverrun}!void {
             buf.clear();
             var offsets = self.offsets.asSlice();
             offsets = offsets[offsets.len - 1 - n ..];
@@ -203,9 +221,10 @@ fn Committed(comptime Storage: type) type {
 /// - always at least one element: next offset, for calculating size
 const StorageOffsets = struct {
     vec: ArrayListUnmanaged(StorageOffset),
-    fn init(buf: []StorageOffset, next_committed_offset: u64) @This() {
+    fn init(buf: []StorageOffset, next_committed_offset: u64) !@This() {
         var vec = ArrayListUnmanaged(StorageOffset).initBuffer(buf);
-        vec.appendAssumeCapacity(StorageOffset.init(next_committed_offset));
+        const first = try StorageOffset.init(next_committed_offset);
+        vec.appendAssumeCapacity(first);
         return .{ .vec = vec };
     }
 
@@ -230,8 +249,8 @@ const StorageOffsets = struct {
         return self.vec.getLast();
     }
 
-    fn append(self: *@This(), offset: StorageOffset) void {
-        assert(offset.n > self.last().n);
+    fn append(self: *@This(), offset: StorageOffset) !void {
+        if (self.last().n >= offset.n) return Err.StorageOffsetNonMonotonic;
         self.vec.appendAssumeCapacity(offset);
     }
 
@@ -253,16 +272,15 @@ const StorageOffsets = struct {
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 pub const StorageOffset = packed struct(u64) {
-    pub const zero = @This().init(0);
+    pub const zero = .{ .n = 0 };
 
     n: u64,
-    fn init(n: u64) @This() {
-        // All storage offsets must be 8 byte aligned
-        assert(n % 8 == 0);
+    fn init(n: u64) Err!@This() {
+        if (n % 8 != 0) return Err.StorageOffsetNot8ByteAligned;
         return .{ .n = n };
     }
 
-    fn next(self: @This(), e: *const Event) @This() {
+    fn next(self: @This(), e: *const Event) !@This() {
         const size = @sizeOf(Event.Header) + e.payload.len;
         return @This().init(self.n + alignTo8(size));
     }
@@ -332,6 +350,7 @@ const Event = struct {
 
         return .{ .id = header.id, .payload = payload };
     }
+
     pub const Buf = struct {
         const Iterator = struct {
             events: *const Buf,
@@ -346,10 +365,12 @@ const Event = struct {
                 };
             }
 
-            pub fn next(self: *@This()) ?Event {
+            pub fn next(
+                self: *@This(),
+            ) !?Event {
                 if (self.event_index == self.events.n_events) return null;
                 const result = self.events.read(self.offset_index);
-                self.offset_index = self.offset_index.next(&result);
+                self.offset_index = try self.offset_index.next(&result);
                 self.event_index += 1;
                 return result;
             }
@@ -406,7 +427,7 @@ test "let's write some bytes" {
     buf.append(&evt);
     var it = buf.iter();
 
-    while (it.next()) |e| {
+    while (try it.next()) |e| {
         try testing.expectEqualSlices(u8, evt.payload, e.payload);
     }
 
@@ -466,7 +487,7 @@ pub const TestStorage = struct {
         self: @This(),
         dest: []u8,
         offset: u64,
-    ) err.Buf!void {
+    ) error{BufOverrun}!void {
         const requested = self.bytes.items[offset .. offset + dest.len];
         @memcpy(dest, requested);
     }
@@ -493,9 +514,9 @@ test "enqueue, commit and read data" {
         },
     };
 
-    var log = Log(TestStorage).init(addr, storage, heap_mem);
-
+    var log = try Log(TestStorage).init(addr, storage, heap_mem);
     var read_buf = Event.Buf.init(try allocator.alloc(u8, 136));
+
     try testing.expectEqual(64, log.enqueue("I have known the arcane law"));
     try testing.expectEqual(1, log.commit());
     try log.readFromEnd(1, &read_buf);
@@ -512,7 +533,7 @@ test "enqueue, commit and read data" {
     try testing.expectEqual(1, log.commit());
     try log.readFromEnd(1, &read_buf);
     var it = read_buf.iter();
-    const next = it.next();
+    const next = try it.next();
     const actual = next.?.payload;
     try testing.expectEqualSlices(
         u8,
@@ -528,13 +549,13 @@ test "enqueue, commit and read data" {
     try testing.expectEqualSlices(
         u8,
         "I have known the arcane law",
-        it.next().?.payload,
+        (try it.next()).?.payload,
     );
 
     try testing.expectEqualSlices(
         u8,
         "On strange roads, such visions met",
-        it.next().?.payload,
+        (try it.next()).?.payload,
     );
 
     // Bulk commit two things
@@ -551,12 +572,12 @@ test "enqueue, commit and read data" {
     try testing.expectEqualSlices(
         u8,
         "That I have no fear, nor concern",
-        it.next().?.payload,
+        (try it.next()).?.payload,
     );
 
     try testing.expectEqualSlices(
         u8,
         "For dangers and obstacles of this world",
-        it.next().?.payload,
+        (try it.next()).?.payload,
     );
 }
