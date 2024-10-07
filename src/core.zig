@@ -55,7 +55,7 @@ pub fn Log(comptime Storage: type) type {
             };
         }
 
-        /// Returns bytes enqueued
+        /// Returns accumulated number of bytes enqueued
         pub fn enqueue(self: *@This(), payload: []const u8) !u64 {
             const id = Event.ID{
                 .origin = self.addr,
@@ -130,9 +130,9 @@ const Enqueued = struct {
         };
     }
 
-    /// Returns bytes enqueued
+    /// Returns accumulated number of bytes enqueued
     fn append(self: *@This(), e: *const Event) !u64 {
-        const offset = try self.offsets.last().next(e);
+        const offset = try self.offsets.getLast().next(e);
         try self.offsets.append(offset);
         e.appendTo(&self.events);
         return self.events.items.len;
@@ -141,7 +141,7 @@ const Enqueued = struct {
     fn reset(self: *@This()) void {
         // By definiton, the last committed event is the last thing in the
         // eqneued buffer before reseting, which happens after committing
-        const last_committed_event = self.offsets.last();
+        const last_committed_event = self.offsets.getLast();
         self.offsets.reset(last_committed_event);
         self.events.clearRetainingCapacity();
     }
@@ -195,7 +195,7 @@ fn Committed(comptime Storage: type) type {
         }
 
         fn lastOffset(self: *@This()) u64 {
-            return self.offsets.last();
+            return self.offsets.getLast();
         }
 
         fn eventCount(self: @This()) u64 {
@@ -245,12 +245,12 @@ const StorageOffsets = struct {
         return self.vec.items.len - 1;
     }
 
-    fn last(self: @This()) StorageOffset {
+    fn getLast(self: @This()) StorageOffset {
         return self.vec.getLast();
     }
 
     fn append(self: *@This(), offset: StorageOffset) !void {
-        if (self.last().n >= offset.n) return Err.StorageOffsetNonMonotonic;
+        if (self.getLast().n >= offset.n) return Err.StorageOffsetNonMonotonic;
         self.vec.appendAssumeCapacity(offset);
     }
 
@@ -265,10 +265,13 @@ const StorageOffsets = struct {
     }
 
     fn sizeSpanned(self: @This()) u64 {
-        return self.vec.getLast().n - self.vec.items[0].n;
+        const first: StorageOffset = self.vec.items[0];
+        const last: StorageOffset = self.getLast();
+        return last.n - first.n;
     }
 };
 
+/// Offser, in bytes, where an event is stored.
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 pub const StorageOffset = packed struct(u64) {

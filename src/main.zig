@@ -20,7 +20,15 @@ const MAX_SIM_TIME: u64 = 1000 * 60 * 60 * 24; // One day in MS
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    const seed: u64 = std.crypto.random.int(u64);
+
+    var args = std.process.args();
+    _ = args.skip();
+    const user_supplied_seed = args.next();
+
+    const seed = if (user_supplied_seed) |s|
+        try std.fmt.parseInt(u64, s, 10)
+    else
+        std.crypto.random.int(u64);
     var rng = std.rand.DefaultPrng.init(seed);
 
     const n_actors = config.n_actors.gen(RNG, &rng);
@@ -55,9 +63,7 @@ pub fn main() !void {
             for (payload_lens.items) |payload_len| {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
-                const bytes_enqueued = try env.log.enqueue(payload);
-                debug.print("payload len: {}\n", .{payload.len});
-                debug.print("bytes enqueued: {}\n", .{bytes_enqueued});
+                _ = try env.log.enqueue(payload);
             }
 
             assert(payload_lens.items.len == env.log.commit());
