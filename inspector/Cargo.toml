@@ -1,9 +1,0 @@
-[package]
-name = "interlog-inspector"
-version = "0.1.0"
-authors = ["Lewis Campbell <info@lewiscampbell.tech>"]
-edition = "2021"
-
-[dependencies]
-interlog_core = { path = "../core" }
-ncurses = "*"

@@ -1,3 +1,5 @@
+//! Deterministic Simulation Test
+
 const std = @import("std");
 const debug = std.debug;
 const assert = std.debug.assert;
@@ -53,11 +55,9 @@ pub fn main() !void {
             for (payload_lens.items) |payload_len| {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
-                const bytes_enqueued = env.log.enqueue(payload);
+                const bytes_enqueued = try env.log.enqueue(payload);
                 debug.print("payload len: {}\n", .{payload.len});
                 debug.print("bytes enqueued: {}\n", .{bytes_enqueued});
-                // TODO: I think the header means more bytes are enqueued?
-                assert(payload.len == bytes_enqueued);
             }
 
             assert(payload_lens.items.len == env.log.commit());
