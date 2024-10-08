@@ -152,11 +152,9 @@ const Enqueued = struct {
 
     /// Returns all relevant data to be committed
     fn txn(self: @This()) Transaction {
-        const size_in_bytes = self.offsets.sizeSpanned();
-
         return .{
             .offsets = self.offsets.tail(),
-            .events = self.events.items[0..size_in_bytes],
+            .events = self.events.items,
         };
     }
 };
@@ -262,12 +260,6 @@ const StorageOffsets = struct {
 
     fn get(self: @This(), index: u64) u64 {
         return self.vec.asSlice()[index];
-    }
-
-    fn sizeSpanned(self: @This()) u64 {
-        const first: StorageOffset = self.vec.items[0];
-        const last: StorageOffset = self.getLast();
-        return last.n - first.n;
     }
 };
 
