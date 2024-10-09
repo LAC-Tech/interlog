@@ -124,6 +124,20 @@ pub fn Log(comptime Storage: type) type {
     };
 }
 
+// Describes a region of some storage, whether primary or secondary .
+const Region = struct {
+    n_bytes: usize,
+    offset: usize,
+
+    fn read_slice(
+        self: @This(),
+        bytes: []const u8,
+    ) error{BufOverrun}![]const u8 {
+        const len = self.offset + self.n_bytes;
+        return if (len > bytes.len) Err.BufOverrun else bytes[self.offset..len];
+    }
+};
+
 // TODO:
 // "hey lewis… small trick for log buffers… never check for buffer overruns;
 // mark a readonly page at the end of the buffer; the OS notifies you with an
@@ -242,10 +256,8 @@ fn Committed(comptime Storage: type) type {
             buf: *Event.Buf,
         ) error{BufOverrun}!void {
             buf.clear();
-            var offsets = self.offsets.asSlice();
-            offsets = offsets[offsets.len - 1 - n ..];
-            const size = offsets[offsets.len - 1].n - offsets[0].n;
-            try self.events.read(buf.resize(size, n), offsets[0].n);
+            const region = self.offsets.lastNEvents(n);
+            try self.events.read(&buf.bytes, region);
         }
     };
 }
@@ -271,8 +283,11 @@ const StorageOffsets = struct {
         return self.vec.mem[1..];
     }
 
-    fn asSlice(self: @This()) []StorageOffset {
-        return self.vec.mem;
+    fn lastNEvents(self: @This(), n: usize) Region {
+        var offsets = self.vec.mem;
+        offsets = offsets[offsets.len - 1 - n ..];
+        const size = offsets[offsets.len - 1].n - offsets[0].n;
+        return .{ .n_bytes = size, .offset = offsets[0].n };
     }
 
     fn eventCount(self: @This()) u64 {
@@ -292,10 +307,6 @@ const StorageOffsets = struct {
         for (slice) |offset| {
             try self.vec.push(offset);
         }
-    }
-
-    fn get(self: @This(), index: u64) u64 {
-        return self.vec.asSlice()[index];
     }
 };
 
@@ -362,8 +373,13 @@ const Event = struct {
         self: @This(),
         byte_vec: *Vec(u8),
     ) !void {
-        const header = Header{ .id = self.id, .payload_len = self.payload.len };
-        const header_bytes: []const u8 = std.mem.asBytes(&header);
+        const header = Header{ .payload_len = self.payload.len, .id = self.id };
+        const header_bytes: *align(8) const [32]u8 = std.mem.asBytes(&header);
+        std.debug.print(
+            "header bytes BEFORE = {}\n",
+            .{std.fmt.fmtSliceHexUpper(header_bytes)},
+        );
+
         try byte_vec.pushSlice(header_bytes);
         try byte_vec.pushSlice(self.payload);
         const unaligned_size = byte_vec.mem.len;
@@ -375,7 +391,16 @@ const Event = struct {
         offset: StorageOffset,
     ) Event {
         const header_end = offset.n + @sizeOf(Header);
-        const header = std.mem.bytesAsValue(Header, bytes[offset.n..header_end]);
+        const header_bytes = bytes[offset.n..header_end];
+        std.debug.print(
+            "header bytes AFTER  = {}\n",
+            .{std.fmt.fmtSliceHexUpper(header_bytes)},
+        );
+        std.debug.print(
+            "all the bytes = {}\n",
+            .{std.fmt.fmtSliceHexUpper(bytes)},
+        );
+        const header = std.mem.bytesAsValue(Header, header_bytes);
         const payload_end = header_end + header.payload_len;
         const payload = bytes[header_end..payload_end];
 
@@ -426,15 +451,6 @@ const Event = struct {
         fn clear(self: *@This()) void {
             self.bytes.clear();
             self.n_events = 0;
-        }
-
-        /// This is meant for pwrite type interfaces
-        /// new area must be written to immediately.
-        fn resize(self: *@This(), new_len: u64, num_new_events: u64) []u8 {
-            self.n_events += num_new_events;
-            const old_len = self.bytes.len;
-            self.bytes.len += new_len;
-            return self.bytes.mem[old_len..][0..new_len];
         }
 
         pub fn iter(self: *const @This()) Iterator {
@@ -508,6 +524,7 @@ const Msg = struct {
 
 pub const TestStorage = struct {
     bytes: Vec(u8),
+
     pub fn init(buf: []u8) @This() {
         return .{ .bytes = Vec(u8).init(buf) };
     }
@@ -518,11 +535,11 @@ pub const TestStorage = struct {
 
     pub fn read(
         self: @This(),
-        dest: []u8,
-        offset: u64,
+        buf: *Vec(u8),
+        region: Region,
     ) error{BufOverrun}!void {
-        const requested = self.bytes.mem[offset .. offset + dest.len];
-        @memcpy(dest, requested);
+        const data = try region.read_slice(self.bytes.mem);
+        try buf.pushSlice(data);
     }
 };
 
