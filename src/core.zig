@@ -6,7 +6,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+//const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 // All errors, whether expected or unexpected, get an explicit err code.
 // Why not use asserts?
@@ -20,10 +20,44 @@ const Err = error{
     StorageOffsetNot8ByteAligned,
 };
 
-// Convenience functions
+/// Making my own append only data structure
+/// Main reason is so I can get a trappable error for buffer overflows
+/// But also convenience
+fn Vec(comptime T: type) type {
+    return struct {
+        mem: []T,
+        len: usize,
 
-fn vecFromBuf(comptime T: type, buf: []T) ArrayListUnmanaged(T) {
-    return ArrayListUnmanaged(T).initBuffer(buf);
+        fn init(buf: []T) @This() {
+            return .{ .mem = buf, .len = 0 };
+        }
+
+        fn push(self: *@This(), elem: T) error{BufOverrun}!void {
+            if (self.len == self.mem.len) {
+                return error.BufOverrun;
+            }
+
+            self.mem[self.len] = elem;
+            self.len += 1;
+        }
+
+        fn pushSlice(self: *@This(), slice: []const T) error{BufOverrun}!void {
+            const new_len = self.len + slice.len;
+            if (new_len >= self.mem.len) {
+                return error.BufOverrun;
+            }
+
+            @memcpy(self.mem[self.len..][0..slice.len], slice);
+        }
+
+        fn peek(self: @This()) ?T {
+            return if (self.len == 0) null else self.mem[self.len];
+        }
+
+        fn clear(self: *@This()) void {
+            self.len = 0;
+        }
+    };
 }
 
 fn alignTo8(unaligned: u64) u64 {
@@ -67,10 +101,10 @@ pub fn Log(comptime Storage: type) type {
         }
 
         /// Returns number of events committed
-        pub fn commit(self: *@This()) u64 {
+        pub fn commit(self: *@This()) !u64 {
             const txn = self.enqd.txn();
             const result = txn.offsets.len;
-            self.cmtd.append(txn.offsets, txn.events);
+            try self.cmtd.append(txn.offsets, txn.events);
             self.enqd.reset();
             return result;
         }
@@ -117,7 +151,7 @@ const Enqueued = struct {
         events: []const u8,
     };
     offsets: StorageOffsets,
-    events: ArrayListUnmanaged(u8),
+    events: Vec(u8),
     cmtd_acqs: *const []const Addr,
     fn init(
         buffers: HeapMem.Enqueued,
@@ -125,7 +159,7 @@ const Enqueued = struct {
     ) !@This() {
         return .{
             .offsets = try StorageOffsets.init(buffers.offsets, 0),
-            .events = vecFromBuf(u8, buffers.events),
+            .events = Vec(u8).init(buffers.events),
             .cmtd_acqs = cmtd_acqs,
         };
     }
@@ -134,8 +168,8 @@ const Enqueued = struct {
     fn append(self: *@This(), e: *const Event) !u64 {
         const offset = try self.offsets.getLast().next(e);
         try self.offsets.append(offset);
-        e.appendTo(&self.events);
-        return self.events.items.len;
+        try e.appendTo(&self.events);
+        return self.events.mem.len;
     }
 
     fn reset(self: *@This()) void {
@@ -143,7 +177,7 @@ const Enqueued = struct {
         // eqneued buffer before reseting, which happens after committing
         const last_committed_event = self.offsets.getLast();
         self.offsets.reset(last_committed_event);
-        self.events.clearRetainingCapacity();
+        self.events.clear();
     }
 
     fn eventCount(self: *@This()) u64 {
@@ -154,7 +188,7 @@ const Enqueued = struct {
     fn txn(self: @This()) Transaction {
         return .{
             .offsets = self.offsets.tail(),
-            .events = self.events.items,
+            .events = self.events.mem,
         };
     }
 };
@@ -174,7 +208,7 @@ fn Committed(comptime Storage: type) type {
             heap_mem: HeapMem.Committed,
         ) !@This() {
             var acqs = Acquaintances.init(heap_mem.acqs);
-            acqs.append(addr);
+            try acqs.append(addr);
 
             return .{
                 .offsets = try StorageOffsets.init(heap_mem.offsets, 0),
@@ -187,9 +221,11 @@ fn Committed(comptime Storage: type) type {
             self: *@This(),
             offsets: []const StorageOffset,
             events: []const u8,
-        ) void {
-            self.offsets.appendSlice(offsets);
-            self.events.append(events);
+        ) !void {
+            // TODO: these operations must be atomic
+            try self.offsets.appendSlice(offsets);
+            // TODO: If this fails, appending to offsets must be un-done
+            try self.events.append(events);
         }
 
         fn lastOffset(self: *@This()) u64 {
@@ -218,43 +254,43 @@ fn Committed(comptime Storage: type) type {
 /// Wrapper around a Vec with some invariants:
 /// - always at least one element: next offset, for calculating size
 const StorageOffsets = struct {
-    vec: ArrayListUnmanaged(StorageOffset),
+    vec: Vec(StorageOffset),
     fn init(buf: []StorageOffset, next_committed_offset: u64) !@This() {
-        var vec = ArrayListUnmanaged(StorageOffset).initBuffer(buf);
+        var vec = Vec(StorageOffset).init(buf);
         const first = try StorageOffset.init(next_committed_offset);
-        vec.appendAssumeCapacity(first);
+        try vec.push(first);
         return .{ .vec = vec };
     }
 
     fn reset(self: *@This(), next_committed_offset: StorageOffset) void {
-        self.vec.clearRetainingCapacity();
-        self.vec.appendAssumeCapacity(next_committed_offset);
+        self.vec.clear();
+        self.vec.push(next_committed_offset) catch unreachable;
     }
 
     fn tail(self: @This()) []StorageOffset {
-        return self.vec.items[1..];
+        return self.vec.mem[1..];
     }
 
     fn asSlice(self: @This()) []StorageOffset {
-        return self.vec.items;
+        return self.vec.mem;
     }
 
     fn eventCount(self: @This()) u64 {
-        return self.vec.items.len - 1;
+        return self.vec.mem.len - 1;
     }
 
     fn getLast(self: @This()) StorageOffset {
-        return self.vec.getLast();
+        return self.vec.peek().?;
     }
 
     fn append(self: *@This(), offset: StorageOffset) !void {
         if (self.getLast().n >= offset.n) return Err.StorageOffsetNonMonotonic;
-        self.vec.appendAssumeCapacity(offset);
+        try self.vec.push(offset);
     }
 
-    fn appendSlice(self: *@This(), slice: []const StorageOffset) void {
+    fn appendSlice(self: *@This(), slice: []const StorageOffset) !void {
         for (slice) |offset| {
-            self.vec.appendAssumeCapacity(offset);
+            try self.vec.push(offset);
         }
     }
 
@@ -285,25 +321,25 @@ pub const StorageOffset = packed struct(u64) {
 /// Storing them here allows us to reference them with a u16 ptr inside
 /// a committed event, allowing shortening the header for storaage.
 const Acquaintances = struct {
-    vec: ArrayListUnmanaged(Addr),
+    vec: Vec(Addr),
     fn init(buf: []Addr) @This() {
         if (buf.len > std.math.maxInt(u16)) {
             @panic("Must be able to index acquaintances with a u16");
         }
 
-        return .{ .vec = vecFromBuf(Addr, buf) };
+        return .{ .vec = Vec(Addr).init(buf) };
     }
 
     fn get(self: @This(), index: u16) Addr {
-        return self.vec.items[index];
+        return self.vec.mem[index];
     }
 
-    fn append(self: *@This(), addr: Addr) void {
-        return self.vec.appendAssumeCapacity(addr);
+    fn append(self: *@This(), addr: Addr) !void {
+        return self.vec.push(addr);
     }
 
     fn asSlice(self: @This()) []Addr {
-        return self.vec.items;
+        return self.vec.mem;
     }
 };
 
@@ -324,14 +360,14 @@ const Event = struct {
 
     fn appendTo(
         self: @This(),
-        byte_vec: *ArrayListUnmanaged(u8),
-    ) void {
+        byte_vec: *Vec(u8),
+    ) !void {
         const header = Header{ .id = self.id, .payload_len = self.payload.len };
         const header_bytes: []const u8 = std.mem.asBytes(&header);
-        byte_vec.appendSliceAssumeCapacity(header_bytes);
-        byte_vec.appendSliceAssumeCapacity(self.payload);
-        const unaligned_size = byte_vec.items.len;
-        byte_vec.items.len = alignTo8(unaligned_size);
+        try byte_vec.pushSlice(header_bytes);
+        try byte_vec.pushSlice(self.payload);
+        const unaligned_size = byte_vec.mem.len;
+        byte_vec.mem.len = alignTo8(unaligned_size);
     }
 
     fn read(
@@ -371,24 +407,24 @@ const Event = struct {
             }
         };
 
-        bytes: ArrayListUnmanaged(u8),
+        bytes: Vec(u8),
         n_events: u64,
 
         pub fn init(buf: []u8) @This() {
-            return .{ .bytes = vecFromBuf(u8, buf), .n_events = 0 };
+            return .{ .bytes = Vec(u8).init(buf), .n_events = 0 };
         }
 
-        fn append(self: *@This(), e: *const Event) void {
-            e.appendTo(&self.bytes);
+        fn append(self: *@This(), e: *const Event) !void {
+            try e.appendTo(&self.bytes);
             self.n_events += 1;
         }
 
         pub fn read(self: @This(), offset: StorageOffset) Event {
-            return Event.read(self.bytes.items, offset);
+            return Event.read(self.bytes.mem, offset);
         }
 
         fn clear(self: *@This()) void {
-            self.bytes.clearRetainingCapacity();
+            self.bytes.clear();
             self.n_events = 0;
         }
 
@@ -396,7 +432,9 @@ const Event = struct {
         /// new area must be written to immediately.
         fn resize(self: *@This(), new_len: u64, num_new_events: u64) []u8 {
             self.n_events += num_new_events;
-            return self.bytes.addManyAsSliceAssumeCapacity(new_len);
+            const old_len = self.bytes.len;
+            self.bytes.len += new_len;
+            return self.bytes.mem[old_len..][0..new_len];
         }
 
         pub fn iter(self: *const @This()) Iterator {
@@ -419,7 +457,7 @@ test "let's write some bytes" {
         .payload = "j;fkls",
     };
 
-    buf.append(&evt);
+    try buf.append(&evt);
     var it = buf.iter();
 
     while (try it.next()) |e| {
@@ -469,13 +507,13 @@ const Msg = struct {
 };
 
 pub const TestStorage = struct {
-    bytes: ArrayListUnmanaged(u8),
+    bytes: Vec(u8),
     pub fn init(buf: []u8) @This() {
-        return .{ .bytes = vecFromBuf(u8, buf) };
+        return .{ .bytes = Vec(u8).init(buf) };
     }
 
-    pub fn append(self: *@This(), data: []const u8) void {
-        self.bytes.appendSliceAssumeCapacity(data);
+    pub fn append(self: *@This(), data: []const u8) !void {
+        try self.bytes.pushSlice(data);
     }
 
     pub fn read(
@@ -483,7 +521,7 @@ pub const TestStorage = struct {
         dest: []u8,
         offset: u64,
     ) error{BufOverrun}!void {
-        const requested = self.bytes.items[offset .. offset + dest.len];
+        const requested = self.bytes.mem[offset .. offset + dest.len];
         @memcpy(dest, requested);
     }
 };
