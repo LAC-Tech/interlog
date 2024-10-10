@@ -66,7 +66,7 @@ pub fn main() !void {
                 _ = try env.log.enqueue(payload);
             }
 
-            assert(payload_lens.items.len == env.log.commit());
+            assert(payload_lens.items.len == try env.log.commit());
             stats.update(payload_lens.items.len);
         }
     }

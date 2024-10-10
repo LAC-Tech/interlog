@@ -4,7 +4,7 @@
 //! - no libc
 
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const testing = std.testing;
 //const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
@@ -43,19 +43,24 @@ fn Vec(comptime T: type) type {
 
         fn pushSlice(self: *@This(), slice: []const T) error{BufOverrun}!void {
             const new_len = self.len + slice.len;
-            if (new_len >= self.mem.len) {
+            if (new_len > self.mem.len) {
                 return error.BufOverrun;
             }
 
-            @memcpy(self.mem[self.len..][0..slice.len], slice);
+            @memcpy(self.mem[self.len..new_len], slice);
+            self.len = new_len;
         }
 
         fn peek(self: @This()) ?T {
-            return if (self.len == 0) null else self.mem[self.len];
+            return if (self.len == 0) null else self.mem[self.len - 1];
         }
 
         fn clear(self: *@This()) void {
             self.len = 0;
+        }
+
+        fn asSlice(self: @This()) []const T {
+            return self.mem[0..self.len];
         }
     };
 }
@@ -101,7 +106,7 @@ pub fn Log(comptime Storage: type) type {
         }
 
         /// Returns number of events committed
-        pub fn commit(self: *@This()) !u64 {
+        pub fn commit(self: *@This()) error{BufOverrun}!u64 {
             const txn = self.enqd.txn();
             const result = txn.offsets.len;
             try self.cmtd.append(txn.offsets, txn.events);
@@ -129,7 +134,7 @@ const Region = struct {
     n_bytes: usize,
     offset: usize,
 
-    fn read_slice(
+    fn readSlice(
         self: @This(),
         bytes: []const u8,
     ) error{BufOverrun}![]const u8 {
@@ -149,12 +154,39 @@ pub const HeapMem = struct {
         offsets: []StorageOffset,
         acqs: []Addr,
     };
+
     const Enqueued = struct {
         offsets: []StorageOffset,
         events: []u8,
     };
+
+    const Capacities = struct {
+        cmtd_offsets: usize,
+        cmtd_acqs: usize,
+        enqd_offsets: usize,
+        enqd_events: usize,
+    };
     cmtd: @This().Committed,
     enqd: @This().Enqueued,
+
+    fn init(allocator: std.mem.Allocator, capacities: Capacities) !@This() {
+        return .{
+            .cmtd = .{
+                .offsets = try allocator.alloc(
+                    StorageOffset,
+                    capacities.cmtd_offsets,
+                ),
+                .acqs = try allocator.alloc(Addr, capacities.cmtd_acqs),
+            },
+            .enqd = .{
+                .offsets = try allocator.alloc(
+                    StorageOffset,
+                    capacities.enqd_offsets,
+                ),
+                .events = try allocator.alloc(u8, capacities.enqd_events),
+            },
+        };
+    }
 };
 
 // Staging area for events to be committed later
@@ -183,7 +215,7 @@ const Enqueued = struct {
         const offset = try self.offsets.getLast().next(e);
         try self.offsets.append(offset);
         try e.appendTo(&self.events);
-        return self.events.mem.len;
+        return self.events.len;
     }
 
     fn reset(self: *@This()) void {
@@ -202,7 +234,7 @@ const Enqueued = struct {
     fn txn(self: @This()) Transaction {
         return .{
             .offsets = self.offsets.tail(),
-            .events = self.events.mem,
+            .events = self.events.asSlice(),
         };
     }
 };
@@ -257,7 +289,9 @@ fn Committed(comptime Storage: type) type {
         ) error{BufOverrun}!void {
             buf.clear();
             const region = self.offsets.lastNEvents(n);
+            // TODO: awful, this needs to be a single call on buf
             try self.events.read(&buf.bytes, region);
+            buf.n_events += n;
         }
     };
 }
@@ -279,15 +313,17 @@ const StorageOffsets = struct {
         self.vec.push(next_committed_offset) catch unreachable;
     }
 
-    fn tail(self: @This()) []StorageOffset {
-        return self.vec.mem[1..];
+    fn tail(self: @This()) []const StorageOffset {
+        return self.vec.asSlice()[1..];
     }
 
     fn lastNEvents(self: @This(), n: usize) Region {
-        var offsets = self.vec.mem;
-        offsets = offsets[offsets.len - 1 - n ..];
-        const size = offsets[offsets.len - 1].n - offsets[0].n;
-        return .{ .n_bytes = size, .offset = offsets[0].n };
+        const offsets = self.vec.asSlice();
+        const last = offsets.len - 1;
+        const first = last - n;
+        const size = offsets[last].n - offsets[first].n;
+        const region = .{ .n_bytes = size, .offset = offsets[first].n };
+        return region;
     }
 
     fn eventCount(self: @This()) u64 {
@@ -318,13 +354,13 @@ pub const StorageOffset = packed struct(u64) {
 
     n: u64,
     fn init(n: u64) Err!@This() {
-        if (n % 8 != 0) return Err.StorageOffsetNot8ByteAligned;
-        return .{ .n = n };
+        return if (n % 8 != 0) Err.StorageOffsetNot8ByteAligned else .{ .n = n };
     }
 
     fn next(self: @This(), e: *const Event) !@This() {
-        const size = @sizeOf(Event.Header) + e.payload.len;
-        return @This().init(self.n + alignTo8(size));
+        const unpadded_size = @sizeOf(Event.Header) + e.payload.len;
+        const size = alignTo8(unpadded_size);
+        return @This().init(self.n + size);
     }
 };
 
@@ -362,8 +398,8 @@ const Event = struct {
     pub const Header = extern struct { payload_len: u64, id: Event.ID };
 
     comptime {
-        assert(@sizeOf(ID) == 24);
-        assert(@sizeOf(Header) == 32);
+        debug.assert(@sizeOf(ID) == 24);
+        debug.assert(@sizeOf(Header) == 32);
     }
 
     id: ID,
@@ -375,15 +411,9 @@ const Event = struct {
     ) !void {
         const header = Header{ .payload_len = self.payload.len, .id = self.id };
         const header_bytes: *align(8) const [32]u8 = std.mem.asBytes(&header);
-        std.debug.print(
-            "header bytes BEFORE = {}\n",
-            .{std.fmt.fmtSliceHexUpper(header_bytes)},
-        );
-
         try byte_vec.pushSlice(header_bytes);
         try byte_vec.pushSlice(self.payload);
-        const unaligned_size = byte_vec.mem.len;
-        byte_vec.mem.len = alignTo8(unaligned_size);
+        byte_vec.len = alignTo8(byte_vec.len); // add padding
     }
 
     fn read(
@@ -392,14 +422,6 @@ const Event = struct {
     ) Event {
         const header_end = offset.n + @sizeOf(Header);
         const header_bytes = bytes[offset.n..header_end];
-        std.debug.print(
-            "header bytes AFTER  = {}\n",
-            .{std.fmt.fmtSliceHexUpper(header_bytes)},
-        );
-        std.debug.print(
-            "all the bytes = {}\n",
-            .{std.fmt.fmtSliceHexUpper(bytes)},
-        );
         const header = std.mem.bytesAsValue(Header, header_bytes);
         const payload_end = header_end + header.payload_len;
         const payload = bytes[header_end..payload_end];
@@ -439,8 +461,8 @@ const Event = struct {
             return .{ .bytes = Vec(u8).init(buf), .n_events = 0 };
         }
 
-        fn append(self: *@This(), e: *const Event) !void {
-            try e.appendTo(&self.bytes);
+        fn append(self: *@This(), evt: *const Event) !void {
+            try evt.appendTo(&self.bytes);
             self.n_events += 1;
         }
 
@@ -456,34 +478,26 @@ const Event = struct {
         pub fn iter(self: *const @This()) Iterator {
             return Iterator.init(self);
         }
+
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            try writer.writeAll("event.Buf{\n");
+            try writer.print(
+                "\t{}\n",
+                .{std.fmt.fmtSliceHexUpper(self.bytes.asSlice())},
+            );
+            try writer.print("\t{} events\n", .{self.n_events});
+            try writer.writeAll("}\n");
+        }
     };
 };
-
-test "let's write some bytes" {
-    const bytes_buf = try testing.allocator.alloc(u8, 127);
-    defer testing.allocator.free(bytes_buf);
-    var buf = Event.Buf.init(bytes_buf);
-
-    const seed: u64 = std.crypto.random.int(u64);
-    var rng = std.Random.Pcg.init(seed);
-    const id = Addr.init(std.Random.Pcg, &rng);
-
-    const evt = Event{
-        .id = .{ .origin = id, .logical_pos = 0 },
-        .payload = "j;fkls",
-    };
-
-    try buf.append(&evt);
-    var it = buf.iter();
-
-    while (try it.next()) |e| {
-        try testing.expectEqualSlices(u8, evt.payload, e.payload);
-    }
-
-    const actual = buf.read(StorageOffset.zero);
-
-    try testing.expectEqualDeep(actual, evt);
-}
 
 pub const Addr = extern struct {
     word_a: u64,
@@ -512,7 +526,7 @@ pub const Addr = extern struct {
 
 comptime {
     const alignment = @alignOf(Addr);
-    assert(alignment == 8);
+    debug.assert(alignment == 8);
 }
 
 const Msg = struct {
@@ -538,10 +552,37 @@ pub const TestStorage = struct {
         buf: *Vec(u8),
         region: Region,
     ) error{BufOverrun}!void {
-        const data = try region.read_slice(self.bytes.mem);
+        const data = try region.readSlice(self.bytes.asSlice());
         try buf.pushSlice(data);
     }
 };
+
+test "let's write some bytes" {
+    const bytes_buf = try testing.allocator.alloc(u8, 127);
+    defer testing.allocator.free(bytes_buf);
+    var buf = Event.Buf.init(bytes_buf);
+
+    const seed: u64 = std.crypto.random.int(u64);
+    var rng = std.Random.Pcg.init(seed);
+    const id = Addr.init(std.Random.Pcg, &rng);
+
+    const evt = Event{
+        .id = .{ .origin = id, .logical_pos = 0 },
+        .payload = "j;fkls",
+    };
+
+    try buf.append(&evt);
+
+    var it = buf.iter();
+
+    while (try it.next()) |e| {
+        try testing.expectEqualSlices(u8, evt.payload, e.payload);
+    }
+
+    const actual = buf.read(StorageOffset.zero);
+
+    try testing.expectEqualDeep(actual, evt);
+}
 
 test "enqueue, commit and read data" {
     const seed: u64 = std.crypto.random.int(u64);
@@ -553,81 +594,75 @@ test "enqueue, commit and read data" {
 
     const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 272));
-    const heap_mem = .{
-        .enqd = .{
-            .events = try allocator.alloc(u8, 136),
-            .offsets = try allocator.alloc(StorageOffset, 3),
-        },
-        .cmtd = .{
-            .offsets = try allocator.alloc(StorageOffset, 5),
-            .acqs = try allocator.alloc(Addr, 1),
-        },
-    };
+    const heap_mem = try HeapMem.init(allocator, .{
+        .enqd_events = 136,
+        .enqd_offsets = 3,
+        .cmtd_offsets = 5,
+        .cmtd_acqs = 1,
+    });
 
     var log = try Log(TestStorage).init(addr, storage, heap_mem);
     var read_buf = Event.Buf.init(try allocator.alloc(u8, 136));
 
-    try testing.expectEqual(64, log.enqueue("I have known the arcane law"));
-    try testing.expectEqual(1, log.commit());
-    try log.readFromEnd(1, &read_buf);
-    try testing.expectEqualSlices(
-        u8,
-        "I have known the arcane law",
-        read_buf.read(StorageOffset.zero).payload,
-    );
+    {
+        const line = "I have known the arcane law";
+        try testing.expectEqual(64, log.enqueue(line));
+        try testing.expectEqual(1, log.commit());
+        try log.readFromEnd(1, &read_buf);
+        const actual = read_buf.read(StorageOffset.zero).payload;
+        try testing.expectEqualSlices(u8, line, actual);
+    }
 
-    try testing.expectEqual(
-        72,
-        log.enqueue("On strange roads, such visions met"),
-    );
-    try testing.expectEqual(1, log.commit());
-    try log.readFromEnd(1, &read_buf);
-    var it = read_buf.iter();
-    const next = try it.next();
-    const actual = next.?.payload;
-    try testing.expectEqualSlices(
-        u8,
-        "On strange roads, such visions met",
-        //read_buf.read(StorageOffset.zero).payload,
-        actual,
-    );
+    {
+        const line = "On strange roads, such visions met";
+        try testing.expectEqual(72, log.enqueue(line));
+        try testing.expectEqual(1, log.commit());
+        try log.readFromEnd(1, &read_buf);
+        var it = read_buf.iter();
+        const actual = (try it.next()).?.payload;
+        try testing.expectEqualSlices(u8, line, actual);
+    }
 
     // Read multiple things from the buffer
-    try log.readFromEnd(2, &read_buf);
-    it = read_buf.iter();
+    {
+        try log.readFromEnd(2, &read_buf);
+        var it = read_buf.iter();
 
-    try testing.expectEqualSlices(
-        u8,
-        "I have known the arcane law",
-        (try it.next()).?.payload,
-    );
+        try testing.expectEqualSlices(
+            u8,
+            "I have known the arcane law",
+            (try it.next()).?.payload,
+        );
 
-    try testing.expectEqualSlices(
-        u8,
-        "On strange roads, such visions met",
-        (try it.next()).?.payload,
-    );
+        try testing.expectEqualSlices(
+            u8,
+            "On strange roads, such visions met",
+            (try it.next()).?.payload,
+        );
+    }
 
     // Bulk commit two things
-    try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
-    try testing.expectEqual(
-        136,
-        log.enqueue("For dangers and obstacles of this world"),
-    );
-    try testing.expectEqual(log.commit(), 2);
+    {
+        try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
+        try testing.expectEqual(
+            136,
+            log.enqueue("For dangers and obstacles of this world"),
+        );
+        try testing.expectEqual(log.commit(), 2);
 
-    try log.readFromEnd(2, &read_buf);
-    it = read_buf.iter();
+        try log.readFromEnd(2, &read_buf);
+        var it = read_buf.iter();
 
-    try testing.expectEqualSlices(
-        u8,
-        "That I have no fear, nor concern",
-        (try it.next()).?.payload,
-    );
+        try testing.expectEqualSlices(
+            u8,
+            "That I have no fear, nor concern",
+            (try it.next()).?.payload,
+        );
 
-    try testing.expectEqualSlices(
-        u8,
-        "For dangers and obstacles of this world",
-        (try it.next()).?.payload,
-    );
+        try testing.expectEqualSlices(
+            u8,
+            "For dangers and obstacles of this world",
+            (try it.next()).?.payload,
+        );
+    }
 }
