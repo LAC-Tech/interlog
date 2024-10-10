@@ -167,20 +167,20 @@ pub const HeapMem = struct {
     enqd_events: []u8,
 
     // TODO: remove this, this module should not allocate.
-    pub fn init(allocator: std.mem.Allocator, capacities: Capacities) !@This() {
-        return .{
-            .cmtd_offsets = try allocator.alloc(
-                StorageOffset,
-                capacities.cmtd_offsets,
-            ),
-            .cmtd_acqs = try allocator.alloc(Addr, capacities.cmtd_acqs),
-            .enqd_offsets = try allocator.alloc(
-                StorageOffset,
-                capacities.enqd_offsets,
-            ),
-            .enqd_events = try allocator.alloc(u8, capacities.enqd_events),
-        };
-    }
+    //pub fn init(allocator: std.mem.Allocator, capacities: Capacities) !@This() {
+    //    return .{
+    //        .cmtd_offsets = try allocator.alloc(
+    //            StorageOffset,
+    //            capacities.cmtd_offsets,
+    //        ),
+    //        .cmtd_acqs = try allocator.alloc(Addr, capacities.cmtd_acqs),
+    //        .enqd_offsets = try allocator.alloc(
+    //            StorageOffset,
+    //            capacities.enqd_offsets,
+    //        ),
+    //        .enqd_events = try allocator.alloc(u8, capacities.enqd_events),
+    //    };
+    //}
 };
 
 // Staging area for events to be committed later
@@ -598,12 +598,12 @@ test "enqueue, commit and read data" {
 
     const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 272));
-    const heap_mem = try HeapMem.init(allocator, .{
-        .enqd_events = 136,
-        .enqd_offsets = 3,
-        .cmtd_offsets = 5,
-        .cmtd_acqs = 1,
-    });
+    const heap_mem = .{
+        .enqd_events = try allocator.alloc(u8, 136),
+        .enqd_offsets = try allocator.alloc(StorageOffset, 3),
+        .cmtd_offsets = try allocator.alloc(StorageOffset, 5),
+        .cmtd_acqs = try allocator.alloc(Addr, 1),
+    };
 
     var log = try Log(TestStorage).init(addr, storage, heap_mem);
     var read_buf = Event.Buf.init(try allocator.alloc(u8, 136));
