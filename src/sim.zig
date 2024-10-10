@@ -91,7 +91,7 @@ const Storage = struct {
         return .{ .bytes = ArrayListUnmanaged(u8).fromOwnedSlice(buf) };
     }
 
-    pub fn append(self: *@This(), bytes: []const u8) void {
+    pub fn append(self: *@This(), bytes: []const u8) !void {
         self.bytes.appendSliceAssumeCapacity(bytes);
     }
 };

@@ -1,8 +1,6 @@
 # Top = TODO first
-
-- seed 10329696794973717227 fails
-- fix max number of replicas replace allocating hashmap
+- seed 2E57C1C9C5E7763E fails
+- seed 8F5A748185E642EB fails
 - PBT for atomic commits in log
 - Document every module
-- upload to docs.rs
 - reconstruct Log & indices from file

@@ -26,7 +26,7 @@ pub fn main() !void {
     const user_supplied_seed = args.next();
 
     const seed = if (user_supplied_seed) |s|
-        try std.fmt.parseInt(u64, s, 10)
+        try std.fmt.parseInt(u64, s, 16)
     else
         std.crypto.random.int(u64);
     var rng = std.rand.DefaultPrng.init(seed);
@@ -42,7 +42,7 @@ pub fn main() !void {
         try envs.putNoClobber(env.log.addr, env);
     }
 
-    debug.print("seed = {d}\n", .{seed});
+    debug.print("seed = {X}\n", .{seed});
     debug.print("Running simulation with:\n", .{});
     debug.print("- {d} actors\n", .{envs.count()});
 
