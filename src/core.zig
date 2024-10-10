@@ -271,7 +271,7 @@ fn Committed(comptime Storage: type) type {
             // TODO: these operations must be atomic
             try self.offsets.appendSlice(offsets);
             // TODO: If this fails, appending to offsets must be un-done
-            try self.events.append(events);
+            self.events.append(events);
         }
 
         fn lastOffset(self: *@This()) u64 {
