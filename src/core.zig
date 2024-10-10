@@ -271,7 +271,7 @@ fn Committed(comptime Storage: type) type {
             // TODO: these operations must be atomic
             try self.offsets.appendSlice(offsets);
             // TODO: If this fails, appending to offsets must be un-done
-            self.events.append(events);
+            try self.events.append(events);
         }
 
         fn lastOffset(self: *@This()) u64 {
@@ -289,9 +289,7 @@ fn Committed(comptime Storage: type) type {
         ) error{BufOverrun}!void {
             buf.clear();
             const region = self.offsets.lastNEvents(n);
-            // TODO: awful, this needs to be a single call on buf
-            try self.events.read(&buf.bytes, region);
-            buf.n_events += n;
+            try buf.appendFromStorage(Storage, self.events, region, n);
         }
     };
 }
@@ -470,6 +468,16 @@ const Event = struct {
             return Event.read(self.bytes.mem, offset);
         }
 
+        fn appendFromStorage(
+            self: *@This(),
+            comptime Storage: type,
+            storage: Storage,
+            region: Region,
+            n_events: usize,
+        ) !void {
+            try storage.read(&self.bytes, region);
+            self.n_events += n_events;
+        }
         fn clear(self: *@This()) void {
             self.bytes.clear();
             self.n_events = 0;
