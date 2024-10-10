@@ -84,14 +84,17 @@ pub fn Log(comptime Storage: type) type {
             const cmtd = try Committed(Storage).init(
                 addr,
                 storage,
-                heap_mem.cmtd,
+                heap_mem.cmtd_acqs,
+                heap_mem.cmtd_offsets,
             );
 
-            return .{
-                .addr = addr,
-                .enqd = try Enqueued.init(heap_mem.enqd, &cmtd.acqs.asSlice()),
-                .cmtd = cmtd,
-            };
+            const enqd = try Enqueued.init(
+                heap_mem.enqd_offsets,
+                heap_mem.enqd_events,
+                &cmtd.acqs.asSlice(),
+            );
+
+            return .{ .addr = addr, .enqd = enqd, .cmtd = cmtd };
         }
 
         /// Returns accumulated number of bytes enqueued
@@ -150,41 +153,32 @@ const Region = struct {
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
 pub const HeapMem = struct {
-    const Committed = struct {
-        offsets: []StorageOffset,
-        acqs: []Addr,
-    };
-
-    const Enqueued = struct {
-        offsets: []StorageOffset,
-        events: []u8,
-    };
-
     const Capacities = struct {
         cmtd_offsets: usize,
         cmtd_acqs: usize,
         enqd_offsets: usize,
         enqd_events: usize,
     };
-    cmtd: @This().Committed,
-    enqd: @This().Enqueued,
 
-    fn init(allocator: std.mem.Allocator, capacities: Capacities) !@This() {
+    cmtd_offsets: []StorageOffset,
+    cmtd_acqs: []Addr,
+
+    enqd_offsets: []StorageOffset,
+    enqd_events: []u8,
+
+    // TODO: remove this, this module should not allocate.
+    pub fn init(allocator: std.mem.Allocator, capacities: Capacities) !@This() {
         return .{
-            .cmtd = .{
-                .offsets = try allocator.alloc(
-                    StorageOffset,
-                    capacities.cmtd_offsets,
-                ),
-                .acqs = try allocator.alloc(Addr, capacities.cmtd_acqs),
-            },
-            .enqd = .{
-                .offsets = try allocator.alloc(
-                    StorageOffset,
-                    capacities.enqd_offsets,
-                ),
-                .events = try allocator.alloc(u8, capacities.enqd_events),
-            },
+            .cmtd_offsets = try allocator.alloc(
+                StorageOffset,
+                capacities.cmtd_offsets,
+            ),
+            .cmtd_acqs = try allocator.alloc(Addr, capacities.cmtd_acqs),
+            .enqd_offsets = try allocator.alloc(
+                StorageOffset,
+                capacities.enqd_offsets,
+            ),
+            .enqd_events = try allocator.alloc(u8, capacities.enqd_events),
         };
     }
 };
@@ -200,12 +194,13 @@ const Enqueued = struct {
     events: Vec(u8),
     cmtd_acqs: *const []const Addr,
     fn init(
-        buffers: HeapMem.Enqueued,
+        offset_buf: []StorageOffset,
+        event_buf: []u8,
         cmtd_acqs: *const []const Addr,
     ) !@This() {
         return .{
-            .offsets = try StorageOffsets.init(buffers.offsets, 0),
-            .events = Vec(u8).init(buffers.events),
+            .offsets = try StorageOffsets.init(offset_buf, 0),
+            .events = Vec(u8).init(event_buf),
             .cmtd_acqs = cmtd_acqs,
         };
     }
@@ -251,13 +246,14 @@ fn Committed(comptime Storage: type) type {
         fn init(
             addr: Addr,
             storage: Storage,
-            heap_mem: HeapMem.Committed,
+            acqs_buf: []Addr,
+            offsets_buf: []StorageOffset,
         ) !@This() {
-            var acqs = Acquaintances.init(heap_mem.acqs);
+            var acqs = Acquaintances.init(acqs_buf);
             try acqs.append(addr);
 
             return .{
-                .offsets = try StorageOffsets.init(heap_mem.offsets, 0),
+                .offsets = try StorageOffsets.init(offsets_buf, 0),
                 .events = storage,
                 .acqs = acqs,
             };

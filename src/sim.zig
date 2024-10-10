@@ -1,9 +1,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const assert = std.debug.assert;
-const Log = lib.core.Log;
-const Addr = lib.core.Addr;
-const StorageOffset = lib.core.StorageOffset;
+const core = lib.core;
 
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
@@ -101,7 +99,7 @@ const Storage = struct {
 // An environment, representing some source of messages, and a log
 // TODO: this object is stupid. its only purpose is to group
 pub const Env = struct {
-    log: Log(Storage),
+    log: core.Log(Storage),
     payload_src: PayloadSrc,
 
     pub fn init(
@@ -112,24 +110,23 @@ pub const Env = struct {
         const storage = Storage.init(
             try allocator.alloc(u8, config.storage_capacity),
         );
+
+        const addr = core.Addr.init(R, rng);
+
         const heap_mem = .{
-            .enqd = .{
-                .offsets = try allocator.alloc(
-                    StorageOffset,
-                    config.msg_len.at_most,
-                ),
-                .events = try allocator.alloc(
-                    u8,
-                    config.msg_len.at_most * config.payload_size.at_most,
-                ),
-            },
-            .cmtd = .{
-                .offsets = try allocator.alloc(StorageOffset, 1_000_000),
-                .acqs = try allocator.create([std.math.maxInt(u16)]Addr),
-            },
+            .enqd_offsets = try allocator.alloc(
+                core.StorageOffset,
+                config.msg_len.at_most,
+            ),
+            .enqd_events = try allocator.alloc(
+                u8,
+                config.msg_len.at_most * config.payload_size.at_most,
+            ),
+            .cmtd_offsets = try allocator.alloc(core.StorageOffset, 1_000_000),
+            .cmtd_acqs = try allocator.create([std.math.maxInt(u16)]core.Addr),
         };
         return .{
-            .log = try Log(Storage).init(Addr.init(R, rng), storage, heap_mem),
+            .log = try core.Log(Storage).init(addr, storage, heap_mem),
             .payload_src = try PayloadSrc.init(R, rng, allocator),
         };
     }
