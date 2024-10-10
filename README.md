@@ -2,7 +2,7 @@
 
 **WORK IN PROGRESS**
 
-TL;DR - "cargo run --bin sim" to run the deterministic simulation test that may
+TL;DR - "zig build run" to run the deterministic simulation test that may
 or may not work.
 
 Interlog is a database optimized for writing and syncing data. It is both
@@ -10,7 +10,7 @@ embedded (designed to be written and read from in-process) and distributed
 (full-support for synchronisation). In other words, it's Local-First: read and
 write locally, sync remotely.
 
-It's designed as an append only network of logs. Each log is a ledger of
+It's designed as an append-only network of logs. Each log is a ledger of
 events, which have a unique ID and an arbitrary byte array payload. Events are
 recorded at each log in transaction order (ie, the order received by the log.)
 
@@ -45,8 +45,8 @@ recorded at each log in transaction order (ie, the order received by the log.)
 
 ## Implementation Docs
 
-Documentation is in a state of flux, but start at core/src/log.rs.
-(TODO: document new modules, host on docs.rs)
+Documentation is in a state of flux, but start at src/core.rs.
+(TODO: generate zig docs somehow)
 
 ## Sync Strategy
 
