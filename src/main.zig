@@ -63,7 +63,10 @@ pub fn main() !void {
             for (payload_lens.items) |payload_len| {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
-                _ = try env.log.enqueue(payload);
+                _ = env.log.enqueue(payload) catch |err| {
+                    debug.print("Sim stats: {}\n", .{stats});
+                    return err;
+                };
             }
 
             assert(payload_lens.items.len == try env.log.commit());
