@@ -64,6 +64,7 @@ pub fn main() !void {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
                 _ = env.log.enqueue(payload) catch |err| {
+                    debug.print("ENQUEUE ERR\n", .{});
                     debug.print("Sim stats: {}\n", .{stats});
                     return err;
                 };
