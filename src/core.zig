@@ -70,6 +70,12 @@ fn alignTo8(unaligned: u64) u64 {
     return (unaligned + 7) & ~@as(u8, 7);
 }
 
+const Stats = struct {
+    addr: Addr,
+    n_cmtd_events: usize,
+    n_enqd_events: usize,
+};
+
 // TODO: explicitly list errors returned by each function
 pub fn Log(comptime Storage: type) type {
     return struct {
