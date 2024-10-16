@@ -52,8 +52,8 @@ pub fn main() !void {
         config.msg_len.at_most,
     );
 
-    var i: u64 = 0;
-    while (i < MAX_SIM_TIME) : (i += 10) {
+    var sim_time: u64 = 0;
+    while (sim_time < MAX_SIM_TIME) : (sim_time += 10) {
         var it = envs.valueIterator();
 
         while (it.next()) |env| {
@@ -65,6 +65,7 @@ pub fn main() !void {
                 rng.fill(payload);
                 _ = env.log.enqueue(payload) catch |err| {
                     debug.print("ENQUEUE ERR\n", .{});
+                    debug.print("Sim time: {}\n", .{sim_time});
                     debug.print("Sim stats: {}\n", .{stats});
                     debug.print("Log stats: {}\n", .{env.log.stats()});
                     return err;
