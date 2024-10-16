@@ -72,8 +72,8 @@ fn alignTo8(unaligned: u64) u64 {
 
 const Stats = struct {
     addr: Address,
-    n_cmtd_events: usize,
     n_enqd_events: usize,
+    n_cmtd_events: usize,
 };
 
 // TODO: explicitly list errors returned by each function
@@ -135,6 +135,14 @@ pub fn Log(comptime Storage: type) type {
             buf: *Event.Buf,
         ) error{BufOverrun}!void {
             try self.cmtd.readFromEnd(n, buf);
+        }
+
+        pub fn stats(self: @This()) Stats {
+            return .{
+                .addr = self.addr,
+                .n_cmtd_events = self.cmtd.eventCount(),
+                .n_enqd_events = self.enqd.eventCount(),
+            };
         }
     };
 }
@@ -228,7 +236,7 @@ const Enqueued = struct {
         self.events.clear();
     }
 
-    fn eventCount(self: *@This()) u64 {
+    fn eventCount(self: @This()) u64 {
         return self.offsets.eventCount();
     }
 

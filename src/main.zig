@@ -66,6 +66,7 @@ pub fn main() !void {
                 _ = env.log.enqueue(payload) catch |err| {
                     debug.print("ENQUEUE ERR\n", .{});
                     debug.print("Sim stats: {}\n", .{stats});
+                    debug.print("Log stats: {}\n", .{env.log.stats()});
                     return err;
                 };
             }
