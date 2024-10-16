@@ -22,7 +22,8 @@ const Err = error{
 
 /// Making my own append only data structure
 /// Main reason is so I can get a trappable error for buffer overflows
-/// But also convenience
+/// And the reason I want that, is for the simulator.
+/// But also convenience - zigs arraylistunamanged is a mouthful
 fn Vec(comptime T: type) type {
     return struct {
         mem: []T,
@@ -591,12 +592,12 @@ test "let's write some bytes" {
 test "enqueue, commit and read data" {
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
+    const addr = Addr.init(std.Random.Pcg, &rng);
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const addr = Addr.init(std.Random.Pcg, &rng);
     const storage = TestStorage.init(try allocator.alloc(u8, 272));
     const heap_mem = .{
         .enqd_events = try allocator.alloc(u8, 136),
