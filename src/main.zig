@@ -33,7 +33,7 @@ pub fn main() !void {
 
     const n_actors = config.n_actors.gen(RNG, &rng);
 
-    var envs = std.AutoHashMap(core.Addr, sim.Env).init(allocator);
+    var envs = std.AutoHashMap(core.Address, sim.Env).init(allocator);
 
     var stats = sim.Stats.init();
 

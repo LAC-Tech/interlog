@@ -71,7 +71,7 @@ fn alignTo8(unaligned: u64) u64 {
 }
 
 const Stats = struct {
-    addr: Addr,
+    addr: Address,
     n_cmtd_events: usize,
     n_enqd_events: usize,
 };
@@ -79,12 +79,12 @@ const Stats = struct {
 // TODO: explicitly list errors returned by each function
 pub fn Log(comptime Storage: type) type {
     return struct {
-        addr: Addr,
+        addr: Address,
         enqd: Enqueued,
         cmtd: Committed(Storage),
 
         pub fn init(
-            addr: Addr,
+            addr: Address,
             storage: Storage,
             heap_mem: HeapMem,
         ) !@This() {
@@ -168,7 +168,7 @@ pub const HeapMem = struct {
     };
 
     cmtd_offsets: []StorageOffset,
-    cmtd_acqs: []Addr,
+    cmtd_acqs: []Address,
 
     enqd_offsets: []StorageOffset,
     enqd_events: []u8,
@@ -199,11 +199,11 @@ const Enqueued = struct {
     };
     offsets: StorageOffsets,
     events: Vec(u8),
-    cmtd_acqs: *const []const Addr,
+    cmtd_acqs: *const []const Address,
     fn init(
         offset_buf: []StorageOffset,
         event_buf: []u8,
-        cmtd_acqs: *const []const Addr,
+        cmtd_acqs: *const []const Address,
     ) !@This() {
         return .{
             .offsets = try StorageOffsets.init(offset_buf, 0),
@@ -251,9 +251,9 @@ fn Committed(comptime Storage: type) type {
         acqs: Acquaintances,
 
         fn init(
-            addr: Addr,
+            addr: Address,
             storage: Storage,
-            acqs_buf: []Addr,
+            acqs_buf: []Address,
             offsets_buf: []StorageOffset,
         ) !@This() {
             var acqs = Acquaintances.init(acqs_buf);
@@ -369,30 +369,30 @@ pub const StorageOffset = packed struct(u64) {
 /// Storing them here allows us to reference them with a u16 ptr inside
 /// a committed event, allowing shortening the header for storaage.
 const Acquaintances = struct {
-    vec: Vec(Addr),
-    fn init(buf: []Addr) @This() {
+    vec: Vec(Address),
+    fn init(buf: []Address) @This() {
         if (buf.len > std.math.maxInt(u16)) {
             @panic("Must be able to index acquaintances with a u16");
         }
 
-        return .{ .vec = Vec(Addr).init(buf) };
+        return .{ .vec = Vec(Address).init(buf) };
     }
 
-    fn get(self: @This(), index: u16) Addr {
+    fn get(self: @This(), index: u16) Address {
         return self.vec.mem[index];
     }
 
-    fn append(self: *@This(), addr: Addr) !void {
+    fn append(self: *@This(), addr: Address) !void {
         return self.vec.push(addr);
     }
 
-    fn asSlice(self: @This()) []Addr {
+    fn asSlice(self: @This()) []Address {
         return self.vec.mem;
     }
 };
 
 const Event = struct {
-    pub const ID = extern struct { origin: Addr, logical_pos: u64 };
+    pub const ID = extern struct { origin: Address, logical_pos: u64 };
 
     // Stand alone, self describing header
     // All info here is needed to rebuild the log from a binary file.
@@ -510,7 +510,7 @@ const Event = struct {
     };
 };
 
-pub const Addr = extern struct {
+pub const Address = extern struct {
     word_a: u64,
     word_b: u64,
     pub fn init(comptime R: type, rng: *R) @This() {
@@ -532,11 +532,11 @@ pub const Addr = extern struct {
         try writer.print("{x}{x}", .{ self.word_a, self.word_b });
     }
 
-    const zero = Addr{ .words = .{ 0, 0 } };
+    const zero = Address{ .words = .{ 0, 0 } };
 };
 
 comptime {
-    const alignment = @alignOf(Addr);
+    const alignment = @alignOf(Address);
     debug.assert(alignment == 8);
 }
 
@@ -544,7 +544,7 @@ const Msg = struct {
     const Inner = union(enum) { sync_res: []Event };
 
     inner: Inner,
-    origin: Addr,
+    origin: Address,
 };
 
 pub const TestStorage = struct {
@@ -575,7 +575,7 @@ test "let's write some bytes" {
 
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
-    const id = Addr.init(std.Random.Pcg, &rng);
+    const id = Address.init(std.Random.Pcg, &rng);
 
     const evt = Event{
         .id = .{ .origin = id, .logical_pos = 0 },
@@ -598,7 +598,7 @@ test "let's write some bytes" {
 test "enqueue, commit and read data" {
     const seed: u64 = std.crypto.random.int(u64);
     var rng = std.Random.Pcg.init(seed);
-    const addr = Addr.init(std.Random.Pcg, &rng);
+    const addr = Address.init(std.Random.Pcg, &rng);
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -609,7 +609,7 @@ test "enqueue, commit and read data" {
         .enqd_events = try allocator.alloc(u8, 136),
         .enqd_offsets = try allocator.alloc(StorageOffset, 3),
         .cmtd_offsets = try allocator.alloc(StorageOffset, 5),
-        .cmtd_acqs = try allocator.alloc(Addr, 1),
+        .cmtd_acqs = try allocator.alloc(Address, 1),
     };
 
     var log = try Log(TestStorage).init(addr, storage, heap_mem);

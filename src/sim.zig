@@ -111,7 +111,7 @@ pub const Env = struct {
             try allocator.alloc(u8, config.storage_capacity),
         );
 
-        const addr = core.Addr.init(R, rng);
+        const addr = core.Address.init(R, rng);
 
         const heap_mem = .{
             .enqd_offsets = try allocator.alloc(
@@ -123,7 +123,7 @@ pub const Env = struct {
                 config.msg_len.at_most * config.payload_size.at_most,
             ),
             .cmtd_offsets = try allocator.alloc(core.StorageOffset, 1_000_000),
-            .cmtd_acqs = try allocator.create([std.math.maxInt(u16)]core.Addr),
+            .cmtd_acqs = try allocator.create([std.math.maxInt(u16)]core.Address),
         };
         return .{
             .log = try core.Log(Storage).init(addr, storage, heap_mem),
