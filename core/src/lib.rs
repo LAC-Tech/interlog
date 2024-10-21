@@ -148,6 +148,7 @@ impl<'a, S: Storage> Log<'a, S> {
 }
 
 impl Address {
+	const ZERO: Address = Address { word_a: 0, word_b: 0 };
 	pub fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
 		Self { word_a: rand_word_a, word_b: rand_word_b }
 	}
@@ -445,7 +446,6 @@ fn align_to_8(n: usize) -> usize {
 mod tests {
 	use super::*;
 	use pretty_assertions::assert_eq;
-	use proptest::prelude::*;
 
 	struct TestStorage<'a>(fixcap::Vec<'a, u8>);
 

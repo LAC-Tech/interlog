@@ -1,4 +1,3 @@
-use interlog_core::*;
-use rand::prelude::*;
+//use interlog_core::*;
 
 fn main() {}

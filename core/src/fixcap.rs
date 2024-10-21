@@ -21,6 +21,7 @@ pub type Res = Result<(), Overrun>;
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
  * This is so it could be used in a #[no_std] context
  */
+#[allow(dead_code)]
 pub struct Vec<'a, T> {
 	items: &'a mut [T],
 	len: usize,
