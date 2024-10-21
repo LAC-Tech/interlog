@@ -14,8 +14,8 @@ const testing = std.testing;
 // - poor dev experience, they don't tell me much in the console
 // - an err union is one place where everything that can go wrong is documented
 // - allows me to defer the decision on whether an err is recoverable or not
-const Err = error{
-    BufOverrun,
+pub const Err = error{
+    NotEnoughMem,
     StorageOffsetNonMonotonic,
     StorageOffsetNot8ByteAligned,
 };
@@ -33,19 +33,19 @@ fn Vec(comptime T: type) type {
             return .{ .mem = buf, .len = 0 };
         }
 
-        fn push(self: *@This(), elem: T) error{BufOverrun}!void {
-            if (self.len == self.mem.len) {
-                return error.BufOverrun;
-            }
-
+        fn push(self: *@This(), elem: T) error{NotEnoughMem}!void {
+            if (self.len == self.mem.len) return error.NotEnoughMem;
             self.mem[self.len] = elem;
             self.len += 1;
         }
 
-        fn pushSlice(self: *@This(), slice: []const T) error{BufOverrun}!void {
+        fn pushSlice(
+            self: *@This(),
+            slice: []const T,
+        ) error{NotEnoughMem}!void {
             const new_len = self.len + slice.len;
             if (new_len > self.mem.len) {
-                return error.BufOverrun;
+                return error.NotEnoughMem;
             }
 
             @memcpy(self.mem[self.len..new_len], slice);
@@ -70,7 +70,7 @@ fn alignTo8(unaligned: u64) u64 {
     return (unaligned + 7) & ~@as(u8, 7);
 }
 
-const Stats = struct {
+pub const Stats = struct {
     addr: Address,
     n_enqd_events: usize,
     n_cmtd_events: usize,
@@ -116,7 +116,7 @@ pub fn Log(comptime Storage: type) type {
         }
 
         /// Returns number of events committed
-        pub fn commit(self: *@This()) error{BufOverrun}!u64 {
+        pub fn commit(self: *@This()) error{NotEnoughMem}!u64 {
             const txn = self.enqd.txn();
             const result = txn.offsets.len;
             try self.cmtd.append(txn.offsets, txn.events);

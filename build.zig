@@ -32,10 +32,12 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "zig",
         .root_source_file = b.path("src/main.zig"),
+
         .target = target,
         .optimize = optimize,
     });
 
+    exe.linkLibC();
     exe.linkSystemLibrary("ncurses");
 
     // This declares intent for the executable to be installed into the

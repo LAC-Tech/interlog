@@ -5,6 +5,7 @@ const debug = std.debug;
 const assert = std.debug.assert;
 const RNG = std.Random.Xoshiro256;
 
+const inspector = @import("inspector.zig");
 const sim = @import("sim.zig");
 const config = sim.config;
 const lib = @import("lib.zig");
@@ -64,6 +65,7 @@ pub fn main() !void {
                 const payload = payload_buf[0..payload_len];
                 rng.fill(payload);
                 _ = env.log.enqueue(payload) catch |err| {
+                    inspector.render(err, env.log.stats());
                     debug.print("ENQUEUE ERR\n", .{});
                     debug.print("Sim time: {}\n", .{sim_time});
                     debug.print("Sim stats: {}\n", .{stats});
