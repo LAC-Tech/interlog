@@ -5,5 +5,5 @@ authors = ["Lewis Campbell <info@lewiscampbell.tech>"]
 edition = "2021"
 
 [dependencies]
-interlog_core = { path = "../core" }
+interlog_lib = { path = "../lib" }
 ncurses = "*"

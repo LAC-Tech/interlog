@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-interlog_core = { path = "../core" }
+interlog_lib = { path = "../lib" }
 rand = "0.8.5"
 tabled = "0.15.0"
 

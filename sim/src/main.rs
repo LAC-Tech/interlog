@@ -1,10 +1,8 @@
-use interlog_core::*;
+use interlog_lib::*;
 use rand::prelude::*;
 use std::collections::BTreeMap;
 use std::iter;
 use std::panic::{self, AssertUnwindSafe};
-
-use interlog_core::{ExternalMemory, Storage};
 
 const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
 

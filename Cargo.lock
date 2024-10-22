@@ -163,12 +163,12 @@ checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 name = "interlog-inspector"
 version = "0.1.0"
 dependencies = [
- "interlog_core",
+ "interlog_lib",
  "ncurses",
 ]
 
 [[package]]
-name = "interlog_core"
+name = "interlog_lib"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -422,7 +422,7 @@ checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
 name = "sim"
 version = "0.1.0"
 dependencies = [
- "interlog_core",
+ "interlog_lib",
  "pretty_assertions",
  "rand",
  "tabled",
