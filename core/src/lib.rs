@@ -430,6 +430,21 @@ mod tests {
 	}
 
 	#[test]
+	fn empty_commit() {
+		let mut test_storage_buf = [0u8; 256];
+		let storage = TestStorage::new(&mut test_storage_buf);
+		let ext_mem = ExternalMemory {
+			enqd_events: &mut [0u8; 127],
+			enqd_offsets: &mut [StorageOffset::ZERO; 64],
+			cmtd_offsets: &mut [StorageOffset::ZERO; 64],
+			cmtd_acqs: &mut [Address::ZERO; 32],
+		};
+
+		let mut log = Log::new(Address::ZERO, storage, ext_mem);
+		assert_eq!(log.commit(), 0);
+	}
+
+	#[test]
 	fn enqueue_commit_and_read_data() {
 		let mut test_storage_buf = [0u8; 272];
 		let storage = TestStorage::new(&mut test_storage_buf);

@@ -221,6 +221,17 @@ macro_rules! vec {
 	}};
 }
 */
+extern crate alloc;
+
+trait DynArray<T> {
+	fn push(&mut self, elem: T);
+}
+
+impl<T> DynArray<T> for alloc::vec::Vec<T> {
+	fn push(&mut self, elem: T) {
+		self.push(elem);
+	}
+}
 
 #[cfg(test)]
 mod test {
