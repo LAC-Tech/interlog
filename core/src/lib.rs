@@ -34,8 +34,11 @@ use fixcap::Vec;
 
 pub struct Log<'a, S: Storage> {
 	pub addr: Address,
-	enqd: Enqueued<'a>,
-	cmtd: Committed<'a, S>,
+	enqd_offsets: StorageOffsets<'a>,
+	enqd_events: Vec<'a, u8>,
+	cmtd_offsets: StorageOffsets<'a>,
+	acqs: Acquaintances<'a>,
+	storage: S,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
@@ -43,22 +46,6 @@ pub struct Log<'a, S: Storage> {
 pub struct Address {
 	word_a: u64,
 	word_b: u64,
-}
-
-struct Enqueued<'a> {
-	offsets: StorageOffsets<'a>,
-	events: Vec<'a, u8>,
-}
-
-struct Transaction<'a> {
-	offsets: &'a [StorageOffset],
-	events: &'a [u8],
-}
-
-struct Committed<'a, S: Storage> {
-	offsets: StorageOffsets<'a>,
-	acqs: Acquaintances<'a>,
-	storage: S,
 }
 
 // TODO:
@@ -106,44 +93,56 @@ pub trait Storage {
 
 impl<'a, S: Storage> Log<'a, S> {
 	pub fn new(addr: Address, storage: S, ext_mem: ExternalMemory<'a>) -> Self {
-		let enqd = Enqueued {
-			offsets: StorageOffsets::new(ext_mem.enqd_offsets),
-			events: Vec::new(ext_mem.enqd_events),
-		};
-		let cmtd = Committed {
-			offsets: StorageOffsets::new(ext_mem.cmtd_offsets),
+		Self {
+			addr,
+			enqd_offsets: StorageOffsets::new(ext_mem.enqd_offsets),
+			enqd_events: Vec::new(ext_mem.enqd_events),
+			cmtd_offsets: StorageOffsets::new(ext_mem.cmtd_offsets),
 			acqs: Acquaintances::new(ext_mem.cmtd_acqs),
 			storage,
-		};
-		Self { addr, enqd, cmtd }
+		}
 	}
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
 		let logical_pos =
-			self.enqd.offsets.event_count() + self.cmtd.offsets.event_count();
-		let logical_pos = u64::try_from(logical_pos).unwrap();
-
+			self.enqd_offsets.event_count() + self.cmtd_offsets.event_count();
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
-		self.enqd.append(&e)
+
+		self.enqd_offsets.update(&e);
+		e.append_to(&mut self.enqd_events);
+		self.enqd_events.len()
 	}
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let txn = self.enqd.txn();
-		let result = txn.offsets.len();
-		self.cmtd.write(txn.offsets, txn.events);
-		self.enqd.reset();
+		let size = self.enqd_offsets.size_spanned();
+		let offsets = self.enqd_offsets.tail();
+		let events = &self.enqd_events[0..size];
+
+		let result = offsets.len();
+
+		self.cmtd_offsets.extend(offsets);
+		self.storage.append(events);
+
+		self.enqd_offsets.reset();
+		self.enqd_events.clear();
+
 		result
 	}
 
 	pub fn rollback(&mut self) {
-		self.enqd.reset();
+		self.enqd_offsets.reset();
+		self.enqd_events.clear();
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
-		self.cmtd.read_from_end(n, buf)
+		let offsets = self.cmtd_offsets.as_slice();
+		let first = offsets[offsets.len() - 1 - n];
+		let last = offsets.last().unwrap();
+		let size = last.0 - first.0;
+		buf.fill(n, size, |words| self.storage.read(words, first.0))
 	}
 }
 
@@ -154,44 +153,6 @@ impl Address {
 	}
 }
 
-impl<'a> Enqueued<'a> {
-	/// Returns bytes enqueued
-	fn append(&mut self, e: &Event) -> usize {
-		self.offsets.update(e);
-		e.append_to(&mut self.events);
-		self.events.len()
-	}
-
-	/// Returns all relevant data to be committed
-	fn txn(&'a self) -> Transaction<'a> {
-		let size = self.offsets.size_spanned();
-		let offsets = self.offsets.tail();
-		let events = &self.events[0..size];
-		Transaction { offsets, events }
-	}
-
-	fn reset(&mut self) {
-		self.offsets.reset();
-		self.events.clear();
-	}
-}
-
-impl<'a, S: Storage> Committed<'a, S> {
-	fn write(&mut self, offsets: &[StorageOffset], events: &[u8]) {
-		self.offsets.extend(offsets);
-		self.storage.append(events);
-	}
-
-	fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
-		let offsets = self.offsets.as_slice();
-		let offsets = &offsets[offsets.len() - 1 - n..];
-		let first = offsets[0];
-		let size = offsets[offsets.len() - 1].0 - first.0;
-
-		buf.fill(n, size, |words| self.storage.read(words, first.0))
-	}
-}
-
 impl<'a> StorageOffsets<'a> {
 	fn new(buf: &'a mut [StorageOffset]) -> Self {
 		let mut vec = Vec::new(buf);
@@ -199,8 +160,8 @@ impl<'a> StorageOffsets<'a> {
 		Self(vec)
 	}
 
-	fn event_count(&self) -> usize {
-		self.0.len() - 1
+	fn event_count(&self) -> u64 {
+		u64::try_from(self.0.len() - 1).unwrap()
 	}
 
 	fn update(&mut self, e: &Event) {
@@ -222,12 +183,15 @@ impl<'a> StorageOffsets<'a> {
 		self.0.extend_from_slice_unchecked(other);
 	}
 
+	// Clears all offsets but the last one, which becomes the first
+	// Remember first offset is always the offset of the next event.
+	// TODO: this will fail on empty commit, test.
 	fn reset(&mut self) {
-		// By definiton, the last committed event is the first thing in the
-		// eqneued buffer before reseting, which happens after committing
-		let last_cmtd_event = self.0.last().copied().unwrap();
+		// By definiton, the last committed offset is the first thing in the
+		// eqneued buffer before reseting, whicoffset happens after committing
+		let last_cmtd_offset = self.0.last().copied().unwrap();
 		self.0.clear();
-		self.0.push_unchecked(last_cmtd_event);
+		self.0.push_unchecked(last_cmtd_offset);
 	}
 
 	fn as_slice(&self) -> &[StorageOffset] {
