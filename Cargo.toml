@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "inspector", "sim"]
+members = ["lib", "inspector", "sim"]
 resolver = "2"
 
 [alias]

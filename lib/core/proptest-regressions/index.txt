@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 886030b2ab8960bd0d4965a6bbe7c98557a5d941cc6d56fffc1e74179df2cae6 # shrinks to vs = [], txn_events_per_addr = 0, actual_events_per_addr = 0
+cc ff60f1203db671301c9157afb3c94f3072c55cd5d06a485e5b350daa4d5fee5b # shrinks to vs = [(ID { origin: ReplicaID(00), log_pos: LogPos(0) }, DiskOffset(0))], txn_events_per_addr = 0, actual_events_per_addr = 0
+cc 895d101467710f10aee34f1ce2e097fa8f1c40399b615a198b0e8bb148707316 # shrinks to vs = [(ID { origin: ReplicaID(00), log_pos: LogPos(0) }, DiskOffset(0)), (ID { origin: ReplicaID(00), log_pos: LogPos(2) }, DiskOffset(0))], txn_events_per_addr = 1, actual_events_per_addr = 0
+cc d2b7c37433d659cc7958d34f5d71b1f5e5364a98d9e8d6f09f4f5918f6705253 # shrinks to eids = [ID { origin: ReplicaID(00), pos: LogicalQty(1) }, ID { origin: ReplicaID(00), pos: LogicalQty(3) }], txn_events_per_addr = 0, actual_events_per_addr = 1
