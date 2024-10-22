@@ -19,8 +19,9 @@ pub type Res = Result<(), Overrun>;
 
 /**
  * I wrote a 'fresh' implementation, instead of wrapping the std vector.
- * This is so it could be used in a #[no_std] context
+ * This is so it could be used in a #[no_std] context, without pulling in alloc
  */
+#[allow(dead_code)]
 pub struct Vec<'a, T> {
 	items: &'a mut [T],
 	len: usize,
@@ -220,6 +221,17 @@ macro_rules! vec {
 	}};
 }
 */
+extern crate alloc;
+
+trait DynArray<T> {
+	fn push(&mut self, elem: T);
+}
+
+impl<T> DynArray<T> for alloc::vec::Vec<T> {
+	fn push(&mut self, elem: T) {
+		self.push(elem);
+	}
+}
 
 #[cfg(test)]
 mod test {

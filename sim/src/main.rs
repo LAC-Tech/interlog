@@ -4,11 +4,12 @@ use std::collections::BTreeMap;
 use std::iter;
 use std::panic::{self, AssertUnwindSafe};
 
-use interlog_core::{ExternalMemory, Storage, StorageOffset};
+use interlog_core::{ExternalMemory, Storage};
 
 const MAX_SIM_TIME_MS: u64 = 1000 * 60 * 60; // One hour
 
 mod config {
+	// TODO: why did I make this range?
 	pub struct Range(usize, usize);
 
 	impl Range {
@@ -25,20 +26,11 @@ mod config {
 		Range(0, n)
 	}
 
-	pub struct Bool(usize);
-
-	impl Bool {
-		pub fn gen<R: rand::Rng>(&self, rng: &mut R) -> bool {
-			rng.gen_range(0..100) < self.0
-		}
-	}
-
 	pub const MAX_LOGS: usize = 256;
 	pub const N_LOGS: Range = max(MAX_LOGS);
 	pub const PAYLOADS_PER_LOG: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
 	pub const MSG_LEN: Range = Range(0, 50);
-	pub const CHANCE_OF_WRITE_PER_TICK: Range = Range(1, 50);
 
 	// Currently just something "big enough", later handle disk overflow
 	pub const STORAGE_CAPACITY: usize = 10_000_000;
@@ -50,10 +42,6 @@ struct AppendOnlyMemory<'a>(fixcap::Vec<'a, u8>);
 impl<'a> AppendOnlyMemory<'a> {
 	fn new(byte_buf: &'a mut [u8]) -> Self {
 		Self(fixcap::Vec::new(byte_buf))
-	}
-
-	fn used(&self) -> usize {
-		self.0.len()
 	}
 }
 
@@ -75,24 +63,28 @@ struct Env<'a> {
 	payload_sizes: Vec<usize>,
 }
 
+macro_rules! leaked_buf {
+	($size:expr) => {
+		Box::leak(Box::new([<_>::default(); $size]))
+	};
+}
+
 impl<'a> Env<'a> {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
 		let addr = Address::new(rng.gen(), rng.gen());
 
-		let storage = AppendOnlyMemory::new(Box::leak(Box::new(
-			[0u8; config::STORAGE_CAPACITY],
-		)));
+		let storage =
+			AppendOnlyMemory::new(leaked_buf!(config::STORAGE_CAPACITY));
+
 		let ext_mem = ExternalMemory {
-			cmtd_offsets: Box::leak(Box::new([StorageOffset::ZERO; 1_000_000])),
+			cmtd_offsets: leaked_buf!(1_000_000),
 
-			cmtd_acqs: Box::leak(Box::new([Address::ZERO; config::MAX_LOGS])),
-			enqd_offsets: Box::leak(Box::new(
-				[StorageOffset::ZERO; config::MSG_LEN.max()],
-			)),
+			cmtd_acqs: leaked_buf!(config::MAX_LOGS),
+			enqd_offsets: leaked_buf!(config::MSG_LEN.max()),
 
-			enqd_events: Box::leak(Box::new(
-				[0u8; config::MSG_LEN.max() * config::PAYLOAD_SIZE.max()],
-			)),
+			enqd_events: leaked_buf!(
+				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max()
+			),
 		};
 
 		let log = Log::new(addr, storage, ext_mem);
@@ -216,9 +208,7 @@ fn main() {
 	let mut ctx = Context {
 		stats: Stats { total_events_committed: 0, total_commits: 0 },
 		payload_buf: [0u8; config::PAYLOAD_SIZE.max()],
-		payload_lens: fixcap::Vec::new(Box::leak(Box::new(
-			[0usize; config::MSG_LEN.max()],
-		))),
+		payload_lens: fixcap::Vec::new(leaked_buf!(config::MSG_LEN.max())),
 	};
 
 	let mut dead_addrs: Vec<Address> = vec![];
