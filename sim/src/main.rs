@@ -1,4 +1,4 @@
-use interlog_lib::*;
+use interlog_lib::{core, fixcap};
 use rand::prelude::*;
 use std::collections::BTreeMap;
 use std::iter;
@@ -43,7 +43,7 @@ impl<'a> AppendOnlyMemory<'a> {
 	}
 }
 
-impl<'a> Storage for AppendOnlyMemory<'a> {
+impl<'a> core::Storage for AppendOnlyMemory<'a> {
 	fn append(&mut self, data: &[u8]) {
 		self.0.extend_from_slice_unchecked(data);
 	}
@@ -55,7 +55,7 @@ impl<'a> Storage for AppendOnlyMemory<'a> {
 
 // An environment, representing some source of messages, and a log
 struct Env<'a> {
-	log: Log<'a, AppendOnlyMemory<'a>>,
+	log: core::Log<'a, AppendOnlyMemory<'a>>,
 	// The dimensions of each of the messages sent are pre-calculated
 	msg_lens: Vec<usize>,
 	payload_sizes: Vec<usize>,
@@ -69,12 +69,12 @@ macro_rules! leaked_buf {
 
 impl<'a> Env<'a> {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
-		let addr = Address::new(rng.gen(), rng.gen());
+		let addr = core::Address::new(rng.gen(), rng.gen());
 
 		let storage =
 			AppendOnlyMemory::new(leaked_buf!(config::STORAGE_CAPACITY));
 
-		let ext_mem = ExternalMemory {
+		let ext_mem = core::ExternalMemory {
 			cmtd_offsets: leaked_buf!(1_000_000),
 
 			cmtd_acqs: leaked_buf!(config::MAX_LOGS),
@@ -85,7 +85,7 @@ impl<'a> Env<'a> {
 			),
 		};
 
-		let log = Log::new(addr, storage, ext_mem);
+		let log = core::Log::new(addr, storage, ext_mem);
 		let payloads_per_actor = config::PAYLOADS_PER_LOG.gen(rng);
 
 		let msg_lens: Vec<usize> =
@@ -194,7 +194,7 @@ fn main() {
 
 	let n_logs = config::N_LOGS.gen(&mut rng);
 
-	let mut environments: BTreeMap<Address, Env> =
+	let mut environments: BTreeMap<core::Address, Env> =
 		std::iter::repeat_with(|| Env::new(&mut rng))
 			.map(|env| (env.log.addr, env))
 			.take(n_logs)
@@ -209,7 +209,7 @@ fn main() {
 		payload_lens: fixcap::Vec::new(leaked_buf!(config::MSG_LEN.max())),
 	};
 
-	let mut dead_addrs: Vec<Address> = vec![];
+	let mut dead_addrs: Vec<core::Address> = vec![];
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for addr in &dead_addrs {
