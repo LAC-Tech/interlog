@@ -1,3 +1,5 @@
+use core::fmt::Write;
+
 use crate::fixcap;
 use crate::fixcap::Vec;
 use event::Event;
@@ -11,12 +13,10 @@ pub struct Log<'a, S: Storage> {
 	storage: S,
 }
 
+/// This is two u64s instead of one u128 for alignment in Event Header
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
-pub struct Address {
-	word_a: u64,
-	word_b: u64,
-}
+pub struct Address(pub u64, pub u64);
 
 // TODO:
 // "hey lewis… small trick for log buffers… never check for buffer overruns;
@@ -35,6 +35,7 @@ pub struct ExternalMemory<'a> {
 /// Maps a logical position (nth event) to a byte offset in storage
 /// Wrapper around a Vec with some invariants:
 /// - always at least one element: next offset, for calculating size
+#[derive(Debug)]
 struct StorageOffsets<'a>(
 	// This is always one greater than the number of events stored; the last
 	// element is the next offset of the next event appended
@@ -44,7 +45,6 @@ struct StorageOffsets<'a>(
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 #[derive(Clone, Copy, Default)]
-#[cfg_attr(test, derive(Debug))]
 pub struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
@@ -88,7 +88,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
 		let size = self.enqd_offsets.size_spanned();
-		let offsets = self.enqd_offsets.tail();
+		let offsets = &self.enqd_offsets[1..];
 		let events = &self.enqd_events[0..size];
 
 		let result = offsets.len();
@@ -108,7 +108,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
-		let offsets = self.cmtd_offsets.as_slice();
+		let offsets = &self.cmtd_offsets;
 		let first = offsets[offsets.len() - 1 - n];
 		let last = offsets.last().unwrap();
 		let size = last.0 - first.0;
@@ -117,10 +117,7 @@ impl<'a, S: Storage> Log<'a, S> {
 }
 
 impl Address {
-	const ZERO: Address = Address { word_a: 0, word_b: 0 };
-	pub fn new(rand_word_a: u64, rand_word_b: u64) -> Self {
-		Self { word_a: rand_word_a, word_b: rand_word_b }
-	}
+	const ZERO: Address = Address(0, 0);
 }
 
 impl<'a> StorageOffsets<'a> {
@@ -145,10 +142,6 @@ impl<'a> StorageOffsets<'a> {
 		self.0.last().unwrap().0 - self.0.first().unwrap().0
 	}
 
-	fn tail(&self) -> &[StorageOffset] {
-		&self.0[1..]
-	}
-
 	fn extend(&mut self, other: &[StorageOffset]) {
 		self.0.extend_from_slice_unchecked(other);
 	}
@@ -163,8 +156,12 @@ impl<'a> StorageOffsets<'a> {
 		self.0.clear();
 		self.0.push_unchecked(last_cmtd_offset);
 	}
+}
 
-	fn as_slice(&self) -> &[StorageOffset] {
+impl<'a> core::ops::Deref for StorageOffsets<'a> {
+	type Target = [StorageOffset];
+
+	fn deref(&self) -> &Self::Target {
 		&self.0
 	}
 }
@@ -180,6 +177,12 @@ impl StorageOffset {
 
 	fn next(&self, e: &Event) -> Self {
 		Self::new(self.0 + e.stored_size())
+	}
+}
+
+impl core::fmt::Debug for StorageOffset {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		write!(f, "Offset({})", self.0)
 	}
 }
 
@@ -219,9 +222,8 @@ mod event {
 
 			let payload_end =
 				header_end + usize::try_from(header.payload_len).unwrap();
-			let payload = &bytes[header_end..payload_end];
 
-			Self { id: header.id, payload }
+			Self { id: header.id, payload: &bytes[header_end..payload_end] }
 		}
 
 		/// How much space it will take in storage, in bytes
@@ -348,7 +350,7 @@ mod event {
 				logical_pos: u64,
 				payload_len: u64,
 			) {
-				let addr = Address::new(rand_word_a, rand_word_b);
+				let addr = Address(rand_word_a, rand_word_b);
 				let id = ID {addr, logical_pos};
 				let expected = Header { id, payload_len };
 
@@ -361,7 +363,7 @@ mod event {
 		fn lets_write_some_bytes() {
 			let mut bytes_buf = [0u8; 127];
 			let mut buf = Buf::new(&mut bytes_buf);
-			let addr = Address::new(0, 0);
+			let addr = Address::ZERO;
 
 			let e =
 				Event { id: ID { addr, logical_pos: 0 }, payload: b"j;fkls" };

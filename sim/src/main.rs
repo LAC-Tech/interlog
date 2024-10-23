@@ -69,7 +69,7 @@ macro_rules! leaked_buf {
 
 impl<'a> Env<'a> {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
-		let addr = core::Address::new(rng.gen(), rng.gen());
+		let addr = core::Address(rng.gen(), rng.gen());
 
 		let storage =
 			AppendOnlyMemory::new(leaked_buf!(config::STORAGE_CAPACITY));

@@ -6,4 +6,3 @@ edition = "2021"
 
 [dependencies]
 interlog_lib = { path = "../lib" }
-ncurses = "*"
