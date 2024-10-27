@@ -133,7 +133,7 @@ pub fn Log(comptime Storage: type) type {
             self: *@This(),
             n: u64,
             buf: *Event.Buf,
-        ) error{BufOverrun}!void {
+        ) error{NotEnoughMem}!void {
             try self.cmtd.readFromEnd(n, buf);
         }
 
@@ -155,9 +155,9 @@ const Region = struct {
     fn readSlice(
         self: @This(),
         bytes: []const u8,
-    ) error{BufOverrun}![]const u8 {
+    ) error{NotEnoughMem}![]const u8 {
         const len = self.offset + self.n_bytes;
-        return if (len > bytes.len) Err.BufOverrun else bytes[self.offset..len];
+        return if (len > bytes.len) Err.NotEnoughMem else bytes[self.offset..len];
     }
 };
 
@@ -180,22 +180,6 @@ pub const HeapMem = struct {
 
     enqd_offsets: []StorageOffset,
     enqd_events: []u8,
-
-    // TODO: remove this, this module should not allocate.
-    //pub fn init(allocator: std.mem.Allocator, capacities: Capacities) !@This() {
-    //    return .{
-    //        .cmtd_offsets = try allocator.alloc(
-    //            StorageOffset,
-    //            capacities.cmtd_offsets,
-    //        ),
-    //        .cmtd_acqs = try allocator.alloc(Addr, capacities.cmtd_acqs),
-    //        .enqd_offsets = try allocator.alloc(
-    //            StorageOffset,
-    //            capacities.enqd_offsets,
-    //        ),
-    //        .enqd_events = try allocator.alloc(u8, capacities.enqd_events),
-    //    };
-    //}
 };
 
 // Staging area for events to be committed later
@@ -297,7 +281,7 @@ fn Committed(comptime Storage: type) type {
             self: @This(),
             n: u64,
             buf: *Event.Buf,
-        ) error{BufOverrun}!void {
+        ) error{NotEnoughMem}!void {
             buf.clear();
             const region = self.offsets.lastNEvents(n);
             try buf.appendFromStorage(Storage, self.events, region, n);
@@ -570,7 +554,7 @@ pub const TestStorage = struct {
         self: @This(),
         buf: *Vec(u8),
         region: Region,
-    ) error{BufOverrun}!void {
+    ) error{NotEnoughMem}!void {
         const data = try region.readSlice(self.bytes.asSlice());
         try buf.pushSlice(data);
     }
