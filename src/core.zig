@@ -599,65 +599,50 @@ test "enqueue, commit and read data" {
     var log = try Log(TestStorage).init(addr, storage, heap_mem);
     var read_buf = Event.Buf.init(try allocator.alloc(u8, 136));
 
+    const lines = [_][]const u8{
+        "I have known the arcane law",
+        "On strange roads, such visions met",
+        "That I have no fear, nor concern",
+        "For dangers and obstacles of this world",
+    };
+
+    // enqueue and commit something
     {
-        const line = "I have known the arcane law";
-        try testing.expectEqual(64, log.enqueue(line));
+        try testing.expectEqual(64, log.enqueue(lines[0]));
         try testing.expectEqual(1, log.commit());
         try log.readFromEnd(1, &read_buf);
         const actual = read_buf.read(StorageOffset.zero).payload;
-        try testing.expectEqualSlices(u8, line, actual);
+        try testing.expectEqualSlices(u8, lines[0], actual);
     }
 
+    // enqueue and commit another thing
     {
-        const line = "On strange roads, such visions met";
-        try testing.expectEqual(72, log.enqueue(line));
+        try testing.expectEqual(72, log.enqueue(lines[1]));
         try testing.expectEqual(1, log.commit());
         try log.readFromEnd(1, &read_buf);
         var it = read_buf.iter();
         const actual = (try it.next()).?.payload;
-        try testing.expectEqualSlices(u8, line, actual);
+        try testing.expectEqualSlices(u8, lines[1], actual);
     }
 
-    // Read multiple things from the buffer
+    // Read them both back from the buffer
     {
         try log.readFromEnd(2, &read_buf);
         var it = read_buf.iter();
-
-        try testing.expectEqualSlices(
-            u8,
-            "I have known the arcane law",
-            (try it.next()).?.payload,
-        );
-
-        try testing.expectEqualSlices(
-            u8,
-            "On strange roads, such visions met",
-            (try it.next()).?.payload,
-        );
+        try testing.expectEqualSlices(u8, lines[0], (try it.next()).?.payload);
+        try testing.expectEqualSlices(u8, lines[1], (try it.next()).?.payload);
     }
 
-    // Bulk commit two things
+    // enqueue two things, bulk commit them, and read them back
     {
-        try testing.expectEqual(64, log.enqueue("That I have no fear, nor concern"));
-        try testing.expectEqual(
-            136,
-            log.enqueue("For dangers and obstacles of this world"),
-        );
+        try testing.expectEqual(64, log.enqueue(lines[2]));
+        try testing.expectEqual(136, log.enqueue(lines[3]));
         try testing.expectEqual(log.commit(), 2);
 
         try log.readFromEnd(2, &read_buf);
         var it = read_buf.iter();
 
-        try testing.expectEqualSlices(
-            u8,
-            "That I have no fear, nor concern",
-            (try it.next()).?.payload,
-        );
-
-        try testing.expectEqualSlices(
-            u8,
-            "For dangers and obstacles of this world",
-            (try it.next()).?.payload,
-        );
+        try testing.expectEqualSlices(u8, lines[2], (try it.next()).?.payload);
+        try testing.expectEqualSlices(u8, lines[3], (try it.next()).?.payload);
     }
 }
