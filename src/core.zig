@@ -6,7 +6,6 @@
 const std = @import("std");
 const debug = std.debug;
 const testing = std.testing;
-//const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 // All errors, whether expected or unexpected, get an explicit err code.
 // Why not use asserts?
@@ -168,13 +167,6 @@ const Region = struct {
 // CPU code pipeline flushes because of branch mispredictions"
 // - filasieno
 pub const HeapMem = struct {
-    const Capacities = struct {
-        cmtd_offsets: usize,
-        cmtd_acqs: usize,
-        enqd_offsets: usize,
-        enqd_events: usize,
-    };
-
     cmtd_offsets: []StorageOffset,
     cmtd_acqs: []Address,
 
