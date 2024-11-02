@@ -75,42 +75,52 @@ impl<'a, S: Storage> Log<'a, S> {
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
-		let logical_pos =
-			self.enqd_offsets.event_count() + self.cmtd_offsets.event_count();
+		let logical_pos = u64::try_from(
+			&self.enqd_offsets.len() + &self.cmtd_offsets.len() - 2,
+		)
+		.unwrap();
+
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
 
-		self.enqd_offsets.update(&e);
+		{
+			let curr = self.enqd_offsets.last();
+			let next = curr.next(&e);
+			core::assert!(next.0 > curr.0);
+			self.enqd_offsets.0.push_unchecked(next);
+		}
+
 		e.append_to(&mut self.enqd_events);
 		self.enqd_events.len()
 	}
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let size = self.enqd_offsets.size_spanned();
+		let size = &self.enqd_offsets.last().0 - &self.enqd_offsets[0].0;
 		let offsets = &self.enqd_offsets[1..];
 		let events = &self.enqd_events[0..size];
 
 		let result = offsets.len();
 
-		self.cmtd_offsets.extend(offsets);
+		self.cmtd_offsets.0.extend_from_slice_unchecked(offsets);
 		self.storage.append(events);
 
-		self.enqd_offsets.reset();
-		self.enqd_events.clear();
+		self.clear_enqd();
 
 		result
 	}
 
-	pub fn rollback(&mut self) {
-		self.enqd_offsets.reset();
+	// TODO: this functionality is never tested
+	pub fn clear_enqd(&mut self) {
+		self.enqd_offsets.0.clear();
+		self.enqd_offsets.0.push_unchecked(self.cmtd_offsets.last());
 		self.enqd_events.clear();
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
 		let offsets = &self.cmtd_offsets;
 		let first = offsets[offsets.len() - 1 - n];
-		let last = offsets.last().unwrap();
+		let last = offsets.last();
 		let size = last.0 - first.0;
 		buf.fill(n, size, |words| self.storage.read(words, first.0))
 	}
@@ -127,34 +137,8 @@ impl<'a> StorageOffsets<'a> {
 		Self(vec)
 	}
 
-	fn event_count(&self) -> u64 {
-		u64::try_from(self.0.len() - 1).unwrap()
-	}
-
-	fn update(&mut self, e: &Event) {
-		let last = self.0.last().copied().unwrap();
-		let offset = last.next(e);
-		core::assert!(offset.0 > last.0);
-		self.0.push_unchecked(offset);
-	}
-
-	fn size_spanned(&self) -> usize {
-		self.0.last().unwrap().0 - self.0.first().unwrap().0
-	}
-
-	fn extend(&mut self, other: &[StorageOffset]) {
-		self.0.extend_from_slice_unchecked(other);
-	}
-
-	// Clears all offsets but the last one, which becomes the first
-	// Remember first offset is always the offset of the next event.
-	// TODO: this will fail on empty commit, test.
-	fn reset(&mut self) {
-		// By definiton, the last committed offset is the first thing in the
-		// eqneued buffer before reseting, whicoffset happens after committing
-		let last_cmtd_offset = self.0.last().copied().unwrap();
-		self.0.clear();
-		self.0.push_unchecked(last_cmtd_offset);
+	fn last(&self) -> StorageOffset {
+		self.0.last().unwrap().clone()
 	}
 }
 
