@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use derive_more::Sub;
 
 use event::Event;
 pub struct Log<S: Storage> {
@@ -17,7 +18,7 @@ pub struct Address(pub u64, pub u64);
 
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Sub)]
 pub struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
@@ -57,9 +58,9 @@ impl<S: Storage> Log<S> {
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
 
-		let curr_offset = self.enqd_offsets.last().unwrap();
+		let curr_offset = *self.enqd_offsets.last().unwrap();
 		let next_offset = curr_offset.next(&e);
-		core::assert!(next_offset.0 > curr_offset.0);
+		core::assert!(next_offset > curr_offset);
 		self.enqd_offsets.push(next_offset);
 
 		e.append_to(&mut self.enqd_events);
@@ -68,10 +69,10 @@ impl<S: Storage> Log<S> {
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let size = self.enqd_offsets.last().unwrap().0
-			- &self.enqd_offsets.first().unwrap().0;
+		let size = *self.enqd_offsets.last().unwrap()
+			- *self.enqd_offsets.first().unwrap();
 		let offsets = &self.enqd_offsets[1..];
-		let events = &self.enqd_events[0..size];
+		let events = &self.enqd_events[0..size.0];
 
 		let result = offsets.len();
 
@@ -93,9 +94,9 @@ impl<S: Storage> Log<S> {
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
 		let offsets: &[StorageOffset] = &self.cmtd_offsets;
 		let first = offsets[offsets.len() - 1 - n];
-		let last = offsets.last().unwrap();
-		let size = last.0 - first.0;
-		buf.fill(n, size, |words| self.storage.read(words, first.0))
+		let last = *offsets.last().unwrap();
+		let size = last - first;
+		buf.fill(n, size.0, |words| self.storage.read(words, first.0))
 	}
 }
 
