@@ -1,14 +1,17 @@
+//! The inspector is a CLI repl, which we can use to inspect logs.
+//! It can be thought of as a very basic VM, with one 'register': a log address
+//! Commands are polish notation:
+//! - a <addr> : set address register to <addr>
+//! - ls : list all logs
+//! - rh <n> : n most recent events of current address, payloads as hex
+//! - rs <n> : n most recent events of current address, payloads as strings
+
 const core = @import("./core.zig");
 
-const c = @cImport({
-    @cInclude("ncurses.h");
-});
+var current: core.States = undefined;
 
-const error_color_pair: c_short = 1;
-
-pub fn render(err: core.Err, core_stats: core.Stats) void {
-    _ = c.initscr();
-    _ = c.start_color();
+pub fn render(err: core.Err, addr: Address, core_stats: core.Stats) void {
+    current = core_stats;
 
     // Error prefix
     {
