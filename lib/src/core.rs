@@ -6,9 +6,9 @@ use event::Event;
 
 pub struct Log<'a, S: Storage> {
 	pub addr: Address,
-	enqd_offsets: StorageOffsets<'a>,
+	enqd_offsets: Vec<'a, StorageOffset>,
 	enqd_events: Vec<'a, u8>,
-	cmtd_offsets: StorageOffsets<'a>,
+	cmtd_offsets: Vec<'a, StorageOffset>,
 	acqs: Acquaintances<'a>,
 	storage: S,
 }
@@ -32,16 +32,6 @@ pub struct ExternalMemory<'a> {
 	pub enqd_events: &'a mut [u8],
 }
 
-/// Maps a logical position (nth event) to a byte offset in storage
-/// Wrapper around a Vec with some invariants:
-/// - always at least one element: next offset, for calculating size
-#[derive(Debug)]
-struct StorageOffsets<'a>(
-	// This is always one greater than the number of events stored; the last
-	// element is the next offset of the next event appended
-	Vec<'a, StorageOffset>,
-);
-
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 #[derive(Clone, Copy, Default)]
@@ -63,11 +53,16 @@ pub trait Storage {
 
 impl<'a, S: Storage> Log<'a, S> {
 	pub fn new(addr: Address, storage: S, ext_mem: ExternalMemory<'a>) -> Self {
+		// Offsets vectors always have the 'next' offset as last element
+		let mut enqd_offsets = Vec::new(ext_mem.enqd_offsets);
+		enqd_offsets.push_unchecked(StorageOffset::ZERO);
+		let mut cmtd_offsets = Vec::new(ext_mem.cmtd_offsets);
+		cmtd_offsets.push_unchecked(StorageOffset::ZERO);
 		Self {
 			addr,
-			enqd_offsets: StorageOffsets::new(ext_mem.enqd_offsets),
+			enqd_offsets,
 			enqd_events: Vec::new(ext_mem.enqd_events),
-			cmtd_offsets: StorageOffsets::new(ext_mem.cmtd_offsets),
+			cmtd_offsets,
 			acqs: Acquaintances::new(ext_mem.cmtd_acqs),
 			storage,
 		}
@@ -76,7 +71,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
 		let logical_pos = u64::try_from(
-			self.enqd_offsets.0.len() + &self.cmtd_offsets.0.len() - 2,
+			self.enqd_offsets.len() + &self.cmtd_offsets.len() - 2,
 		)
 		.unwrap();
 
@@ -84,10 +79,10 @@ impl<'a, S: Storage> Log<'a, S> {
 		let e = Event { id, payload };
 
 		{
-			let curr = self.enqd_offsets.0.last().unwrap();
+			let curr = self.enqd_offsets.last().unwrap();
 			let next = curr.next(&e);
 			core::assert!(next.0 > curr.0);
-			self.enqd_offsets.0.push_unchecked(next);
+			self.enqd_offsets.push_unchecked(next);
 		}
 
 		e.append_to(&mut self.enqd_events);
@@ -96,14 +91,14 @@ impl<'a, S: Storage> Log<'a, S> {
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let size = self.enqd_offsets.0.last().unwrap().0
-			- &self.enqd_offsets.0.first().unwrap().0;
-		let offsets = &self.enqd_offsets.0[1..];
+		let size = self.enqd_offsets.last().unwrap().0
+			- &self.enqd_offsets.first().unwrap().0;
+		let offsets = &self.enqd_offsets[1..];
 		let events = &self.enqd_events[0..size];
 
 		let result = offsets.len();
 
-		self.cmtd_offsets.0.extend_from_slice_unchecked(offsets);
+		self.cmtd_offsets.extend_from_slice_unchecked(offsets);
 		self.storage.append(events);
 
 		self.clear_enqd();
@@ -113,15 +108,13 @@ impl<'a, S: Storage> Log<'a, S> {
 
 	// TODO: this functionality is never tested
 	pub fn clear_enqd(&mut self) {
-		self.enqd_offsets.0.clear();
-		self.enqd_offsets
-			.0
-			.push_unchecked(*self.cmtd_offsets.0.last().unwrap());
+		self.enqd_offsets.clear();
+		self.enqd_offsets.push_unchecked(*self.cmtd_offsets.last().unwrap());
 		self.enqd_events.clear();
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
-		let offsets: &[StorageOffset] = &self.cmtd_offsets.0;
+		let offsets: &[StorageOffset] = &self.cmtd_offsets;
 		let first = offsets[offsets.len() - 1 - n];
 		let last = offsets.last().unwrap();
 		let size = last.0 - first.0;
@@ -131,14 +124,6 @@ impl<'a, S: Storage> Log<'a, S> {
 
 impl Address {
 	const ZERO: Address = Address(0, 0);
-}
-
-impl<'a> StorageOffsets<'a> {
-	fn new(buf: &'a mut [StorageOffset]) -> Self {
-		let mut vec = Vec::new(buf);
-		vec.push_unchecked(StorageOffset::ZERO);
-		Self(vec)
-	}
 }
 
 impl StorageOffset {
