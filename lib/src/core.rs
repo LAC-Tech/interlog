@@ -76,7 +76,7 @@ impl<'a, S: Storage> Log<'a, S> {
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
 		let logical_pos = u64::try_from(
-			&self.enqd_offsets.len() + &self.cmtd_offsets.len() - 2,
+			self.enqd_offsets.0.len() + &self.cmtd_offsets.0.len() - 2,
 		)
 		.unwrap();
 
@@ -84,7 +84,7 @@ impl<'a, S: Storage> Log<'a, S> {
 		let e = Event { id, payload };
 
 		{
-			let curr = self.enqd_offsets.last();
+			let curr = self.enqd_offsets.0.last().unwrap();
 			let next = curr.next(&e);
 			core::assert!(next.0 > curr.0);
 			self.enqd_offsets.0.push_unchecked(next);
@@ -96,8 +96,9 @@ impl<'a, S: Storage> Log<'a, S> {
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let size = &self.enqd_offsets.last().0 - &self.enqd_offsets[0].0;
-		let offsets = &self.enqd_offsets[1..];
+		let size = self.enqd_offsets.0.last().unwrap().0
+			- &self.enqd_offsets.0.first().unwrap().0;
+		let offsets = &self.enqd_offsets.0[1..];
 		let events = &self.enqd_events[0..size];
 
 		let result = offsets.len();
@@ -113,14 +114,16 @@ impl<'a, S: Storage> Log<'a, S> {
 	// TODO: this functionality is never tested
 	pub fn clear_enqd(&mut self) {
 		self.enqd_offsets.0.clear();
-		self.enqd_offsets.0.push_unchecked(self.cmtd_offsets.last());
+		self.enqd_offsets
+			.0
+			.push_unchecked(*self.cmtd_offsets.0.last().unwrap());
 		self.enqd_events.clear();
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) -> fixcap::Res {
-		let offsets = &self.cmtd_offsets;
+		let offsets: &[StorageOffset] = &self.cmtd_offsets.0;
 		let first = offsets[offsets.len() - 1 - n];
-		let last = offsets.last();
+		let last = offsets.last().unwrap();
 		let size = last.0 - first.0;
 		buf.fill(n, size, |words| self.storage.read(words, first.0))
 	}
@@ -135,18 +138,6 @@ impl<'a> StorageOffsets<'a> {
 		let mut vec = Vec::new(buf);
 		vec.push_unchecked(StorageOffset::ZERO);
 		Self(vec)
-	}
-
-	fn last(&self) -> StorageOffset {
-		self.0.last().unwrap().clone()
-	}
-}
-
-impl<'a> core::ops::Deref for StorageOffsets<'a> {
-	type Target = [StorageOffset];
-
-	fn deref(&self) -> &Self::Target {
-		&self.0
 	}
 }
 
