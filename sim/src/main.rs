@@ -40,7 +40,7 @@ impl AppendOnlyMemory {
 	}
 }
 
-impl<'a> core::Storage for AppendOnlyMemory {
+impl core::Storage for AppendOnlyMemory {
 	fn append(&mut self, data: &[u8]) {
 		self.0.extend(data);
 	}
@@ -190,7 +190,7 @@ fn main() {
 
 	for ms in (0..MAX_SIM_TIME_MS).step_by(10) {
 		for addr in &dead_addrs {
-			environments.remove(&addr);
+			environments.remove(addr);
 		}
 
 		dead_addrs.clear();
@@ -200,7 +200,7 @@ fn main() {
 				let more_data = env.tick(ms, &mut rng, &mut ctx);
 
 				if !more_data {
-					dead_addrs.push(env.log.addr.clone());
+					dead_addrs.push(env.log.addr);
 				}
 			}));
 

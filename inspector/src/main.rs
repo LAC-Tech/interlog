@@ -14,7 +14,7 @@ fn u8_to_braille(n: u8) -> char {
  */
 
 fn main() {
-	let arg = std::env::args().skip(1).next();
+	let arg = std::env::args().nth(1);
 	let log = match arg.as_deref() {
 		Some("n") => {
 			// TODO: create new actor

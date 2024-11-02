@@ -42,11 +42,7 @@ impl AppendOnlyFile {
 	}
 
 	/// Returns number of bytes read
-	pub fn read(
-		&self,
-		buf: &mut Vec<u8>,
-		byte_offset: usize,
-	) -> io::Result<()> {
+	pub fn read(&self, buf: &mut [u8], byte_offset: usize) -> io::Result<()> {
 		let fd = self.0.as_fd();
 		let bytes_read = io::pread(fd, buf, byte_offset as u64)?;
 		// According to my understanding of the man page this should never

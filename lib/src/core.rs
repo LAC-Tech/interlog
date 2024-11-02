@@ -51,7 +51,7 @@ impl<S: Storage> Log<S> {
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
 		let logical_pos = u64::try_from(
-			self.enqd_offsets.len() + &self.cmtd_offsets.len() - 2,
+			self.enqd_offsets.len() + self.cmtd_offsets.len() - 2,
 		)
 		.unwrap();
 
