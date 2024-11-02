@@ -18,7 +18,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
-#[cfg(test)]
+#[macro_use]
 extern crate alloc;
 
 #[cfg(not(target_pointer_width = "64"))]

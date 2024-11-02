@@ -1,4 +1,4 @@
-use interlog_lib::{core, fixcap};
+use interlog_lib::core;
 use rand::prelude::*;
 use std::collections::BTreeMap;
 use std::iter;
@@ -29,23 +29,20 @@ mod config {
 	pub const PAYLOADS_PER_LOG: Range = Range(100, 1000);
 	pub const PAYLOAD_SIZE: Range = Range(0, 4096);
 	pub const MSG_LEN: Range = Range(0, 50);
-
-	// Currently just something "big enough", later handle disk overflow
-	pub const STORAGE_CAPACITY: usize = 10_000_000;
 }
 
 // TODO: introduce faults
-struct AppendOnlyMemory<'a>(fixcap::Vec<'a, u8>);
+struct AppendOnlyMemory(Vec<u8>);
 
-impl<'a> AppendOnlyMemory<'a> {
-	fn new(byte_buf: &'a mut [u8]) -> Self {
-		Self(fixcap::Vec::new(byte_buf))
+impl AppendOnlyMemory {
+	fn new() -> Self {
+		Self(vec![])
 	}
 }
 
-impl<'a> core::Storage for AppendOnlyMemory<'a> {
+impl<'a> core::Storage for AppendOnlyMemory {
 	fn append(&mut self, data: &[u8]) {
-		self.0.extend_from_slice_unchecked(data);
+		self.0.extend(data);
 	}
 
 	fn read(&self, buf: &mut [u8], offset: usize) {
@@ -54,38 +51,20 @@ impl<'a> core::Storage for AppendOnlyMemory<'a> {
 }
 
 // An environment, representing some source of messages, and a log
-struct Env<'a> {
-	log: core::Log<'a, AppendOnlyMemory<'a>>,
+struct Env {
+	log: core::Log<AppendOnlyMemory>,
 	// The dimensions of each of the messages sent are pre-calculated
 	msg_lens: Vec<usize>,
 	payload_sizes: Vec<usize>,
 }
 
-macro_rules! leaked_buf {
-	($size:expr) => {
-		Box::leak(Box::new([<_>::default(); $size]))
-	};
-}
-
-impl<'a> Env<'a> {
+impl Env {
 	fn new<R: rand::Rng>(rng: &mut R) -> Self {
 		let addr = core::Address(rng.gen(), rng.gen());
 
-		let storage =
-			AppendOnlyMemory::new(leaked_buf!(config::STORAGE_CAPACITY));
+		let storage = AppendOnlyMemory::new();
 
-		let ext_mem = core::ExternalMemory {
-			cmtd_offsets: leaked_buf!(1_000_000),
-
-			cmtd_acqs: leaked_buf!(config::MAX_LOGS),
-			enqd_offsets: leaked_buf!(config::MSG_LEN.max()),
-
-			enqd_events: leaked_buf!(
-				config::MSG_LEN.max() * config::PAYLOAD_SIZE.max()
-			),
-		};
-
-		let log = core::Log::new(addr, storage, ext_mem);
+		let log = core::Log::new(addr, storage);
 		let payloads_per_actor = config::PAYLOADS_PER_LOG.gen(rng);
 
 		let msg_lens: Vec<usize> =
@@ -130,9 +109,7 @@ impl<'a> Env<'a> {
 			}
 			Some(msg_len) => {
 				ctx.payload_lens.clear();
-				ctx.payload_lens
-					.extend(self.payload_lens(msg_len))
-					.expect("payload lens to be big enough");
+				ctx.payload_lens.extend(self.payload_lens(msg_len));
 
 				for &len in &ctx.payload_lens {
 					let payload = &mut ctx.payload_buf[..len];
@@ -149,18 +126,18 @@ impl<'a> Env<'a> {
 	}
 }
 
-struct Context<'a> {
+struct Context {
 	stats: Stats,
 	payload_buf: [u8; config::PAYLOAD_SIZE.max()],
-	payload_lens: fixcap::Vec<'a, usize>,
+	payload_lens: Vec<usize>,
 }
 
-impl<'a> Context<'a> {
-	fn new(lens: &'a mut [usize]) -> Self {
+impl Context {
+	fn new() -> Self {
 		Self {
 			stats: Stats { total_events_committed: 0, total_commits: 0 },
 			payload_buf: [0u8; config::PAYLOAD_SIZE.max()],
-			payload_lens: fixcap::Vec::new(lens),
+			payload_lens: vec![],
 		}
 	}
 }
@@ -206,7 +183,7 @@ fn main() {
 	let mut ctx = Context {
 		stats: Stats { total_events_committed: 0, total_commits: 0 },
 		payload_buf: [0u8; config::PAYLOAD_SIZE.max()],
-		payload_lens: fixcap::Vec::new(leaked_buf!(config::MSG_LEN.max())),
+		payload_lens: vec![],
 	};
 
 	let mut dead_addrs: Vec<core::Address> = vec![];
