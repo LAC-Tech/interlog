@@ -78,12 +78,10 @@ impl<'a, S: Storage> Log<'a, S> {
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
 
-		{
-			let curr = self.enqd_offsets.last().unwrap();
-			let next = curr.next(&e);
-			core::assert!(next.0 > curr.0);
-			self.enqd_offsets.push_unchecked(next);
-		}
+		let curr_offset = self.enqd_offsets.last().unwrap();
+		let next_offset = curr_offset.next(&e);
+		core::assert!(next_offset.0 > curr_offset.0);
+		self.enqd_offsets.push_unchecked(next_offset);
 
 		e.append_to(&mut self.enqd_events);
 		self.enqd_events.len()
