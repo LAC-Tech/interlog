@@ -27,5 +27,4 @@ compile_error!("code assumes usize is u64");
 compile_error!("code assumes little-endian");
 
 pub mod core;
-pub mod fixcap;
 mod linux;

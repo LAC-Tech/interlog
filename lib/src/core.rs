@@ -131,7 +131,6 @@ impl Acquaintances {
 
 mod event {
 	use super::{align_to_8, Address, StorageOffset, Vec};
-	use crate::fixcap;
 	use core::mem;
 
 	pub struct Event<'a> {
