@@ -146,11 +146,6 @@ mod event {
 			Self { event_count: 0, bytes: Vec::new() }
 		}
 
-		fn push(&mut self, e: &Event) {
-			e.append_to(&mut self.bytes);
-			self.event_count += 1;
-		}
-
 		pub fn clear(&mut self) {
 			self.event_count = 0;
 			self.bytes.clear();
@@ -256,17 +251,6 @@ mod event {
 				let actual = Header::from_bytes(expected.as_bytes());
 				assert_eq!(*actual, expected);
 			}
-		}
-
-		#[test]
-		fn lets_write_some_bytes() {
-			let mut buf = Buf::new();
-			let addr = Address::ZERO;
-			let id = ID { addr, logical_pos: 0 };
-			let e = Event { id, payload: b"j;fkls" };
-			buf.push(&e);
-
-			assert_eq!(e.payload, buf.iter().next().unwrap().payload);
 		}
 	}
 }
