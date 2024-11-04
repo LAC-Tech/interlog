@@ -33,14 +33,10 @@ pub trait Storage {
 impl<S: Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		Self {
-			addr,
-			enqd_offsets: vec![0],
-			enqd_events: vec![],
-			cmtd_offsets: vec![0],
-			acqs: Acquaintances::new(),
-			storage,
-		}
+		let (enqd_offsets, cmtd_offsets) = (vec![0], vec![0]);
+		let enqd_events = vec![];
+		let acqs = Acquaintances::new();
+		Self { addr, enqd_offsets, enqd_events, cmtd_offsets, acqs, storage }
 	}
 
 	/// Returns bytes enqueued
@@ -167,10 +163,10 @@ mod event {
 			&mut self,
 			event_count: usize,
 			byte_len: usize,
-			f: impl Fn(&mut [u8]),
+			read: impl Fn(&mut [u8]),
 		) {
 			self.bytes.resize(byte_len, 0);
-			f(&mut self.bytes);
+			read(&mut self.bytes);
 			self.event_count = event_count;
 		}
 
@@ -269,10 +265,8 @@ mod event {
 		fn lets_write_some_bytes() {
 			let mut buf = Buf::new();
 			let addr = Address::ZERO;
-
-			let e =
-				Event { id: ID { addr, logical_pos: 0 }, payload: b"j;fkls" };
-
+			let id = ID { addr, logical_pos: 0 };
+			let e = Event { id, payload: b"j;fkls" };
 			buf.push(&e);
 
 			assert_eq!(e.payload, buf.iter().next().unwrap().payload);
