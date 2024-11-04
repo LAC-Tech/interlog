@@ -181,14 +181,12 @@ mod event {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			if self.event_index == self.buf.event_count {
-				return None;
-			}
-
-			let e = Event::read(self.buf.as_slice(), self.offset_index);
-			self.event_index += 1;
-			self.offset_index += e.stored_size();
-			Some(e)
+			(self.event_index != self.buf.event_count).then(|| {
+				let e = Event::read(self.buf.as_slice(), self.offset_index);
+				self.event_index += 1;
+				self.offset_index += e.stored_size();
+				e
+			})
 		}
 	}
 
