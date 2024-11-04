@@ -1,5 +1,4 @@
 //! Some error checking around linux sys calls to disk.
-use alloc::vec::Vec;
 use fs::OFlags;
 use rustix::fd::AsFd;
 use rustix::{fd, fs, io};

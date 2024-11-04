@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
-use derive_more::Sub;
 
 use event::Event;
+
 pub struct Log<S: Storage> {
 	pub addr: Address,
-	enqd_offsets: Vec<StorageOffset>,
+	enqd_offsets: Vec<usize>,
 	enqd_events: Vec<u8>,
-	cmtd_offsets: Vec<StorageOffset>,
+	cmtd_offsets: Vec<usize>,
 	acqs: Acquaintances,
 	storage: S,
 }
@@ -15,11 +15,6 @@ pub struct Log<S: Storage> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
-
-/// Q - why bother with with this seperate type?
-/// A - because I actually found a bug because when it was just a usize
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Sub)]
-struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
 struct Acquaintances(Vec<Address>);
@@ -40,9 +35,9 @@ impl<S: Storage> Log<S> {
 		// Offsets vectors always have the 'next' offset as last element
 		Self {
 			addr,
-			enqd_offsets: vec![StorageOffset::ZERO],
+			enqd_offsets: vec![0],
 			enqd_events: vec![],
-			cmtd_offsets: vec![StorageOffset::ZERO],
+			cmtd_offsets: vec![0],
 			acqs: Acquaintances::new(),
 			storage,
 		}
@@ -59,7 +54,7 @@ impl<S: Storage> Log<S> {
 		let e = Event { id, payload };
 
 		let curr_offset = *self.enqd_offsets.last().unwrap();
-		let next_offset = curr_offset.next(&e);
+		let next_offset = curr_offset + e.stored_size();
 		core::assert!(next_offset > curr_offset);
 		self.enqd_offsets.push(next_offset);
 
@@ -69,10 +64,10 @@ impl<S: Storage> Log<S> {
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let size = *self.enqd_offsets.last().unwrap()
-			- *self.enqd_offsets.first().unwrap();
+		let size = self.enqd_offsets.last().unwrap()
+			- self.enqd_offsets.first().unwrap();
 		let offsets = &self.enqd_offsets[1..];
-		let events = &self.enqd_events[0..size.0];
+		let events = &self.enqd_events[0..size];
 
 		let result = offsets.len();
 
@@ -92,11 +87,11 @@ impl<S: Storage> Log<S> {
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
-		let offsets: &[StorageOffset] = &self.cmtd_offsets;
+		let offsets: &[usize] = &self.cmtd_offsets;
 		let first = offsets[offsets.len() - 1 - n];
 		let last = *offsets.last().unwrap();
 		let size = last - first;
-		buf.fill(n, size.0, |words| self.storage.read(words, first.0))
+		buf.fill(n, size, |words| self.storage.read(words, first))
 	}
 }
 
@@ -104,6 +99,7 @@ impl Address {
 	const ZERO: Address = Address(0, 0);
 }
 
+/*
 impl StorageOffset {
 	pub const ZERO: Self = Self(0);
 
@@ -123,6 +119,7 @@ impl core::fmt::Debug for StorageOffset {
 		write!(f, "Offset({})", self.0)
 	}
 }
+*/
 
 impl Acquaintances {
 	fn new() -> Self {
@@ -131,7 +128,7 @@ impl Acquaintances {
 }
 
 mod event {
-	use super::{align_to_8, Address, StorageOffset, Vec};
+	use super::{align_to_8, Address, Vec};
 	use core::mem;
 
 	pub struct Event<'a> {
@@ -151,10 +148,10 @@ mod event {
 			byte_vec.resize(align_to_8(byte_vec.len()), 0);
 		}
 
-		fn read(bytes: &'a [u8], offset: StorageOffset) -> Event<'a> {
-			let header_end = offset.0 + Header::SIZE;
+		fn read(bytes: &'a [u8], offset: usize) -> Event<'a> {
+			let header_end = offset + Header::SIZE;
 			let header_bytes: &[u8; Header::SIZE] =
-				&bytes[offset.0..header_end].try_into().unwrap();
+				&bytes[offset..header_end].try_into().unwrap();
 			let header = Header::from_bytes(header_bytes);
 
 			let payload_end =
@@ -205,18 +202,14 @@ mod event {
 		}
 
 		pub fn iter(&self) -> BufIterator<'_> {
-			BufIterator {
-				buf: self,
-				event_index: 0,
-				offset_index: StorageOffset::new(0),
-			}
+			BufIterator { buf: self, event_index: 0, offset_index: 0 }
 		}
 	}
 
 	pub struct BufIterator<'a> {
 		buf: &'a Buf,
 		event_index: usize,
-		offset_index: StorageOffset,
+		offset_index: usize,
 	}
 
 	impl<'a> Iterator for BufIterator<'a> {
@@ -229,7 +222,7 @@ mod event {
 
 			let e = Event::read(self.buf.as_slice(), self.offset_index);
 			self.event_index += 1;
-			self.offset_index = self.offset_index.next(&e);
+			self.offset_index += e.stored_size();
 			Some(e)
 		}
 	}
