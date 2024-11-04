@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-derive_more = { version = "1", default-features = false, features = ["add"]}
 rand = { version = "0.8.5", features = ["small_rng"]}
 rustix = { version = "0.38.28", features = ["fs"] }
 
