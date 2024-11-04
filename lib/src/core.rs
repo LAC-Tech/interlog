@@ -108,12 +108,9 @@ mod event {
 
 	impl<'a> Event<'a> {
 		pub fn append_to(&self, byte_vec: &mut Vec<u8>) {
-			let header = Header {
-				id: self.id,
-				payload_len: u64::try_from(self.payload.len()).unwrap(),
-			};
-
 			let new_size = byte_vec.len() + self.stored_size();
+			let payload_len = u64::try_from(self.payload.len()).unwrap();
+			let header = Header { id: self.id, payload_len };
 			byte_vec.extend(header.as_bytes());
 			byte_vec.extend(self.payload);
 			byte_vec.resize(new_size, 0);
