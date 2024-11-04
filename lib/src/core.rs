@@ -45,11 +45,8 @@ impl<S: Storage> Log<S> {
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
-		let logical_pos = u64::try_from(
-			self.enqd_offsets.len() + self.cmtd_offsets.len() - 2,
-		)
-		.unwrap();
-
+		let logical_pos = self.enqd_offsets.len() + self.cmtd_offsets.len() - 2;
+		let logical_pos = u64::try_from(logical_pos).unwrap();
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
 
@@ -65,19 +62,17 @@ impl<S: Storage> Log<S> {
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let size = self.enqd_offsets.last().unwrap()
-			- self.enqd_offsets.first().unwrap();
-		let offsets = &self.enqd_offsets[1..];
-		let events = &self.enqd_events[0..size];
+		let offsets_to_commit = &self.enqd_offsets[1..];
+		self.cmtd_offsets.extend(offsets_to_commit);
+		let n_events_cmtd = offsets_to_commit.len();
 
-		let result = offsets.len();
-
-		self.cmtd_offsets.extend(offsets);
-		self.storage.append(events);
+		let last_offset = self.enqd_offsets.last().unwrap();
+		let first_offset = self.enqd_offsets.first().unwrap();
+		let size = last_offset - first_offset;
+		self.storage.append(&self.enqd_events[..size]);
 
 		self.clear_enqd();
-
-		result
+		n_events_cmtd
 	}
 
 	// TODO: this functionality is never tested
@@ -107,7 +102,7 @@ impl Acquaintances {
 }
 
 mod event {
-	use super::{align_to_8, Address, Vec};
+	use super::{Address, Vec};
 	use core::mem;
 
 	pub struct Event<'a> {
@@ -122,9 +117,10 @@ mod event {
 				payload_len: u64::try_from(self.payload.len()).unwrap(),
 			};
 
+			let new_size = byte_vec.len() + self.stored_size();
 			byte_vec.extend(header.as_bytes());
 			byte_vec.extend(self.payload);
-			byte_vec.resize(align_to_8(byte_vec.len()), 0);
+			byte_vec.resize(new_size, 0);
 		}
 
 		fn read(bytes: &'a [u8], offset: usize) -> Event<'a> {
@@ -140,8 +136,10 @@ mod event {
 		}
 
 		/// How much space it will take in storage, in bytes
+		/// Ensures 8 byte alignment
 		pub fn stored_size(&self) -> usize {
-			Header::SIZE + align_to_8(self.payload.len())
+			let padded_payload_len = (self.payload.len() + 7) & !7;
+			Header::SIZE + padded_payload_len
 		}
 	}
 
@@ -280,10 +278,6 @@ mod event {
 			assert_eq!(e.payload, buf.iter().next().unwrap().payload);
 		}
 	}
-}
-
-fn align_to_8(n: usize) -> usize {
-	(n + 7) & !7
 }
 
 #[cfg(test)]
