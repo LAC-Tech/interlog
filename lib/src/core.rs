@@ -55,7 +55,8 @@ impl<S: Storage> Log<S> {
 
 		let curr_offset = *self.enqd_offsets.last().unwrap();
 		let next_offset = curr_offset + e.stored_size();
-		core::assert!(next_offset > curr_offset);
+		core::assert!(next_offset > curr_offset, "offsets must be monotonic");
+		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd_offsets.push(next_offset);
 
 		e.append_to(&mut self.enqd_events);
@@ -98,28 +99,6 @@ impl<S: Storage> Log<S> {
 impl Address {
 	const ZERO: Address = Address(0, 0);
 }
-
-/*
-impl StorageOffset {
-	pub const ZERO: Self = Self(0);
-
-	fn new(n: usize) -> Self {
-		// All storage offsets must be 8 byte aligned
-		core::assert!(n % 8 == 0);
-		Self(n)
-	}
-
-	fn next(&self, e: &Event) -> Self {
-		Self::new(self.0 + e.stored_size())
-	}
-}
-
-impl core::fmt::Debug for StorageOffset {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		write!(f, "Offset({})", self.0)
-	}
-}
-*/
 
 impl Acquaintances {
 	fn new() -> Self {
