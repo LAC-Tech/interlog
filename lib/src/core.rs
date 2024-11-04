@@ -19,7 +19,7 @@ pub struct Address(pub u64, pub u64);
 /// Q - why bother with with this seperate type?
 /// A - because I actually found a bug because when it was just a usize
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Sub)]
-pub struct StorageOffset(usize);
+struct StorageOffset(usize);
 
 /// Addrs the Log has interacted with.
 struct Acquaintances(Vec<Address>);
