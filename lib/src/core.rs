@@ -259,6 +259,7 @@ mod event {
 mod tests {
 	use super::*;
 	use pretty_assertions::assert_eq;
+	use proptest::prelude::*;
 
 	struct TestStorage(Vec<u8>);
 
@@ -283,6 +284,21 @@ mod tests {
 		let storage = TestStorage::new();
 		let mut log = Log::new(Address::ZERO, storage);
 		assert_eq!(log.commit(), 0);
+	}
+
+	proptest! {
+		#[test]
+		fn empty_read(bytes in proptest::collection::vec(any::<u8>(), 1..100)) {
+			let storage = TestStorage::new();
+			let mut log = Log::new(Address::ZERO, storage);
+			log.enqueue(&bytes);
+			log.commit();
+
+			let mut buf = event::Buf::new();
+			assert!(buf.iter().next().is_none());
+			log.read_from_end(0, &mut buf);
+			assert!(buf.iter().next().is_none());
+		}
 	}
 
 	#[test]
