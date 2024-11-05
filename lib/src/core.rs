@@ -7,7 +7,6 @@ pub struct Log<S: Storage> {
 	enqd_offsets: Vec<usize>,
 	enqd_events: Vec<u8>,
 	cmtd_offsets: Vec<usize>,
-	acqs: Acquaintances,
 	storage: S,
 }
 
@@ -15,9 +14,6 @@ pub struct Log<S: Storage> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
-
-/// Addrs the Log has interacted with.
-struct Acquaintances(Vec<Address>);
 
 /// Where the events are persisted.
 /// Written right now so I can simulate faulty storage.
@@ -35,8 +31,7 @@ impl<S: Storage> Log<S> {
 		// Offsets vectors always have the 'next' offset as last element
 		let (enqd_offsets, cmtd_offsets) = (vec![0], vec![0]);
 		let enqd_events = vec![];
-		let acqs = Acquaintances::new();
-		Self { addr, enqd_offsets, enqd_events, cmtd_offsets, acqs, storage }
+		Self { addr, enqd_offsets, enqd_events, cmtd_offsets, storage }
 	}
 
 	/// Returns bytes enqueued
@@ -89,12 +84,6 @@ impl<S: Storage> Log<S> {
 
 impl Address {
 	const ZERO: Address = Address(0, 0);
-}
-
-impl Acquaintances {
-	fn new() -> Self {
-		Self(vec![])
-	}
 }
 
 mod event {
