@@ -161,10 +161,9 @@ impl Stats {
 }
 
 fn main() {
-	let args: Vec<String> = std::env::args().collect();
-	let seed: u64 = args
-		.get(1)
-		.map(|s| s.parse::<u64>().expect("a valid u64 seed"))
+	let seed: u64 = std::env::args()
+		.nth(1)
+		.map(|s| u64::from_str_radix(&s, 16).expect("a valid hex seed"))
 		.unwrap_or_else(|| thread_rng().gen());
 
 	let mut rng = SmallRng::seed_from_u64(seed);
@@ -177,7 +176,7 @@ fn main() {
 			.take(n_logs)
 			.collect();
 
-	println!("Seed is {}", seed);
+	println!("Seed is {:X}", seed);
 	println!("Number of actors {}", environments.len());
 
 	let mut ctx = Context {
