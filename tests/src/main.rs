@@ -18,7 +18,7 @@ impl interlog_lib::core::Storage for FaultlessStorage {
 
 #[cfg(test)]
 mod tests {
-	use crate::FaultlessStorage;
+	use super::*;
 	use interlog_lib::core::*;
 	use pretty_assertions::assert_eq;
 	use proptest::prelude::*;
