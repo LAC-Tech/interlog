@@ -1,3 +1,5 @@
-//use interlog_core::*;
+extern crate interlog_lib;
 
-fn main() {}
+fn main() {
+	interlog_lib::linux;
+}
