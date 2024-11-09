@@ -16,22 +16,95 @@ impl interlog_lib::core::Storage for FaultlessStorage {
 	}
 }
 
-struct JaggedVec<T> {
-	elems: Vec<T>,
-	offsets: Vec<usize>,
-}
-
-impl<T> JaggedVec<T> {
-	fn new() -> Self {
-		Self { elems: vec![], offsets: vec![] }
+mod utils {
+	struct JaggedVec<T> {
+		elems: Vec<T>,
+		offsets: Vec<usize>,
 	}
-}
 
-impl<T: Clone> JaggedVec<T> {
-	fn push(&mut self, values: &[T]) {
-		let offset = self.elems.len();
-		self.offsets.push(offset);
-		self.elems.extend_from_slice(values);
+	impl<T> JaggedVec<T> {
+		pub fn new() -> Self {
+			Self { elems: vec![], offsets: vec![] }
+		}
+
+		fn iter(&self) -> JaggedVecIter<T> {
+			JaggedVecIter {
+				elems: &self.elems,
+				offsets: &self.offsets,
+				index: 0,
+			}
+		}
+	}
+
+	impl<T: Clone> JaggedVec<T> {
+		pub fn push(&mut self, values: &[T]) {
+			let offset = self.elems.len();
+			self.offsets.push(offset);
+			self.elems.extend_from_slice(values);
+		}
+	}
+
+	struct JaggedVecIter<'a, T> {
+		elems: &'a [T],
+		offsets: &'a [usize],
+		index: usize,
+	}
+
+	impl<'a, T> Iterator for JaggedVecIter<'a, T> {
+		type Item = &'a [T];
+
+		fn next(&mut self) -> Option<Self::Item> {
+			if self.index >= self.offsets.len() {
+				return None;
+			}
+
+			let start = self.offsets[self.index];
+			let end = if self.index + 1 < self.offsets.len() {
+				self.offsets[self.index + 1]
+			} else {
+				self.elems.len()
+			};
+
+			self.index += 1;
+			Some(&self.elems[start..end])
+		}
+	}
+
+	impl<'a, T> IntoIterator for &'a JaggedVec<T> {
+		type Item = &'a [T];
+		type IntoIter = JaggedVecIter<'a, T>;
+
+		fn into_iter(self) -> Self::IntoIter {
+			self.iter()
+		}
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+		use pretty_assertions::assert_eq;
+
+		#[test]
+		fn push_nouns_get_back_compound_noun() {
+			let mut nouns = JaggedVec::new();
+
+			nouns.push(b"daten");
+			nouns.push(b"traeger");
+			nouns.push(b"verwaltung");
+			nouns.push(b"system");
+
+			let mut compound_noun = Vec::new();
+
+			for n in &nouns {
+				compound_noun.extend(n);
+			}
+
+			let actual = b"datentraegerverwaltungsystem";
+			let expected = compound_noun.as_slice();
+			assert_eq!(actual, expected);
+
+			assert_eq!
+		}
 	}
 }
 
