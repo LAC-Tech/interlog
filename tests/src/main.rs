@@ -16,6 +16,25 @@ impl interlog_lib::core::Storage for FaultlessStorage {
 	}
 }
 
+struct JaggedVec<T> {
+	elems: Vec<T>,
+	offsets: Vec<usize>,
+}
+
+impl<T> JaggedVec<T> {
+	fn new() -> Self {
+		Self { elems: vec![], offsets: vec![] }
+	}
+}
+
+impl<T: Clone> JaggedVec<T> {
+	fn push(&mut self, values: &[T]) {
+		let offset = self.elems.len();
+		self.offsets.push(offset);
+		self.elems.extend_from_slice(values);
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use crate::FaultlessStorage;
