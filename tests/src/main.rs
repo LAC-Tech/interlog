@@ -14,6 +14,10 @@ impl interlog_lib::core::Storage for FaultlessStorage {
 	fn read(&self, buf: &mut [u8], offset: usize) {
 		buf.copy_from_slice(&self.0[offset..offset + buf.len()])
 	}
+
+	fn size(&self) -> usize {
+		self.0.len()
+	}
 }
 
 mod jagged_vec {
@@ -185,6 +189,28 @@ mod tests {
 			let mut buf = event::Buf::new();
 			log.read_from_end(0, &mut buf);
 			assert!(buf.iter().next().is_none());
+			Ok(())
+		});
+	}
+
+	#[test]
+	fn rollbacks_are_atomic() {
+		arbtest(|u| {
+			let storage = FaultlessStorage::new();
+			let mut log = Log::new(Address(0, 0), storage);
+
+			let pre_stats = log.stats();
+			assert_eq!(pre_stats, Stats { n_events: 0, n_bytes: 0 });
+			let bss: JaggedVec<u8> = u.arbitrary()?;
+
+			bss.iter().for_each(|bs| {
+				log.enqueue(bs);
+			});
+			log.clear_enqd();
+
+			let post_stats = log.stats();
+
+			assert_eq!(pre_stats, post_stats);
 			Ok(())
 		});
 	}

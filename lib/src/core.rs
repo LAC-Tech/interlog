@@ -2,14 +2,6 @@ use alloc::vec::Vec;
 
 use event::Event;
 
-pub struct Log<S: Storage> {
-	pub addr: Address,
-	enqd_offsets: Vec<usize>,
-	enqd_events: Vec<u8>,
-	cmtd_offsets: Vec<usize>,
-	storage: S,
-}
-
 /// This is two u64s instead of one u128 for alignment in Event Header
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
@@ -24,6 +16,15 @@ pub struct Address(pub u64, pub u64);
 pub trait Storage {
 	fn append(&mut self, data: &[u8]);
 	fn read(&self, buf: &mut [u8], offset: usize);
+	fn size(&self) -> usize;
+}
+
+pub struct Log<S: Storage> {
+	pub addr: Address,
+	enqd_offsets: Vec<usize>,
+	enqd_events: Vec<u8>,
+	cmtd_offsets: Vec<usize>,
+	storage: S,
 }
 
 impl<S: Storage> Log<S> {
@@ -66,7 +67,6 @@ impl<S: Storage> Log<S> {
 		n_events_cmtd
 	}
 
-	// TODO: this functionality is never tested
 	pub fn clear_enqd(&mut self) {
 		self.enqd_offsets.clear();
 		self.enqd_offsets.push(*self.cmtd_offsets.last().unwrap());
@@ -80,6 +80,19 @@ impl<S: Storage> Log<S> {
 		let size = last - first;
 		buf.fill(n, size, |words| self.storage.read(words, first))
 	}
+
+	pub fn stats(&self) -> Stats {
+		Stats {
+			n_events: self.cmtd_offsets.len() - 1,
+			n_bytes: self.storage.size(),
+		}
+	}
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Stats {
+	pub n_events: usize,
+	pub n_bytes: usize,
 }
 
 pub mod event {
