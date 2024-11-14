@@ -28,12 +28,8 @@ mod jagged_vec {
 			Self { elems: vec![], offsets: vec![] }
 		}
 
-		pub fn iter(&self) -> JaggedVecIter<T> {
-			JaggedVecIter {
-				elems: &self.elems,
-				offsets: &self.offsets,
-				index: 0,
-			}
+		pub fn iter(&self) -> Iter<T> {
+			Iter { elems: &self.elems, offsets: &self.offsets, index: 0 }
 		}
 
 		pub fn len(&self) -> usize {
@@ -59,13 +55,13 @@ mod jagged_vec {
 		}
 	}
 
-	pub struct JaggedVecIter<'a, T> {
+	pub struct Iter<'a, T> {
 		elems: &'a [T],
 		offsets: &'a [usize],
 		index: usize,
 	}
 
-	impl<'a, T> Iterator for JaggedVecIter<'a, T> {
+	impl<'a, T> Iterator for Iter<'a, T> {
 		type Item = &'a [T];
 
 		fn next(&mut self) -> Option<Self::Item> {
@@ -87,7 +83,7 @@ mod jagged_vec {
 
 	impl<'a, T> IntoIterator for &'a JaggedVec<T> {
 		type Item = &'a [T];
-		type IntoIter = JaggedVecIter<'a, T>;
+		type IntoIter = Iter<'a, T>;
 
 		fn into_iter(self) -> Self::IntoIter {
 			self.iter()
@@ -181,8 +177,10 @@ mod tests {
 		arbtest(|u| {
 			let storage = FaultlessStorage::new();
 			let mut log = Log::new(Address(0, 0), storage);
-			let bytes: &[u8] = u.arbitrary()?;
-			log.enqueue(bytes);
+			let bss: JaggedVec<u8> = u.arbitrary()?;
+			bss.iter().for_each(|bs| {
+				log.enqueue(bs);
+			});
 			log.commit();
 			let mut buf = event::Buf::new();
 			log.read_from_end(0, &mut buf);
