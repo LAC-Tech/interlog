@@ -16,8 +16,9 @@ impl interlog_lib::core::Storage for FaultlessStorage {
 	}
 }
 
-mod utils {
-	struct JaggedVec<T> {
+mod jagged_vec {
+	#[derive(Clone)]
+	pub struct JaggedVec<T> {
 		elems: Vec<T>,
 		offsets: Vec<usize>,
 	}
@@ -27,24 +28,38 @@ mod utils {
 			Self { elems: vec![], offsets: vec![] }
 		}
 
-		fn iter(&self) -> JaggedVecIter<T> {
+		pub fn iter(&self) -> JaggedVecIter<T> {
 			JaggedVecIter {
 				elems: &self.elems,
 				offsets: &self.offsets,
 				index: 0,
 			}
 		}
+
+		pub fn len(&self) -> usize {
+			self.offsets.len()
+		}
+
+		pub fn push(&mut self, values: impl IntoIterator<Item = T>) {
+			let offset = self.elems.len();
+			self.offsets.push(offset);
+			self.elems.extend(values);
+		}
+
+		pub fn last_mut(&mut self) -> Option<&mut [T]> {
+			self.offsets.last().map(|offset| &mut self.elems[*offset..])
+		}
 	}
 
 	impl<T: Clone> JaggedVec<T> {
-		pub fn push(&mut self, values: &[T]) {
+		pub fn push_slice(&mut self, values: &[T]) {
 			let offset = self.elems.len();
 			self.offsets.push(offset);
 			self.elems.extend_from_slice(values);
 		}
 	}
 
-	struct JaggedVecIter<'a, T> {
+	pub struct JaggedVecIter<'a, T> {
 		elems: &'a [T],
 		offsets: &'a [usize],
 		index: usize,
@@ -88,10 +103,12 @@ mod utils {
 		fn push_nouns_get_back_compound_noun() {
 			let mut nouns = JaggedVec::new();
 
-			nouns.push(b"daten");
-			nouns.push(b"traeger");
-			nouns.push(b"verwaltung");
-			nouns.push(b"system");
+			nouns.push_slice(b"daten");
+			nouns.push_slice(b"traeger");
+			nouns.push_slice(b"verwaltung");
+			nouns.push_slice(b"system");
+			assert_eq!(nouns.elems.len(), 28);
+			assert_eq!(nouns.offsets.len(), 4);
 
 			let mut compound_noun = Vec::new();
 
@@ -102,18 +119,55 @@ mod utils {
 			let actual = b"datentraegerverwaltungsystem";
 			let expected = compound_noun.as_slice();
 			assert_eq!(actual, expected);
+		}
 
-			assert_eq!
+		#[test]
+		fn push_with_iterator_check() {
+			let mut jv: JaggedVec<u8> = JaggedVec::new();
+			assert_eq!(jv.len(), 0);
+			jv.push(0..5);
+			assert_eq!(jv.len(), 1);
+			let expected: &[u8] = &[0, 1, 2, 3, 4];
+			assert_eq!(jv.into_iter().next(), Some(expected));
 		}
 	}
 }
 
 #[cfg(test)]
 mod tests {
-	use crate::FaultlessStorage;
+	use std::{fmt, ops};
+
+	use crate::{jagged_vec::JaggedVec, FaultlessStorage};
 	use interlog_lib::core::*;
 	use pretty_assertions::assert_eq;
-	use proptest::prelude::*;
+
+	use arbitrary::{Arbitrary, Result, Unstructured};
+	use arbtest::arbtest;
+
+	impl<'a, T> arbitrary::Arbitrary<'a> for JaggedVec<T>
+	where
+		T: arbitrary::Arbitrary<'a> + Default + Clone + 'a,
+		&'a [T]: arbitrary::Arbitrary<'a>,
+	{
+		fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
+			let mut jv = JaggedVec::new();
+			let outer_len: usize = u.arbitrary_len::<&[T]>()?;
+
+			for _ in 0..outer_len {
+				let inner_len = u.arbitrary_len::<T>()?;
+				let iter = u.arbitrary_iter::<T>()?;
+
+				jv.push(std::iter::repeat_n(T::default(), inner_len));
+				let buf = jv.last_mut().unwrap();
+
+				for (src, dest) in buf.iter_mut().zip(iter) {
+					*src = dest?;
+				}
+			}
+
+			Ok(jv)
+		}
+	}
 
 	#[test]
 	fn empty_commit() {
@@ -122,19 +176,19 @@ mod tests {
 		assert_eq!(log.commit(), 0);
 	}
 
-	proptest! {
-		#[test]
-		fn empty_read(bytes in proptest::collection::vec(any::<u8>(), 1..100)) {
+	#[test]
+	fn empty_read() {
+		arbtest(|u| {
 			let storage = FaultlessStorage::new();
 			let mut log = Log::new(Address(0, 0), storage);
-			log.enqueue(&bytes);
+			let bytes: &[u8] = u.arbitrary()?;
+			log.enqueue(bytes);
 			log.commit();
-
 			let mut buf = event::Buf::new();
-			assert!(buf.iter().next().is_none());
 			log.read_from_end(0, &mut buf);
 			assert!(buf.iter().next().is_none());
-		}
+			Ok(())
+		});
 	}
 
 	#[test]
