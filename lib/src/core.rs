@@ -228,25 +228,23 @@ pub mod event {
 	#[cfg(test)]
 	mod tests {
 		use super::*;
+		use arbtest::arbtest;
 		use pretty_assertions::assert_eq;
-		use proptest::prelude::*;
 
-		proptest! {
-			// There we go now my transmuting is safe
-			#[test]
-			fn header_serde(
-				rand_word_a in any::<u64>(),
-				rand_word_b in any::<u64>(),
-				logical_pos: u64,
-				payload_len: u64,
-			) {
-				let addr = Address(rand_word_a, rand_word_b);
-				let id = ID {addr, logical_pos};
+		// There we go now my transmuting is safe
+		#[test]
+		fn header_serde() {
+			arbtest(|u| {
+				let addr = Address(u.arbitrary()?, u.arbitrary()?);
+				let logical_pos = u.arbitrary()?;
+				let payload_len = u.arbitrary()?;
+				let id = ID { addr, logical_pos };
 				let expected = Header { id, payload_len };
-
 				let actual = Header::from_bytes(expected.as_bytes());
 				assert_eq!(*actual, expected);
-			}
+
+				Ok(())
+			});
 		}
 	}
 }
