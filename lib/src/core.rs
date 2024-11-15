@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use ports::Storage;
 
 use event::Event;
 
@@ -6,18 +7,6 @@ use event::Event;
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
-
-/// Where the events are persisted.
-/// Written right now so I can simulate faulty storage.
-/// Possible concrete implementations:
-/// - Disk
-/// - In-memory
-/// - In-browser (WASM that calls to indexedDB?)
-pub trait Storage {
-	fn append(&mut self, data: &[u8]);
-	fn read(&self, buf: &mut [u8], offset: usize);
-	fn size(&self) -> usize;
-}
 
 pub struct Log<S: Storage> {
 	pub addr: Address,
@@ -252,36 +241,9 @@ pub mod event {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
-	use pretty_assertions::assert_eq;
-
-	use arbitrary::{Result, Unstructured};
 	use arbtest::arbtest;
-
-	impl<'a, T> arbitrary::Arbitrary<'a> for JaggedVec<T>
-	where
-		T: arbitrary::Arbitrary<'a> + Default + Clone + 'a,
-		&'a [T]: arbitrary::Arbitrary<'a>,
-	{
-		fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
-			let mut jv = JaggedVec::new();
-			let outer_len: usize = u.arbitrary_len::<&[T]>()?;
-
-			for _ in 0..outer_len {
-				let inner_len = u.arbitrary_len::<T>()?;
-				let iter = u.arbitrary_iter::<T>()?;
-
-				jv.push(std::iter::repeat_n(T::default(), inner_len));
-				let buf = jv.last_mut().unwrap();
-
-				for (src, dest) in buf.iter_mut().zip(iter) {
-					*src = dest?;
-				}
-			}
-
-			Ok(jv)
-		}
-	}
+	use pretty_assertions::assert_eq;
+	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
 
 	#[test]
 	fn empty_commit() {

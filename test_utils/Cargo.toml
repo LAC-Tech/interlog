@@ -1,0 +1,9 @@
+[package]
+name = "test_utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arbitrary = "1.4.1"
+ports = { path = "../ports" }
+pretty_assertions = {workspace = true}

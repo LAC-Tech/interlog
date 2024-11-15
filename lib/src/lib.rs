@@ -28,4 +28,3 @@ compile_error!("code assumes little-endian");
 
 pub mod core;
 mod linux;
-pub mod test_utils;

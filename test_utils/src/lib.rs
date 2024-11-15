@@ -1,5 +1,6 @@
-use crate::core;
+extern crate alloc;
 use alloc::vec::Vec;
+
 pub struct FaultlessStorage(Vec<u8>);
 
 impl FaultlessStorage {
@@ -8,7 +9,7 @@ impl FaultlessStorage {
 	}
 }
 
-impl core::Storage for FaultlessStorage {
+impl ports::Storage for FaultlessStorage {
 	fn append(&mut self, data: &[u8]) {
 		self.0.extend(data)
 	}
@@ -94,6 +95,33 @@ pub mod jagged_vec {
 
 		fn into_iter(self) -> Self::IntoIter {
 			self.iter()
+		}
+	}
+
+	impl<'a, T> arbitrary::Arbitrary<'a> for JaggedVec<T>
+	where
+		T: arbitrary::Arbitrary<'a> + Default + Clone + 'a,
+		&'a [T]: arbitrary::Arbitrary<'a>,
+	{
+		fn arbitrary(
+			u: &mut arbitrary::Unstructured<'a>,
+		) -> arbitrary::Result<Self> {
+			let mut jv = JaggedVec::new();
+			let outer_len: usize = u.arbitrary_len::<&[T]>()?;
+
+			for _ in 0..outer_len {
+				let inner_len = u.arbitrary_len::<T>()?;
+				let iter = u.arbitrary_iter::<T>()?;
+
+				jv.push(std::iter::repeat_n(T::default(), inner_len));
+				let buf = jv.last_mut().unwrap();
+
+				for (src, dest) in buf.iter_mut().zip(iter) {
+					*src = dest?;
+				}
+			}
+
+			Ok(jv)
 		}
 	}
 

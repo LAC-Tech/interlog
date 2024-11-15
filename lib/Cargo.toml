@@ -3,15 +3,13 @@ name = "interlog_lib"
 version = "0.1.0"
 edition = "2021"
 
-[features]
-test_utils = []
-
 [dependencies]
 rand = { version = "0.8.5", features = ["small_rng"]}
 rustix = { version = "0.38.28", features = ["fs"] }
+ports = { path = "../ports" }
 
 [dev-dependencies]
-arbitrary = "1.4.1"
-arbtest = "0.3.1"
-pretty_assertions = "1.4.0"
+arbtest = {workspace = true}
+pretty_assertions = {workspace = true}
 tempfile = "3.9.0"
+test_utils = { path = "../test_utils"}
