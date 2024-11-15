@@ -248,3 +248,138 @@ pub mod event {
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
+	use pretty_assertions::assert_eq;
+
+	use arbitrary::{Result, Unstructured};
+	use arbtest::arbtest;
+
+	impl<'a, T> arbitrary::Arbitrary<'a> for JaggedVec<T>
+	where
+		T: arbitrary::Arbitrary<'a> + Default + Clone + 'a,
+		&'a [T]: arbitrary::Arbitrary<'a>,
+	{
+		fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
+			let mut jv = JaggedVec::new();
+			let outer_len: usize = u.arbitrary_len::<&[T]>()?;
+
+			for _ in 0..outer_len {
+				let inner_len = u.arbitrary_len::<T>()?;
+				let iter = u.arbitrary_iter::<T>()?;
+
+				jv.push(std::iter::repeat_n(T::default(), inner_len));
+				let buf = jv.last_mut().unwrap();
+
+				for (src, dest) in buf.iter_mut().zip(iter) {
+					*src = dest?;
+				}
+			}
+
+			Ok(jv)
+		}
+	}
+
+	#[test]
+	fn empty_commit() {
+		let storage = FaultlessStorage::new();
+		let mut log = Log::new(Address(0, 0), storage);
+		assert_eq!(log.commit(), 0);
+	}
+
+	#[test]
+	fn empty_read() {
+		arbtest(|u| {
+			let storage = FaultlessStorage::new();
+			let mut log = Log::new(Address(0, 0), storage);
+			let bss: JaggedVec<u8> = u.arbitrary()?;
+			bss.iter().for_each(|bs| {
+				log.enqueue(bs);
+			});
+			log.commit();
+			let mut buf = event::Buf::new();
+			log.read_from_end(0, &mut buf);
+			assert!(buf.iter().next().is_none());
+			Ok(())
+		});
+	}
+
+	#[test]
+	fn rollbacks_are_atomic() {
+		arbtest(|u| {
+			let storage = FaultlessStorage::new();
+			let mut log = Log::new(Address(0, 0), storage);
+
+			let pre_stats = log.stats();
+			assert_eq!(pre_stats, Stats { n_events: 0, n_bytes: 0 });
+			let bss: JaggedVec<u8> = u.arbitrary()?;
+
+			bss.iter().for_each(|bs| {
+				log.enqueue(bs);
+			});
+			log.clear_enqd();
+
+			let post_stats = log.stats();
+
+			assert_eq!(pre_stats, post_stats);
+			Ok(())
+		});
+	}
+
+	#[test]
+	fn enqueue_commit_and_read_data() {
+		let storage = FaultlessStorage::new();
+		let mut log = Log::new(Address(0, 0), storage);
+		let mut read_buf = event::Buf::new();
+
+		let lyrics: [&[u8]; 4] = [
+			b"I have known the arcane law",
+			b"On strange roads, such visions met",
+			b"That I have no fear, nor concern",
+			b"For dangers and obstacles of this world",
+		];
+
+		{
+			assert_eq!(log.enqueue(lyrics[0]), 64);
+			assert_eq!(log.commit(), 1);
+			log.read_from_end(1, &mut read_buf);
+			let actual = read_buf.iter().next().unwrap().payload;
+			assert_eq!(actual, lyrics[0]);
+		}
+
+		{
+			assert_eq!(log.enqueue(lyrics[1]), 72);
+			assert_eq!(log.commit(), 1);
+			log.read_from_end(1, &mut read_buf);
+			let actual = read_buf.iter().next().unwrap().payload;
+			assert_eq!(actual, lyrics[1]);
+		}
+
+		// Read multiple things from the buffer
+		{
+			log.read_from_end(2, &mut read_buf);
+			let mut it = read_buf.iter();
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, lyrics[0]);
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, lyrics[1]);
+		}
+
+		// Bulk commit two things
+		{
+			assert_eq!(log.enqueue(lyrics[2]), 64);
+			assert_eq!(log.enqueue(lyrics[3]), 136);
+			assert_eq!(log.commit(), 2);
+
+			log.read_from_end(2, &mut read_buf);
+			let mut it = read_buf.iter();
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, lyrics[2]);
+			let actual = it.next().unwrap().payload;
+			assert_eq!(actual, lyrics[3]);
+		}
+	}
+}
