@@ -35,6 +35,7 @@ impl<S: ports::Storage> Log<S> {
 			offset += event::Header::SIZE + event::stored_size(payload_len);
 		}
 
+		// Offsets vectors always have the 'next' offset as last element
 		cmtd_offsets.push(offset);
 
 		let enqd_events = vec![];
@@ -364,5 +365,12 @@ mod tests {
 			let actual = it.next().unwrap().payload;
 			assert_eq!(actual, lyrics[3]);
 		}
+
+		let original_cmtd_offsets = log.cmtd_offsets;
+
+		let rebuilt_cmtd_offsets =
+			Log::new(Address(0, 0), log.storage).cmtd_offsets;
+
+		assert_eq!(original_cmtd_offsets, rebuilt_cmtd_offsets);
 	}
 }
