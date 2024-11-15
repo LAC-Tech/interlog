@@ -17,7 +17,26 @@ pub struct Log<S: ports::Storage> {
 impl<S: ports::Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		let (enqd_offsets, cmtd_offsets) = (vec![0], vec![0]);
+		let enqd_offsets = vec![0];
+
+		// Comitted Offsets are "dervied state"; they come from the log
+		// Therefore, we rebuild them storage.
+		let mut cmtd_offsets = vec![];
+		let mut offset = 0;
+		let storage_size = storage.size();
+
+		while storage_size > offset {
+			let mut header_bytes = [0; event::Header::SIZE];
+			storage.read(&mut header_bytes, offset);
+			let header = event::Header::from_bytes(&header_bytes);
+
+			cmtd_offsets.push(offset);
+			let payload_len: usize = header.payload_len.try_into().unwrap();
+			offset += event::Header::SIZE + event::stored_size(payload_len);
+		}
+
+		cmtd_offsets.push(offset);
+
 		let enqd_events = vec![];
 		Self { addr, enqd_offsets, enqd_events, cmtd_offsets, storage }
 	}
@@ -30,7 +49,7 @@ impl<S: ports::Storage> Log<S> {
 		let e = Event { id, payload };
 
 		let curr_offset = *self.enqd_offsets.last().unwrap();
-		let next_offset = curr_offset + e.stored_size();
+		let next_offset = curr_offset + event::stored_size(payload.len());
 		core::assert!(next_offset > curr_offset, "offsets must be monotonic");
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd_offsets.push(next_offset);
@@ -86,6 +105,13 @@ pub mod event {
 	use super::{Address, Vec};
 	use core::mem;
 
+	/// Given a payload, how much storage space an event containing it will need
+	pub fn stored_size(payload_len: usize) -> usize {
+		// Ensures 8 byte alignment
+		let padded_payload_len = (payload_len + 7) & !7;
+		Header::SIZE + padded_payload_len
+	}
+
 	pub struct Event<'a> {
 		pub id: ID,
 		pub payload: &'a [u8],
@@ -93,7 +119,7 @@ pub mod event {
 
 	impl<'a> Event<'a> {
 		pub fn append_to(&self, byte_vec: &mut Vec<u8>) {
-			let new_size = byte_vec.len() + self.stored_size();
+			let new_size = byte_vec.len() + stored_size(self.payload.len());
 			let payload_len = u64::try_from(self.payload.len()).unwrap();
 			let header = Header { id: self.id, payload_len };
 			byte_vec.extend(header.as_bytes());
@@ -111,13 +137,6 @@ pub mod event {
 				header_end + usize::try_from(header.payload_len).unwrap();
 
 			Self { id: header.id, payload: &bytes[header_end..payload_end] }
-		}
-
-		/// How much space it will take in storage, in bytes
-		/// Ensures 8 byte alignment
-		pub fn stored_size(&self) -> usize {
-			let padded_payload_len = (self.payload.len() + 7) & !7;
-			Header::SIZE + padded_payload_len
 		}
 	}
 
@@ -169,7 +188,7 @@ pub mod event {
 			(self.event_index != self.buf.event_count).then(|| {
 				let e = Event::read(self.buf.as_slice(), self.offset_index);
 				self.event_index += 1;
-				self.offset_index += e.stored_size();
+				self.offset_index += stored_size(e.payload.len());
 				e
 			})
 		}
@@ -179,7 +198,9 @@ pub mod event {
 	#[cfg_attr(test, derive(PartialEq, Debug))]
 	#[repr(C)]
 	pub struct ID {
+		/// Address of the log this message originated from
 		pub addr: Address,
+		/// Logical Position of 0 is the first event, etc
 		pub logical_pos: u64,
 	}
 
@@ -190,8 +211,10 @@ pub mod event {
 	#[cfg_attr(test, derive(PartialEq, Debug, Clone, Copy))]
 	#[repr(C)]
 	pub struct Header {
-		id: ID,
-		payload_len: u64,
+		pub id: ID,
+		/// Length of payload only, ie does not include this header.
+		/// This is u64 because usize is not fixed
+		pub payload_len: u64,
 	}
 
 	impl Header {
