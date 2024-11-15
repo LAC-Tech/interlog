@@ -24,9 +24,9 @@ impl<S: ports::Storage> Log<S> {
 		let mut cmtd_offsets = vec![];
 		let mut offset = 0;
 		let storage_size = storage.size();
+		let mut header_bytes = [0; event::Header::SIZE];
 
 		while storage_size > offset {
-			let mut header_bytes = [0; event::Header::SIZE];
 			storage.read(&mut header_bytes, offset);
 			let header = event::Header::from_bytes(&header_bytes);
 			cmtd_offsets.push(offset);
