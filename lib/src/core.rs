@@ -29,10 +29,9 @@ impl<S: ports::Storage> Log<S> {
 			let mut header_bytes = [0; event::Header::SIZE];
 			storage.read(&mut header_bytes, offset);
 			let header = event::Header::from_bytes(&header_bytes);
-
 			cmtd_offsets.push(offset);
 			let payload_len: usize = header.payload_len.try_into().unwrap();
-			offset += event::Header::SIZE + event::stored_size(payload_len);
+			offset += event::stored_size(payload_len);
 		}
 
 		// Offsets vectors always have the 'next' offset as last element

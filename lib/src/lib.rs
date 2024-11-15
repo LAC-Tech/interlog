@@ -16,6 +16,7 @@
 //! - Assumes linux, 64 bit, little endian - for now at least.
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever) server is out of scope.
 
+// This lets me add dbg! statements using "#[cfg(test)]"
 #![cfg_attr(not(test), no_std)]
 
 #[macro_use]
