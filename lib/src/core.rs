@@ -1,6 +1,4 @@
 use alloc::vec::Vec;
-use ports::Storage;
-
 use event::Event;
 
 /// This is two u64s instead of one u128 for alignment in Event Header
@@ -8,7 +6,7 @@ use event::Event;
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
-pub struct Log<S: Storage> {
+pub struct Log<S: ports::Storage> {
 	pub addr: Address,
 	enqd_offsets: Vec<usize>,
 	enqd_events: Vec<u8>,
@@ -16,7 +14,7 @@ pub struct Log<S: Storage> {
 	storage: S,
 }
 
-impl<S: Storage> Log<S> {
+impl<S: ports::Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
 		// Offsets vectors always have the 'next' offset as last element
 		let (enqd_offsets, cmtd_offsets) = (vec![0], vec![0]);
