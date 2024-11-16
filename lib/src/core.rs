@@ -1,6 +1,6 @@
-use ahash::AHashMap;
 use alloc::vec::Vec;
 use event::Event;
+use foldhash::{HashMap, HashMapExt};
 
 /// This is two u64s instead of one u128 for alignment in Event Header
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Hash)]
@@ -14,12 +14,12 @@ pub struct Address(pub u64, pub u64);
 #[derive(Debug, PartialEq, Eq)]
 struct Committed {
 	offsets: Vec<usize>,
-	vv: AHashMap<Address, usize>,
+	vv: HashMap<Address, usize>,
 }
 
 impl Committed {
 	/// Everything in Committed is derived from storage
-	fn new<S: ports::Storage>(storage: &S) -> Self {
+	fn new<S: ports::Storage>(addr: Address, storage: &S) -> Self {
 		let mut offsets = vec![];
 		let mut offset = 0;
 		let storage_size = storage.size();
@@ -37,7 +37,9 @@ impl Committed {
 		// Offsets vectors always have the 'next' offset as last element
 		offsets.push(offset);
 
-		Self { offsets, vv: AHashMap::new() }
+		let mut vv = HashMap::new();
+		vv.insert(addr, 0);
+		Self { offsets, vv }
 	}
 }
 
@@ -54,7 +56,7 @@ impl Enqueued {
 }
 
 pub struct Log<S: ports::Storage> {
-	pub addr: Address,
+	addr: Address,
 	enqd: Enqueued,
 	cmtd: Committed,
 	storage: S,
@@ -63,12 +65,13 @@ pub struct Log<S: ports::Storage> {
 impl<S: ports::Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
 		let enqd = Enqueued::new();
-		let cmtd = Committed::new(&storage);
+		let cmtd = Committed::new(addr, &storage);
 		Self { addr, enqd, cmtd, storage }
 	}
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
+		// TODO: this calculation assumes everything cmtd comes from addr
 		let seq_n = self.enqd.offsets.len() + self.cmtd.offsets.len() - 2;
 		let seq_n = u64::try_from(seq_n).unwrap();
 		let id = event::ID { addr: self.addr, seq_n };
