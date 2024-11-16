@@ -14,6 +14,31 @@ struct Committed {
 	offsets: Vec<usize>,
 }
 
+impl Committed {
+	/// Everything in Committed is derived from storage
+	fn new<S: ports::Storage>(storage: &S) -> Self {
+		let mut offsets = vec![];
+		let mut offset = 0;
+		let storage_size = storage.size();
+		let mut header_bytes = [0; event::Header::SIZE];
+
+		while storage_size > offset {
+			storage.read(&mut header_bytes, offset);
+			offsets.push(offset);
+			let payload_len: usize = event::Header::from_bytes(&header_bytes)
+				.payload_len
+				.try_into()
+				.unwrap();
+			offset += event::stored_size(payload_len);
+		}
+
+		// Offsets vectors always have the 'next' offset as last element
+		offsets.push(offset);
+
+		Self { offsets }
+	}
+}
+
 pub struct Log<S: ports::Storage> {
 	pub addr: Address,
 	enqd_offsets: Vec<usize>,
@@ -26,26 +51,8 @@ impl<S: ports::Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
 		// Offsets vectors always have the 'next' offset as last element
 		let enqd_offsets = vec![0];
-
-		// Comitted Offsets are "dervied state"; they come from the log
-		// Therefore, we rebuild them storage.
-		let mut cmtd = Committed { offsets: vec![] };
-		let mut offset = 0;
-		let storage_size = storage.size();
-		let mut header_bytes = [0; event::Header::SIZE];
-
-		while storage_size > offset {
-			storage.read(&mut header_bytes, offset);
-			let header = event::Header::from_bytes(&header_bytes);
-			cmtd.offsets.push(offset);
-			let payload_len: usize = header.payload_len.try_into().unwrap();
-			offset += event::stored_size(payload_len);
-		}
-
-		// Offsets vectors always have the 'next' offset as last element
-		cmtd.offsets.push(offset);
-
 		let enqd_events = vec![];
+		let cmtd = Committed::new(&storage);
 		Self { addr, enqd_offsets, enqd_events, cmtd, storage }
 	}
 
