@@ -26,10 +26,9 @@ impl Committed {
 		while storage_size > offset {
 			storage.read(&mut header_bytes, offset);
 			offsets.push(offset);
-			let payload_len: usize = event::Header::from_bytes(&header_bytes)
-				.payload_len
-				.try_into()
-				.unwrap();
+
+			let header = event::Header::from_bytes(&header_bytes);
+			let payload_len: usize = header.payload_len.try_into().unwrap();
 			offset += event::stored_size(payload_len);
 		}
 
