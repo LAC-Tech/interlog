@@ -1,9 +1,9 @@
-use ahash::HashMap;
+use ahash::AHashMap;
 use alloc::vec::Vec;
 use event::Event;
 
 /// This is two u64s instead of one u128 for alignment in Event Header
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Hash)]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
@@ -14,6 +14,7 @@ pub struct Address(pub u64, pub u64);
 #[derive(Debug, PartialEq, Eq)]
 struct Committed {
 	offsets: Vec<usize>,
+	vv: AHashMap<Address, usize>,
 }
 
 impl Committed {
@@ -36,63 +37,72 @@ impl Committed {
 		// Offsets vectors always have the 'next' offset as last element
 		offsets.push(offset);
 
-		Self { offsets }
+		Self { offsets, vv: AHashMap::new() }
+	}
+}
+
+struct Enqueued {
+	offsets: Vec<usize>,
+	events: Vec<u8>,
+}
+
+impl Enqueued {
+	fn new() -> Self {
+		// Offsets vectors always have the 'next' offset as last element
+		Self { offsets: vec![0], events: vec![] }
 	}
 }
 
 pub struct Log<S: ports::Storage> {
 	pub addr: Address,
-	enqd_offsets: Vec<usize>,
-	enqd_events: Vec<u8>,
+	enqd: Enqueued,
 	cmtd: Committed,
 	storage: S,
 }
 
 impl<S: ports::Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
-		// Offsets vectors always have the 'next' offset as last element
-		let enqd_offsets = vec![0];
-		let enqd_events = vec![];
+		let enqd = Enqueued::new();
 		let cmtd = Committed::new(&storage);
-		Self { addr, enqd_offsets, enqd_events, cmtd, storage }
+		Self { addr, enqd, cmtd, storage }
 	}
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
-		let logical_pos = self.enqd_offsets.len() + self.cmtd.offsets.len() - 2;
+		let logical_pos = self.enqd.offsets.len() + self.cmtd.offsets.len() - 2;
 		let logical_pos = u64::try_from(logical_pos).unwrap();
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
 
-		let curr_offset = *self.enqd_offsets.last().unwrap();
+		let curr_offset = *self.enqd.offsets.last().unwrap();
 		let next_offset = curr_offset + event::stored_size(payload.len());
 		core::assert!(next_offset > curr_offset, "offsets must be monotonic");
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
-		self.enqd_offsets.push(next_offset);
+		self.enqd.offsets.push(next_offset);
 
-		e.append_to(&mut self.enqd_events);
-		self.enqd_events.len()
+		e.append_to(&mut self.enqd.events);
+		self.enqd.events.len()
 	}
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
-		let offsets_to_commit = &self.enqd_offsets[1..];
+		let offsets_to_commit = &self.enqd.offsets[1..];
 		self.cmtd.offsets.extend(offsets_to_commit);
 		let n_events_cmtd = offsets_to_commit.len();
 
-		let last_offset = self.enqd_offsets.last().unwrap();
-		let first_offset = self.enqd_offsets.first().unwrap();
+		let last_offset = self.enqd.offsets.last().unwrap();
+		let first_offset = self.enqd.offsets.first().unwrap();
 		let size = last_offset - first_offset;
-		self.storage.append(&self.enqd_events[..size]);
+		self.storage.append(&self.enqd.events[..size]);
 
 		self.rollback();
 		n_events_cmtd
 	}
 
 	pub fn rollback(&mut self) {
-		self.enqd_offsets.clear();
-		self.enqd_offsets.push(*self.cmtd.offsets.last().unwrap());
-		self.enqd_events.clear();
+		self.enqd.offsets.clear();
+		self.enqd.offsets.push(*self.cmtd.offsets.last().unwrap());
+		self.enqd.events.clear();
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
