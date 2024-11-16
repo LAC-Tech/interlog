@@ -9,6 +9,7 @@ pub struct Address(pub u64, pub u64);
 /// Made this struct purely for testing
 /// We want to see the in-memory cmtd state is identical, when rebuiilding log
 /// from storage.
+/// So we compare all the committed state as one thing
 #[derive(Debug, PartialEq, Eq)]
 struct Committed {
 	offsets: Vec<usize>,
@@ -84,11 +85,11 @@ impl<S: ports::Storage> Log<S> {
 		let size = last_offset - first_offset;
 		self.storage.append(&self.enqd_events[..size]);
 
-		self.clear_enqd();
+		self.rollback();
 		n_events_cmtd
 	}
 
-	pub fn clear_enqd(&mut self) {
+	pub fn rollback(&mut self) {
 		self.enqd_offsets.clear();
 		self.enqd_offsets.push(*self.cmtd.offsets.last().unwrap());
 		self.enqd_events.clear();
@@ -318,11 +319,39 @@ mod tests {
 			bss.iter().for_each(|bs| {
 				log.enqueue(bs);
 			});
-			log.clear_enqd();
+			log.rollback();
 
 			let post_stats = log.stats();
 
 			assert_eq!(pre_stats, post_stats);
+			Ok(())
+		});
+	}
+
+	#[test]
+	fn rebuild_cmtd_in_mem_state_from_storage() {
+		arbtest(|u| {
+			let storage = FaultlessStorage::new();
+			let mut log = Log::new(Address(0, 0), storage);
+
+			for _ in 0..u.arbitrary_len::<usize>()? {
+				let bss: JaggedVec<u8> = u.arbitrary()?;
+
+				bss.iter().for_each(|bs| {
+					log.enqueue(bs);
+				});
+
+				if u.arbitrary()? {
+					log.commit();
+				} else {
+					log.rollback();
+				}
+			}
+
+			let original = log.cmtd;
+			let derived = Log::new(Address(0, 0), log.storage).cmtd;
+			assert_eq!(original, derived);
+
 			Ok(())
 		});
 	}
