@@ -110,7 +110,7 @@ impl<S: ports::Storage> Log<S> {
 		let first = offsets[offsets.len() - 1 - n];
 		let last = *offsets.last().unwrap();
 		let size = last - first;
-		buf.fill(n, size, |words| self.storage.read(words, first))
+		buf.fill(size, |words| self.storage.read(words, first))
 	}
 
 	pub fn stats(&self) -> Stats {
@@ -167,29 +167,21 @@ pub mod event {
 	}
 
 	pub struct Buf {
-		event_count: usize,
 		bytes: Vec<u8>,
 	}
 
 	impl Buf {
 		pub fn new() -> Self {
-			Self { event_count: 0, bytes: Vec::new() }
+			Self { bytes: Vec::new() }
 		}
 
 		pub fn clear(&mut self) {
-			self.event_count = 0;
 			self.bytes.clear();
 		}
 
-		pub fn fill(
-			&mut self,
-			event_count: usize,
-			byte_len: usize,
-			read: impl Fn(&mut [u8]),
-		) {
+		pub fn fill(&mut self, byte_len: usize, read: impl Fn(&mut [u8])) {
 			self.bytes.resize(byte_len, 0);
 			read(&mut self.bytes);
-			self.event_count = event_count;
 		}
 
 		fn as_slice(&self) -> &[u8] {
@@ -211,7 +203,7 @@ pub mod event {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			(self.event_index != self.buf.event_count).then(|| {
+			(self.buf.bytes.len() > self.offset_index).then(|| {
 				let e = Event::read(self.buf.as_slice(), self.offset_index);
 				self.event_index += 1;
 				self.offset_index += stored_size(e.payload.len());
