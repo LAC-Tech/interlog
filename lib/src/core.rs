@@ -1,8 +1,9 @@
+use ahash::HashMap;
 use alloc::vec::Vec;
 use event::Event;
 
 /// This is two u64s instead of one u128 for alignment in Event Header
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq)]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
