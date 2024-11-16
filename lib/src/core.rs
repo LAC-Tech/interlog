@@ -6,11 +6,19 @@ use event::Event;
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
+/// Made this struct purely for testing
+/// We want to see the in-memory cmtd state is identical, when rebuiilding log
+/// from storage.
+#[derive(Debug, PartialEq, Eq)]
+struct Committed {
+	offsets: Vec<usize>,
+}
+
 pub struct Log<S: ports::Storage> {
 	pub addr: Address,
 	enqd_offsets: Vec<usize>,
 	enqd_events: Vec<u8>,
-	cmtd_offsets: Vec<usize>,
+	cmtd: Committed,
 	storage: S,
 }
 
@@ -21,7 +29,7 @@ impl<S: ports::Storage> Log<S> {
 
 		// Comitted Offsets are "dervied state"; they come from the log
 		// Therefore, we rebuild them storage.
-		let mut cmtd_offsets = vec![];
+		let mut cmtd = Committed { offsets: vec![] };
 		let mut offset = 0;
 		let storage_size = storage.size();
 		let mut header_bytes = [0; event::Header::SIZE];
@@ -29,21 +37,21 @@ impl<S: ports::Storage> Log<S> {
 		while storage_size > offset {
 			storage.read(&mut header_bytes, offset);
 			let header = event::Header::from_bytes(&header_bytes);
-			cmtd_offsets.push(offset);
+			cmtd.offsets.push(offset);
 			let payload_len: usize = header.payload_len.try_into().unwrap();
 			offset += event::stored_size(payload_len);
 		}
 
 		// Offsets vectors always have the 'next' offset as last element
-		cmtd_offsets.push(offset);
+		cmtd.offsets.push(offset);
 
 		let enqd_events = vec![];
-		Self { addr, enqd_offsets, enqd_events, cmtd_offsets, storage }
+		Self { addr, enqd_offsets, enqd_events, cmtd, storage }
 	}
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
-		let logical_pos = self.enqd_offsets.len() + self.cmtd_offsets.len() - 2;
+		let logical_pos = self.enqd_offsets.len() + self.cmtd.offsets.len() - 2;
 		let logical_pos = u64::try_from(logical_pos).unwrap();
 		let id = event::ID { addr: self.addr, logical_pos };
 		let e = Event { id, payload };
@@ -61,7 +69,7 @@ impl<S: ports::Storage> Log<S> {
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
 		let offsets_to_commit = &self.enqd_offsets[1..];
-		self.cmtd_offsets.extend(offsets_to_commit);
+		self.cmtd.offsets.extend(offsets_to_commit);
 		let n_events_cmtd = offsets_to_commit.len();
 
 		let last_offset = self.enqd_offsets.last().unwrap();
@@ -75,12 +83,12 @@ impl<S: ports::Storage> Log<S> {
 
 	pub fn clear_enqd(&mut self) {
 		self.enqd_offsets.clear();
-		self.enqd_offsets.push(*self.cmtd_offsets.last().unwrap());
+		self.enqd_offsets.push(*self.cmtd.offsets.last().unwrap());
 		self.enqd_events.clear();
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
-		let offsets: &[usize] = &self.cmtd_offsets;
+		let offsets: &[usize] = &self.cmtd.offsets;
 		let first = offsets[offsets.len() - 1 - n];
 		let last = *offsets.last().unwrap();
 		let size = last - first;
@@ -89,7 +97,7 @@ impl<S: ports::Storage> Log<S> {
 
 	pub fn stats(&self) -> Stats {
 		Stats {
-			n_events: self.cmtd_offsets.len() - 1,
+			n_events: self.cmtd.offsets.len() - 1,
 			n_bytes: self.storage.size(),
 		}
 	}
@@ -365,11 +373,9 @@ mod tests {
 			assert_eq!(actual, lyrics[3]);
 		}
 
-		let original_cmtd_offsets = log.cmtd_offsets;
+		let original_cmtd = log.cmtd;
+		let rebuilt_cmtd = Log::new(Address(0, 0), log.storage).cmtd;
 
-		let rebuilt_cmtd_offsets =
-			Log::new(Address(0, 0), log.storage).cmtd_offsets;
-
-		assert_eq!(original_cmtd_offsets, rebuilt_cmtd_offsets);
+		assert_eq!(original_cmtd, rebuilt_cmtd);
 	}
 }
