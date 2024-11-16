@@ -55,6 +55,8 @@ impl Enqueued {
 	}
 }
 
+/// Commit and Enqueue are defined separately for fine grained control
+/// Essentially, they can decide the frequency/pace of writing to disk
 pub struct Log<S: ports::Storage> {
 	addr: Address,
 	enqd: Enqueued,
@@ -113,6 +115,7 @@ impl<S: ports::Storage> Log<S> {
 		let first = offsets[offsets.len() - 1 - n];
 		let last = *offsets.last().unwrap();
 		let size = last - first;
+
 		buf.fill(size, |words| self.storage.read(words, first))
 	}
 
