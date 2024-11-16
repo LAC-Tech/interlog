@@ -166,26 +166,17 @@ pub mod event {
 		}
 	}
 
-	pub struct Buf {
-		bytes: Vec<u8>,
-	}
+	// TODO: this is a paper thin wrapper around Vec<u8>. Needed??
+	pub struct Buf(Vec<u8>);
 
 	impl Buf {
 		pub fn new() -> Self {
-			Self { bytes: Vec::new() }
-		}
-
-		pub fn clear(&mut self) {
-			self.bytes.clear();
+			Self(Vec::new())
 		}
 
 		pub fn fill(&mut self, byte_len: usize, read: impl Fn(&mut [u8])) {
-			self.bytes.resize(byte_len, 0);
-			read(&mut self.bytes);
-		}
-
-		fn as_slice(&self) -> &[u8] {
-			&self.bytes
+			self.0.resize(byte_len, 0);
+			read(&mut self.0);
 		}
 
 		pub fn iter(&self) -> BufIterator<'_> {
@@ -203,8 +194,8 @@ pub mod event {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			(self.buf.bytes.len() > self.offset_index).then(|| {
-				let e = Event::read(self.buf.as_slice(), self.offset_index);
+			(self.buf.0.len() > self.offset_index).then(|| {
+				let e = Event::read(&self.buf.0, self.offset_index);
 				self.event_index += 1;
 				self.offset_index += stored_size(e.payload.len());
 				e
