@@ -69,9 +69,9 @@ impl<S: ports::Storage> Log<S> {
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
-		let logical_pos = self.enqd.offsets.len() + self.cmtd.offsets.len() - 2;
-		let logical_pos = u64::try_from(logical_pos).unwrap();
-		let id = event::ID { addr: self.addr, logical_pos };
+		let seq_n = self.enqd.offsets.len() + self.cmtd.offsets.len() - 2;
+		let seq_n = u64::try_from(seq_n).unwrap();
+		let id = event::ID { addr: self.addr, seq_n };
 		let e = Event { id, payload };
 
 		let curr_offset = *self.enqd.offsets.last().unwrap();
@@ -209,8 +209,8 @@ pub mod event {
 	pub struct ID {
 		/// Address of the log this message originated from
 		pub addr: Address,
-		/// Logical Position of 0 is the first event, etc
-		pub logical_pos: u64,
+		/// This is the nth event originating from addr
+		pub seq_n: u64,
 	}
 
 	const _: () = assert!(mem::size_of::<ID>() == 24);
@@ -255,9 +255,9 @@ pub mod event {
 		fn header_serde() {
 			arbtest(|u| {
 				let addr = Address(u.arbitrary()?, u.arbitrary()?);
-				let logical_pos = u.arbitrary()?;
+				let seq_n = u.arbitrary()?;
 				let payload_len = u.arbitrary()?;
-				let id = ID { addr, logical_pos };
+				let id = ID { addr, seq_n };
 				let expected = Header { id, payload_len };
 				let actual = Header::from_bytes(expected.as_bytes());
 				assert_eq!(*actual, expected);
