@@ -143,8 +143,9 @@ impl<S: ports::Storage> Log<S> {
 	}
 
 	pub fn rollback(&mut self) {
+		let last_cmtd_offset = self.cmtd.offsets.last().copied().unwrap();
 		self.enqd.offsets.clear();
-		self.enqd.offsets.push(*self.cmtd.offsets.last().unwrap());
+		self.enqd.offsets.push(last_cmtd_offset);
 		self.enqd.events.clear();
 		self.enqd.vv.reset();
 	}
@@ -180,7 +181,6 @@ pub struct Stats {
 
 pub mod event {
 	use super::{Address, Vec};
-	use alloc::boxed::Box;
 	use core::mem;
 
 	/// Given a payload, how much storage space an event containing it will need
