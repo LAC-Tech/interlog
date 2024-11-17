@@ -1,6 +1,36 @@
 use alloc::vec::Vec;
 use event::Event;
-use foldhash::{HashMap, HashMapExt};
+use foldhash::HashMapExt;
+
+/// I am calling this a version vector, out of habit
+/// But it says what the seen last seq_n from each address is
+/// I suspect it may have a different name..
+#[derive(Debug, PartialEq, Eq)]
+struct VersionVector(foldhash::HashMap<Address, usize>);
+
+impl VersionVector {
+	fn new() -> Self {
+		Self(foldhash::HashMap::new())
+	}
+
+	fn get(&self, addr: &Address) -> usize {
+		self.0.get(addr).copied().unwrap_or(0)
+	}
+
+	fn incr(&mut self, addr: Address) {
+		*self.0.entry(addr).or_insert(0) += 1;
+	}
+
+	fn merge(&mut self, vv: &Self) {
+		for (addr, seq_n) in &vv.0 {
+			*self.0.entry(*addr).or_insert(0) += seq_n
+		}
+	}
+
+	fn reset(&mut self) {
+		self.0.clear();
+	}
+}
 
 /// This is two u64s instead of one u128 for alignment in Event Header
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Hash)]
@@ -13,14 +43,16 @@ pub struct Address(pub u64, pub u64);
 /// So we compare all the committed state as one thing
 #[derive(Debug, PartialEq, Eq)]
 struct Committed {
+	vv: VersionVector,
 	offsets: Vec<usize>,
-	vv: HashMap<Address, usize>,
 }
 
 impl Committed {
 	/// Everything in Committed is derived from storage
-	fn new<S: ports::Storage>(addr: Address, storage: &S) -> Self {
+	fn new<S: ports::Storage>(storage: &S) -> Self {
+		let mut vv = VersionVector::new();
 		let mut offsets = vec![];
+
 		let mut offset = 0;
 		let storage_size = storage.size();
 		let mut header_bytes = [0; event::Header::SIZE];
@@ -30,6 +62,7 @@ impl Committed {
 			offsets.push(offset);
 
 			let header = event::Header::from_bytes(&header_bytes);
+			vv.incr(header.id.addr);
 			let payload_len: usize = header.payload_len.try_into().unwrap();
 			offset += event::stored_size(payload_len);
 		}
@@ -37,8 +70,6 @@ impl Committed {
 		// Offsets vectors always have the 'next' offset as last element
 		offsets.push(offset);
 
-		let mut vv = HashMap::new();
-		vv.insert(addr, 0);
 		Self { offsets, vv }
 	}
 }
@@ -46,12 +77,13 @@ impl Committed {
 struct Enqueued {
 	offsets: Vec<usize>,
 	events: Vec<u8>,
+	vv: VersionVector,
 }
 
 impl Enqueued {
 	fn new() -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		Self { offsets: vec![0], events: vec![] }
+		Self { offsets: vec![0], events: vec![], vv: VersionVector::new() }
 	}
 }
 
@@ -67,7 +99,7 @@ pub struct Log<S: ports::Storage> {
 impl<S: ports::Storage> Log<S> {
 	pub fn new(addr: Address, storage: S) -> Self {
 		let enqd = Enqueued::new();
-		let cmtd = Committed::new(addr, &storage);
+		let cmtd = Committed::new(&storage);
 		Self { addr, enqd, cmtd, storage }
 	}
 
@@ -85,14 +117,19 @@ impl<S: ports::Storage> Log<S> {
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd.offsets.push(next_offset);
 
+		self.enqd.vv.incr(self.addr);
+
 		e.append_to(&mut self.enqd.events);
 		self.enqd.events.len()
 	}
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
+		self.cmtd.vv.merge(&self.enqd.vv);
+
 		let offsets_to_commit = &self.enqd.offsets[1..];
 		self.cmtd.offsets.extend(offsets_to_commit);
+
 		let n_events_cmtd = offsets_to_commit.len();
 
 		let last_offset = self.enqd.offsets.last().unwrap();
@@ -101,6 +138,7 @@ impl<S: ports::Storage> Log<S> {
 		self.storage.append(&self.enqd.events[..size]);
 
 		self.rollback();
+
 		n_events_cmtd
 	}
 
@@ -108,6 +146,13 @@ impl<S: ports::Storage> Log<S> {
 		self.enqd.offsets.clear();
 		self.enqd.offsets.push(*self.cmtd.offsets.last().unwrap());
 		self.enqd.events.clear();
+		self.enqd.vv.reset();
+	}
+
+	pub fn append_external<'a>(&mut self, events: event::List<'a>) {
+		// Modify comitted state (offsets and external)
+		// append to storage
+		panic!("TODO implement me")
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
@@ -135,6 +180,7 @@ pub struct Stats {
 
 pub mod event {
 	use super::{Address, Vec};
+	use alloc::boxed::Box;
 	use core::mem;
 
 	/// Given a payload, how much storage space an event containing it will need
@@ -172,7 +218,6 @@ pub mod event {
 		}
 	}
 
-	// TODO: this is a paper thin wrapper around Vec<u8>. Needed??
 	pub struct Buf(Vec<u8>);
 
 	impl Buf {
@@ -185,23 +230,33 @@ pub mod event {
 			read(&mut self.0);
 		}
 
-		pub fn iter(&self) -> BufIterator<'_> {
-			BufIterator { buf: self, event_index: 0, offset_index: 0 }
+		pub fn iter(&self) -> Iter<'_> {
+			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
 		}
 	}
 
-	pub struct BufIterator<'a> {
-		buf: &'a Buf,
+	/// Immutable
+	pub struct List<'a>(&'a [u8]);
+
+	impl<'a> List<'a> {
+		pub fn iter(&self) -> Iter<'_> {
+			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
+		}
+	}
+
+	/// can be produced from anything that produces bytes
+	pub struct Iter<'a> {
+		bytes: &'a [u8],
 		event_index: usize,
 		offset_index: usize,
 	}
 
-	impl<'a> Iterator for BufIterator<'a> {
+	impl<'a> Iterator for Iter<'a> {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			(self.buf.0.len() > self.offset_index).then(|| {
-				let e = Event::read(&self.buf.0, self.offset_index);
+			(self.bytes.len() > self.offset_index).then(|| {
+				let e = Event::read(self.bytes, self.offset_index);
 				self.event_index += 1;
 				self.offset_index += stored_size(e.payload.len());
 				e
@@ -312,7 +367,11 @@ mod tests {
 			let mut log = Log::new(Address(0, 0), storage);
 
 			let pre_stats = log.stats();
+
+			// Pre-conditions
 			assert_eq!(pre_stats, Stats { n_events: 0, n_bytes: 0 });
+			assert_eq!(log.cmtd.offsets.len() - 1, log.cmtd.vv.get(&log.addr));
+
 			let bss: JaggedVec<u8> = u.arbitrary()?;
 
 			bss.iter().for_each(|bs| {
@@ -323,6 +382,7 @@ mod tests {
 			let post_stats = log.stats();
 
 			assert_eq!(pre_stats, post_stats);
+			assert_eq!(log.cmtd.offsets.len() - 1, log.cmtd.vv.get(&log.addr));
 			Ok(())
 		});
 	}
