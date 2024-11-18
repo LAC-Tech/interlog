@@ -37,10 +37,7 @@ impl VersionVector {
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
-/// Made this struct purely for testing
-/// We want to see the in-memory cmtd state is identical, when rebuiilding log
-/// from storage.
-/// So we compare all the committed state as one thing
+/// Storage derived state kept in memory
 #[derive(Debug, PartialEq, Eq)]
 struct Committed {
 	vv: VersionVector,
@@ -72,18 +69,31 @@ impl Committed {
 
 		Self { offsets, vv }
 	}
+
+	// TODO: this will break if I ever start filtering appends
+	fn assert_consistent(&self) {
+		let vv_sum = self.vv.0.values().sum();
+		// assumes every remote event is appended
+		let n_events = self.offsets.len() - 1;
+		assert_eq!(n_events, vv_sum);
+	}
 }
 
+/// Operational state that will not be persisted
 struct Enqueued {
 	offsets: Vec<usize>,
-	events: Vec<u8>,
+	events: event::Buf,
 	vv: VersionVector,
 }
 
 impl Enqueued {
 	fn new() -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		Self { offsets: vec![0], events: vec![], vv: VersionVector::new() }
+		Self {
+			offsets: vec![0],
+			events: event::Buf::new(),
+			vv: VersionVector::new(),
+		}
 	}
 }
 
@@ -119,27 +129,8 @@ impl<S: ports::Storage> Log<S> {
 
 		self.enqd.vv.incr(self.addr);
 
-		e.append_to(&mut self.enqd.events);
-		self.enqd.events.len()
-	}
-
-	/// Returns number of events committed
-	pub fn commit(&mut self) -> usize {
-		self.cmtd.vv.merge(&self.enqd.vv);
-
-		let offsets_to_commit = &self.enqd.offsets[1..];
-		self.cmtd.offsets.extend(offsets_to_commit);
-
-		let n_events_cmtd = offsets_to_commit.len();
-
-		let last_offset = self.enqd.offsets.last().unwrap();
-		let first_offset = self.enqd.offsets.first().unwrap();
-		let size = last_offset - first_offset;
-		self.storage.append(&self.enqd.events[..size]);
-
-		self.rollback();
-
-		n_events_cmtd
+		self.enqd.events.push(e);
+		self.enqd.events.as_bytes().len()
 	}
 
 	pub fn rollback(&mut self) {
@@ -150,9 +141,33 @@ impl<S: ports::Storage> Log<S> {
 		self.enqd.vv.reset();
 	}
 
+	/// Returns number of events committed
+	pub fn commit(&mut self) -> usize {
+		self.cmtd.assert_consistent();
+
+		self.cmtd.vv.merge(&self.enqd.vv);
+
+		let offsets_to_commit = &self.enqd.offsets[1..];
+		self.cmtd.offsets.extend(offsets_to_commit);
+
+		let n_events_cmtd = offsets_to_commit.len();
+
+		let last_offset = self.enqd.offsets.last().unwrap();
+		let first_offset = self.enqd.offsets.first().unwrap();
+		let size = last_offset - first_offset;
+		self.storage.append(&self.enqd.events.as_bytes()[..size]);
+
+		self.rollback();
+
+		self.cmtd.assert_consistent();
+
+		n_events_cmtd
+	}
+
 	/// Append events coming from a remote log
 	/// Intented to be used as part of a sync protocol
 	pub fn append_remote<'a>(&mut self, events: event::List<'a>) {
+		self.cmtd.assert_consistent();
 		let mut last_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
@@ -161,6 +176,7 @@ impl<S: ports::Storage> Log<S> {
 			self.cmtd.offsets.push(next_offset);
 			last_offset = last_offset;
 		}
+		self.cmtd.assert_consistent();
 		self.storage.append(events.as_bytes());
 	}
 
@@ -204,15 +220,6 @@ pub mod event {
 	}
 
 	impl<'a> Event<'a> {
-		pub fn append_to(&self, byte_vec: &mut Vec<u8>) {
-			let new_size = byte_vec.len() + stored_size(self.payload.len());
-			let payload_len = u64::try_from(self.payload.len()).unwrap();
-			let header = Header { id: self.id, payload_len };
-			byte_vec.extend(header.as_bytes());
-			byte_vec.extend(self.payload);
-			byte_vec.resize(new_size, 0);
-		}
-
 		fn read(bytes: &'a [u8], offset: usize) -> Event<'a> {
 			let header_end = offset + Header::SIZE;
 			let header_bytes: &[u8; Header::SIZE] =
@@ -233,6 +240,26 @@ pub mod event {
 			Self(Vec::new())
 		}
 
+		pub fn push(&mut self, e: Event<'_>) {
+			let new_size = self.0.len() + stored_size(e.payload.len());
+			let payload_len = u64::try_from(e.payload.len()).unwrap();
+			let header = Header { id: e.id, payload_len };
+			self.0.extend(header.as_bytes());
+			self.0.extend(e.payload);
+			self.0.resize(new_size, 0);
+		}
+
+		pub fn as_bytes(&self) -> &[u8] {
+			self.0.as_slice()
+		}
+
+		// this stupid method make me re-think the whole abstraction
+		pub fn clear(&mut self) {
+			self.0.clear();
+		}
+
+		// TODO: specify this must come from storage
+		// It's better to enforce that, than be "flexible"
 		pub fn fill(&mut self, byte_len: usize, read: impl Fn(&mut [u8])) {
 			self.0.resize(byte_len, 0);
 			read(&mut self.0);
@@ -389,9 +416,7 @@ mod tests {
 
 			let pre_stats = log.stats();
 
-			// Pre-conditions
 			assert_eq!(pre_stats, Stats { n_events: 0, n_bytes: 0 });
-			assert_eq!(log.cmtd.offsets.len() - 1, log.cmtd.vv.get(&log.addr));
 
 			let bss: JaggedVec<u8> = u.arbitrary()?;
 
@@ -403,7 +428,6 @@ mod tests {
 			let post_stats = log.stats();
 
 			assert_eq!(pre_stats, post_stats);
-			assert_eq!(log.cmtd.offsets.len() - 1, log.cmtd.vv.get(&log.addr));
 			Ok(())
 		});
 	}
@@ -430,10 +454,16 @@ mod tests {
 
 			let original = log.cmtd;
 			let derived = Log::new(Address(0, 0), log.storage).cmtd;
+
 			assert_eq!(original, derived);
 
 			Ok(())
 		});
+	}
+
+	#[test]
+	fn receive_remote_events() {
+		arbtest(|u| Ok(()));
 	}
 
 	#[test]
