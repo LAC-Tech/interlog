@@ -150,10 +150,18 @@ impl<S: ports::Storage> Log<S> {
 		self.enqd.vv.reset();
 	}
 
-	pub fn append_external<'a>(&mut self, events: event::List<'a>) {
-		// Modify comitted state (offsets and external)
-		// append to storage
-		panic!("TODO implement me")
+	/// Append events coming from a remote log
+	/// Intented to be used as part of a sync protocol
+	pub fn append_remote<'a>(&mut self, events: event::List<'a>) {
+		let mut last_offset = self.cmtd.offsets.last().copied().unwrap();
+
+		for e in events.iter() {
+			self.cmtd.vv.incr(e.id.addr);
+			let next_offset = last_offset + event::stored_size(e.payload.len());
+			self.cmtd.offsets.push(next_offset);
+			last_offset = last_offset;
+		}
+		self.storage.append(events.as_bytes());
 	}
 
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
@@ -241,6 +249,10 @@ pub mod event {
 	impl<'a> List<'a> {
 		pub fn iter(&self) -> Iter<'_> {
 			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
+		}
+
+		pub fn as_bytes(&self) -> &'a [u8] {
+			self.0
 		}
 	}
 
