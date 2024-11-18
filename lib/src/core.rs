@@ -244,6 +244,15 @@ pub mod event {
 		}
 	}
 
+	impl<'a> IntoIterator for List<'a> {
+		type Item = Event<'a>;
+		type IntoIter = Iter<'a>;
+
+		fn into_iter(self) -> Self::IntoIter {
+			Iter { bytes: self.0, event_index: 0, offset_index: 0 }
+		}
+	}
+
 	/// can be produced from anything that produces bytes
 	pub struct Iter<'a> {
 		bytes: &'a [u8],
