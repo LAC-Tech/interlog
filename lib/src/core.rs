@@ -55,7 +55,9 @@ impl Committed {
 		let mut header_bytes = [0; event::Header::SIZE];
 
 		while storage_size > offset {
-			storage.read(&mut header_bytes, offset);
+			header_bytes.copy_from_slice(
+				&storage.as_slice()[offset..event::Header::SIZE],
+			);
 			offsets.push(offset);
 
 			let header = event::Header::from_bytes(&header_bytes);
@@ -180,6 +182,12 @@ impl<S: ports::Storage> Log<S> {
 		self.storage.append(events.as_bytes());
 	}
 
+	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
+		let list = event::List::new(self.storage.as_slice())
+		list.iter()
+	}
+
+	/*
 	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
 		let offsets: &[usize] = &self.cmtd.offsets;
 		let first = offsets[offsets.len() - 1 - n];
@@ -188,6 +196,7 @@ impl<S: ports::Storage> Log<S> {
 
 		buf.fill(size, |words| self.storage.read(words, first))
 	}
+	*/
 
 	pub fn stats(&self) -> Stats {
 		Stats {
@@ -258,13 +267,6 @@ pub mod event {
 			self.0.clear();
 		}
 
-		// TODO: specify this must come from storage
-		// It's better to enforce that, than be "flexible"
-		pub fn fill(&mut self, byte_len: usize, read: impl Fn(&mut [u8])) {
-			self.0.resize(byte_len, 0);
-			read(&mut self.0);
-		}
-
 		pub fn iter(&self) -> Iter<'_> {
 			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
 		}
@@ -274,6 +276,9 @@ pub mod event {
 	pub struct List<'a>(&'a [u8]);
 
 	impl<'a> List<'a> {
+		pub fn new(bytes: &'a [u8]) -> Self {
+			Self(bytes)
+		}
 		pub fn iter(&self) -> Iter<'_> {
 			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
 		}

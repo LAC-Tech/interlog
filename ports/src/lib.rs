@@ -9,6 +9,6 @@
 /// - In-browser (WASM that calls to indexedDB?)
 pub trait Storage {
 	fn append(&mut self, data: &[u8]);
-	fn read(&self, buf: &mut [u8], offset: usize);
+	fn as_slice(&self) -> &[u8];
 	fn size(&self) -> usize;
 }

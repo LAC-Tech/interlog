@@ -14,8 +14,8 @@ impl ports::Storage for FaultlessStorage {
 		self.0.extend(data)
 	}
 
-	fn read(&self, buf: &mut [u8], offset: usize) {
-		buf.copy_from_slice(&self.0[offset..offset + buf.len()])
+	fn as_slice(&self) -> &[u8] {
+		&self.0
 	}
 
 	fn size(&self) -> usize {
