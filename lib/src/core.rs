@@ -234,7 +234,7 @@ pub mod event {
 			self.bytes.extend(header.as_bytes());
 			self.bytes.extend(e.payload);
 			self.bytes.resize(new_size, 0);
-			self.vv.incr(header.id.addr);
+			self.vv.incr(e.id.addr);
 		}
 
 		pub fn as_bytes(&self) -> &[u8] {
