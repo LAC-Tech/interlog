@@ -5,15 +5,16 @@ use foldhash::HashMapExt;
 /// I am calling this a version vector, out of habit
 /// But it says what the seen last seq_n from each address is
 /// I suspect it may have a different name..
+/// u64 for value, not usize, because it will be sent across network
 #[derive(Debug, PartialEq, Eq)]
-struct VersionVector(foldhash::HashMap<Address, usize>);
+struct VersionVector(foldhash::HashMap<Address, u64>);
 
 impl VersionVector {
 	fn new() -> Self {
 		Self(foldhash::HashMap::new())
 	}
 
-	fn get(&self, addr: &Address) -> usize {
+	fn get(&self, addr: &Address) -> u64 {
 		self.0.get(addr).copied().unwrap_or(0)
 	}
 
@@ -55,6 +56,9 @@ impl Committed {
 
 		for e in events {
 			offsets.push(offset);
+			// TODO: work out if this assert should be before or after
+			// does it match seq_n, or how many events seen?
+			assert_eq!(vv.get(&e.id.addr), e.id.seq_n);
 			vv.incr(e.id.addr);
 			let payload_len: usize = e.payload.len().try_into().unwrap();
 			offset += event::stored_size(payload_len);
@@ -70,7 +74,7 @@ impl Committed {
 	fn assert_consistent(&self) {
 		let vv_sum = self.vv.0.values().sum();
 		// assumes every remote event is appended
-		let n_events = self.offsets.len() - 1;
+		let n_events: u64 = (self.offsets.len() - 1).try_into().unwrap();
 		assert_eq!(n_events, vv_sum);
 	}
 }
