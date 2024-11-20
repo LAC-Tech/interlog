@@ -54,10 +54,10 @@ impl Committed {
 		let storage_size = storage.size();
 		let mut header_bytes = [0; event::Header::SIZE];
 
+		let events = storage.as_slice();
+
 		while storage_size > offset {
-			header_bytes.copy_from_slice(
-				&storage.as_slice()[offset..event::Header::SIZE],
-			);
+			header_bytes.copy_from_slice(&events[offset..event::Header::SIZE]);
 			offsets.push(offset);
 
 			let header = event::Header::from_bytes(&header_bytes);
@@ -182,21 +182,12 @@ impl<S: ports::Storage> Log<S> {
 		self.storage.append(events.as_bytes());
 	}
 
+	// TODO: return empty iterator if n is invalid
 	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
-		let list = event::List::new(self.storage.as_slice())
-		list.iter()
+		let events = self.storage.as_slice();
+		let events = &events[events.len() - n..];
+		event::Iter::new(events)
 	}
-
-	/*
-	pub fn read_from_end(&self, n: usize, buf: &mut event::Buf) {
-		let offsets: &[usize] = &self.cmtd.offsets;
-		let first = offsets[offsets.len() - 1 - n];
-		let last = *offsets.last().unwrap();
-		let size = last - first;
-
-		buf.fill(size, |words| self.storage.read(words, first))
-	}
-	*/
 
 	pub fn stats(&self) -> Stats {
 		Stats {
@@ -280,7 +271,7 @@ pub mod event {
 			Self(bytes)
 		}
 		pub fn iter(&self) -> Iter<'_> {
-			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
+			Iter::new(self.0)
 		}
 
 		pub fn as_bytes(&self) -> &'a [u8] {
@@ -293,7 +284,7 @@ pub mod event {
 		type IntoIter = Iter<'a>;
 
 		fn into_iter(self) -> Self::IntoIter {
-			Iter { bytes: self.0, event_index: 0, offset_index: 0 }
+			Iter::new(self.0)
 		}
 	}
 
@@ -302,6 +293,12 @@ pub mod event {
 		bytes: &'a [u8],
 		event_index: usize,
 		offset_index: usize,
+	}
+
+	impl<'a> Iter<'a> {
+		pub fn new(bytes: &'a [u8]) -> Self {
+			Self { bytes, event_index: 0, offset_index: 0 }
+		}
 	}
 
 	impl<'a> Iterator for Iter<'a> {
@@ -414,9 +411,8 @@ mod tests {
 				log.enqueue(bs);
 			});
 			log.commit();
-			let mut buf = event::Buf::new();
-			log.read_from_end(0, &mut buf);
-			assert!(buf.iter().next().is_none());
+
+			assert!(log.latest(0).next().is_none());
 			Ok(())
 		});
 	}
@@ -497,7 +493,6 @@ mod tests {
 	fn enqueue_commit_and_read_data() {
 		let storage = FaultlessStorage::new();
 		let mut log = Log::new(Address(0, 0), storage);
-		let mut read_buf = event::Buf::new();
 
 		let lyrics: [&[u8]; 4] = [
 			b"I have known the arcane law",
@@ -509,23 +504,20 @@ mod tests {
 		{
 			assert_eq!(log.enqueue(lyrics[0]), 64);
 			assert_eq!(log.commit(), 1);
-			log.read_from_end(1, &mut read_buf);
-			let actual = read_buf.iter().next().unwrap().payload;
+			let actual = log.latest(1).next().unwrap().payload;
 			assert_eq!(actual, lyrics[0]);
 		}
 
 		{
 			assert_eq!(log.enqueue(lyrics[1]), 72);
 			assert_eq!(log.commit(), 1);
-			log.read_from_end(1, &mut read_buf);
-			let actual = read_buf.iter().next().unwrap().payload;
+			let actual = log.latest(1).next().unwrap().payload;
 			assert_eq!(actual, lyrics[1]);
 		}
 
 		// Read multiple things from the buffer
 		{
-			log.read_from_end(2, &mut read_buf);
-			let mut it = read_buf.iter();
+			let mut it = log.latest(2);
 			let actual = it.next().unwrap().payload;
 			assert_eq!(actual, lyrics[0]);
 			let actual = it.next().unwrap().payload;
@@ -538,8 +530,7 @@ mod tests {
 			assert_eq!(log.enqueue(lyrics[3]), 136);
 			assert_eq!(log.commit(), 2);
 
-			log.read_from_end(2, &mut read_buf);
-			let mut it = read_buf.iter();
+			let mut it = log.latest(2);
 			let actual = it.next().unwrap().payload;
 			assert_eq!(actual, lyrics[2]);
 			let actual = it.next().unwrap().payload;
