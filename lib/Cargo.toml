@@ -10,7 +10,8 @@ ports = { path = "../ports" }
 foldhash = "0.1.3"
 
 [dev-dependencies]
+arbitrary = {workspace = true}
 arbtest = {workspace = true}
 pretty_assertions = {workspace = true}
 tempfile = "3.9.0"
-test_utils = { path = "../test_utils"}
+test_utils = {path = "../test_utils"}

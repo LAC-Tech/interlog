@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arbitrary = "1.4.1"
+arbitrary = { workspace = true }
 ports = { path = "../ports" }
-pretty_assertions = {workspace = true}
+pretty_assertions = { workspace = true }

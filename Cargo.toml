@@ -8,3 +8,4 @@ profile-sim = "flamegraph -- target/debug/sim 14301625462589455796"
 [workspace.dependencies]
 pretty_assertions = "1.4.0"
 arbtest = "0.3.1"
+arbitrary = "1.4.1"

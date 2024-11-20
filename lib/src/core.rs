@@ -384,6 +384,14 @@ mod tests {
 	use pretty_assertions::assert_eq;
 	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
 
+	impl<'a> arbitrary::Arbitrary<'a> for Address {
+		fn arbitrary(
+			u: &mut arbitrary::Unstructured<'a>,
+		) -> arbitrary::Result<Self> {
+			Ok(Address(u.arbitrary()?, u.arbitrary()?))
+		}
+	}
+
 	#[test]
 	fn empty_commit() {
 		let storage = FaultlessStorage::new();
@@ -461,10 +469,24 @@ mod tests {
 		});
 	}
 
+	/*
+	TODO: finish this, use version vector, enforce monotonic seq_n in event buf
 	#[test]
 	fn receive_remote_events() {
-		arbtest(|u| Ok(()));
+		arbtest(|u| {
+			let mut remote_events = event::Buf::new();
+
+			let bss: JaggedVec<u8> = u.arbitrary()?;
+
+			for bs in bss.iter() {
+				let id = ID { addr: u.arbitrary(), seq_n };
+				bss.iter().for_each(|bs| remote_events.push(bs));
+			}
+
+			Ok(())
+		});
 	}
+	*/
 
 	#[test]
 	fn enqueue_commit_and_read_data() {
