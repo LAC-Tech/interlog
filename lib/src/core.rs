@@ -197,7 +197,7 @@ impl<S: ports::Storage> Log<S> {
 	}
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(PartialEq, Eq, Debug))]
 pub struct Stats {
 	pub n_events: usize,
 	pub n_bytes: usize,
@@ -214,6 +214,7 @@ pub mod event {
 		Header::SIZE + padded_payload_len
 	}
 
+	#[cfg_attr(test, derive(PartialEq, Eq, Debug))]
 	pub struct Event<'a> {
 		pub id: ID,
 		pub payload: &'a [u8],
@@ -322,7 +323,7 @@ pub mod event {
 	}
 
 	#[derive(Clone, Copy)]
-	#[cfg_attr(test, derive(PartialEq, Debug))]
+	#[cfg_attr(test, derive(PartialEq, Eq, Debug))]
 	#[repr(C)]
 	pub struct ID {
 		/// Address of the log this message originated from
@@ -522,8 +523,9 @@ mod tests {
 
 	#[test]
 	fn enqueue_commit_and_read_data() {
+		let addr = Address(0, 0);
 		let storage = FaultlessStorage::new();
-		let mut log = Log::new(Address(0, 0), storage);
+		let mut log = Log::new(addr, storage);
 
 		let lyrics: [&[u8]; 4] = [
 			b"I have known the arcane law",
@@ -536,8 +538,13 @@ mod tests {
 			assert_eq!(log.enqueue(lyrics[0]), 64);
 			assert_eq!(log.commit(), 1);
 			let actual: Vec<Event> = log.latest(1).collect();
-			assert_eq!(actual.len(), 1);
-			assert_eq!(actual[0].payload, lyrics[0]);
+
+			let expected = vec![Event {
+				id: event::ID { addr, seq_n: 0 },
+				payload: lyrics[0],
+			}];
+
+			assert_eq!(actual, expected);
 		}
 
 		// Read multiple things from the buffer
@@ -545,8 +552,11 @@ mod tests {
 			assert_eq!(log.enqueue(lyrics[1]), 72);
 			assert_eq!(log.commit(), 1);
 			let actual: Vec<Event> = log.latest(2).collect();
-			assert_eq!(actual[0].payload, lyrics[0]);
-			assert_eq!(actual[1].payload, lyrics[1]);
+			let expected = vec![
+				Event { id: event::ID { addr, seq_n: 0 }, payload: lyrics[0] },
+				Event { id: event::ID { addr, seq_n: 1 }, payload: lyrics[1] },
+			];
+			assert_eq!(actual, expected);
 		}
 
 		// Bulk commit two things
@@ -555,11 +565,12 @@ mod tests {
 			assert_eq!(log.enqueue(lyrics[3]), 136);
 			assert_eq!(log.commit(), 2);
 
-			let mut it = log.latest(2);
-			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, lyrics[2]);
-			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, lyrics[3]);
+			let actual: Vec<Event> = log.latest(2).collect();
+			let expected = vec![
+				Event { id: event::ID { addr, seq_n: 2 }, payload: lyrics[2] },
+				Event { id: event::ID { addr, seq_n: 3 }, payload: lyrics[3] },
+			];
+			assert_eq!(actual, expected);
 		}
 
 		let original_cmtd = log.cmtd;
