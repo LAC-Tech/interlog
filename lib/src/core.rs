@@ -51,18 +51,12 @@ impl Committed {
 		let mut offsets = vec![];
 
 		let mut offset = 0;
-		let storage_size = storage.size();
-		let mut header_bytes = [0; event::Header::SIZE];
+		let events = event::Iter::new(storage.as_slice());
 
-		let events = storage.as_slice();
-
-		while storage_size > offset {
-			header_bytes.copy_from_slice(&events[offset..event::Header::SIZE]);
+		for e in events {
 			offsets.push(offset);
-
-			let header = event::Header::from_bytes(&header_bytes);
-			vv.incr(header.id.addr);
-			let payload_len: usize = header.payload_len.try_into().unwrap();
+			vv.incr(e.id.addr);
+			let payload_len: usize = e.payload.len().try_into().unwrap();
 			offset += event::stored_size(payload_len);
 		}
 
@@ -168,7 +162,7 @@ impl<S: ports::Storage> Log<S> {
 
 	/// Append events coming from a remote log
 	/// Intented to be used as part of a sync protocol
-	pub fn append_remote<'a>(&mut self, events: event::List<'a>) {
+	pub fn append_remote<'a>(&mut self, events: event::Slice<'a>) {
 		self.cmtd.assert_consistent();
 		let mut last_offset = self.cmtd.offsets.last().copied().unwrap();
 
@@ -185,15 +179,12 @@ impl<S: ports::Storage> Log<S> {
 	// TODO: return empty iterator if n is invalid
 	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
-		let events = match offsets.get(offsets.len() - n).copied() {
-			Some(offset) => {
-				let events = self.storage.as_slice();
-				#[cfg(test)]
-				dbg!(offset, events.len());
-				&events[events.len() - offset..]
-			}
-			None => &[],
-		};
+		let cmtd_bytes = self.storage.as_slice();
+
+		let events = offsets
+			.get(offsets.len() - n - 1) // Offsets always include one extra
+			.map(|&offset| &cmtd_bytes[offset..])
+			.unwrap_or(&[]);
 
 		event::Iter::new(events)
 	}
@@ -228,23 +219,6 @@ pub mod event {
 		pub payload: &'a [u8],
 	}
 
-	impl<'a> Event<'a> {
-		fn read(bytes: &'a [u8], offset: usize) -> Event<'a> {
-			let header_end = offset + Header::SIZE;
-			let header_bytes: &[u8; Header::SIZE] =
-				&bytes[offset..header_end].try_into().unwrap();
-			let header = Header::from_bytes(header_bytes);
-
-			let payload_end =
-				header_end + usize::try_from(header.payload_len).unwrap();
-
-			#[cfg(test)]
-			dbg!(offset, header_end, payload_end);
-
-			Self { id: header.id, payload: &bytes[header_end..payload_end] }
-		}
-	}
-
 	pub struct Buf(Vec<u8>);
 
 	impl Buf {
@@ -271,14 +245,14 @@ pub mod event {
 		}
 
 		pub fn iter(&self) -> Iter<'_> {
-			Iter { bytes: &self.0, event_index: 0, offset_index: 0 }
+			Iter::new(&self.0)
 		}
 	}
 
 	/// Immutable
-	pub struct List<'a>(&'a [u8]);
+	pub struct Slice<'a>(&'a [u8]);
 
-	impl<'a> List<'a> {
+	impl<'a> Slice<'a> {
 		pub fn new(bytes: &'a [u8]) -> Self {
 			Self(bytes)
 		}
@@ -291,7 +265,7 @@ pub mod event {
 		}
 	}
 
-	impl<'a> IntoIterator for List<'a> {
+	impl<'a> IntoIterator for Slice<'a> {
 		type Item = Event<'a>;
 		type IntoIter = Iter<'a>;
 
@@ -301,15 +275,22 @@ pub mod event {
 	}
 
 	/// can be produced from anything that produces bytes
+	#[derive(Debug)]
 	pub struct Iter<'a> {
 		bytes: &'a [u8],
 		event_index: usize,
-		offset_index: usize,
+		offset: usize,
+		header_buf: [u8; Header::SIZE],
 	}
 
 	impl<'a> Iter<'a> {
 		pub fn new(bytes: &'a [u8]) -> Self {
-			Self { bytes, event_index: 0, offset_index: 0 }
+			Self {
+				bytes,
+				event_index: 0,
+				offset: 0,
+				header_buf: [0u8; Header::SIZE],
+			}
 		}
 	}
 
@@ -317,10 +298,24 @@ pub mod event {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			(self.bytes.len() > self.offset_index).then(|| {
-				let e = Event::read(self.bytes, self.offset_index);
+			(self.bytes.len() > self.offset).then(|| {
+				let header_end = self.offset + Header::SIZE;
+				let header = &self.bytes[self.offset..header_end];
+				self.header_buf.copy_from_slice(header);
+				let header = Header::from_bytes(&self.header_buf);
+
+				let payload_end =
+					header_end + usize::try_from(header.payload_len).unwrap();
+
+				#[cfg(test)]
+				dbg!(&self);
+
+				let e = Event {
+					id: header.id,
+					payload: &self.bytes[header_end..payload_end],
+				};
 				self.event_index += 1;
-				self.offset_index += stored_size(e.payload.len());
+				self.offset += stored_size(e.payload.len());
 				e
 			})
 		}
@@ -393,8 +388,6 @@ pub mod event {
 
 #[cfg(test)]
 mod tests {
-	use core::str::FromStr;
-
 	use super::*;
 	use arbtest::arbtest;
 	use pretty_assertions::assert_eq;
@@ -406,6 +399,28 @@ mod tests {
 		) -> arbitrary::Result<Self> {
 			Ok(Address(u.arbitrary()?, u.arbitrary()?))
 		}
+	}
+
+	#[test]
+	fn push_items_to_event_buf_and_get_them_back() {
+		let mut buf = event::Buf::new();
+
+		buf.push(Event {
+			id: event::ID { addr: Address(0, 0), seq_n: 0 },
+			payload: b"hello",
+		});
+
+		buf.push(Event {
+			id: event::ID { addr: Address(0, 0), seq_n: 0 },
+			payload: b"world",
+		});
+
+		let payloads: Vec<String> = buf
+			.iter()
+			.map(|e| String::from_utf8_lossy(e.payload).to_string())
+			.collect();
+
+		assert_eq!(payloads, vec!["hello", "world"]);
 	}
 
 	#[test]
@@ -455,7 +470,6 @@ mod tests {
 		});
 	}
 
-	/*
 	#[test]
 	fn rebuild_cmtd_in_mem_state_from_storage() {
 		arbtest(|u| {
@@ -484,26 +498,27 @@ mod tests {
 			Ok(())
 		});
 	}
-	*/
 
 	/*
-	TODO: finish this, use version vector, enforce monotonic seq_n in event buf
-	#[test]
-	fn receive_remote_events() {
-		arbtest(|u| {
-			let mut remote_events = event::Buf::new();
+		TODO: finish this, use version vector, enforce monotonic seq_n in event buf
+		#[test]
+		fn receive_remote_events() {
+			arbtest(|u| {
+				let mut remote_events = event::Buf::new        0,
+		],
+	();
 
-			let bss: JaggedVec<u8> = u.arbitrary()?;
+				let bss: JaggedVec<u8> = u.arbitrary()?;
 
-			for bs in bss.iter() {
-				let id = ID { addr: u.arbitrary(), seq_n };
-				bss.iter().for_each(|bs| remote_events.push(bs));
-			}
+				for bs in bss.iter() {
+					let id = ID { addr: u.arbitrary(), seq_n };
+					bss.iter().for_each(|bs| remote_events.push(bs));
+				}
 
-			Ok(())
-		});
-	}
-	*/
+				Ok(())
+			});
+		}
+		*/
 
 	#[test]
 	fn enqueue_commit_and_read_data() {
@@ -520,27 +535,18 @@ mod tests {
 		{
 			assert_eq!(log.enqueue(lyrics[0]), 64);
 			assert_eq!(log.commit(), 1);
-			let actual = log.latest(1).next().unwrap().payload;
-			assert_eq!(actual, lyrics[0]);
-		}
-
-		{
-			assert_eq!(log.enqueue(lyrics[1]), 72);
-			assert_eq!(log.commit(), 1);
-			let actual = log.latest(2).next().unwrap().payload;
-			assert_eq!(
-				String::from_utf8_lossy(actual).to_string(),
-				String::from_utf8_lossy(lyrics[1]).to_string(),
-			);
+			let actual: Vec<Event> = log.latest(1).collect();
+			assert_eq!(actual.len(), 1);
+			assert_eq!(actual[0].payload, lyrics[0]);
 		}
 
 		// Read multiple things from the buffer
 		{
-			let mut it = log.latest(2);
-			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, lyrics[0]);
-			let actual = it.next().unwrap().payload;
-			assert_eq!(actual, lyrics[1]);
+			assert_eq!(log.enqueue(lyrics[1]), 72);
+			assert_eq!(log.commit(), 1);
+			let actual: Vec<Event> = log.latest(2).collect();
+			assert_eq!(actual[0].payload, lyrics[0]);
+			assert_eq!(actual[1].payload, lyrics[1]);
 		}
 
 		// Bulk commit two things
