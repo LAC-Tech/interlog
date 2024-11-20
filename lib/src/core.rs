@@ -28,7 +28,7 @@ impl VersionVector {
 		}
 	}
 
-	fn reset(&mut self) {
+	fn clear(&mut self) {
 		self.0.clear();
 	}
 }
@@ -83,17 +83,12 @@ impl Committed {
 struct Enqueued {
 	offsets: Vec<usize>,
 	events: event::Buf,
-	vv: VersionVector,
 }
 
 impl Enqueued {
 	fn new() -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		Self {
-			offsets: vec![0],
-			events: event::Buf::new(),
-			vv: VersionVector::new(),
-		}
+		Self { offsets: vec![0], events: event::Buf::new() }
 	}
 }
 
@@ -127,8 +122,6 @@ impl<S: ports::Storage> Log<S> {
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd.offsets.push(next_offset);
 
-		self.enqd.vv.incr(self.addr);
-
 		self.enqd.events.push(e);
 		self.enqd.events.as_bytes().len()
 	}
@@ -138,14 +131,13 @@ impl<S: ports::Storage> Log<S> {
 		self.enqd.offsets.clear();
 		self.enqd.offsets.push(last_cmtd_offset);
 		self.enqd.events.clear();
-		self.enqd.vv.reset();
 	}
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> usize {
 		self.cmtd.assert_consistent();
 
-		self.cmtd.vv.merge(&self.enqd.vv);
+		self.cmtd.vv.merge(&self.enqd.events.vv);
 
 		let offsets_to_commit = &self.enqd.offsets[1..];
 		self.cmtd.offsets.extend(offsets_to_commit);
@@ -208,7 +200,7 @@ pub struct Stats {
 }
 
 pub mod event {
-	use super::{Address, Vec};
+	use super::{Address, Vec, VersionVector};
 	use core::mem;
 
 	/// Given a payload, how much storage space an event containing it will need
@@ -224,33 +216,39 @@ pub mod event {
 		pub payload: &'a [u8],
 	}
 
-	pub struct Buf(Vec<u8>);
+	// A valid, mutable, contiguous block of events
+	pub struct Buf {
+		pub bytes: Vec<u8>,
+		pub vv: VersionVector, // including it to ensure validity
+	}
 
 	impl Buf {
 		pub fn new() -> Self {
-			Self(Vec::new())
+			Self { bytes: vec![], vv: VersionVector::new() }
 		}
 
 		pub fn push(&mut self, e: Event<'_>) {
-			let new_size = self.0.len() + stored_size(e.payload.len());
+			let new_size = self.bytes.len() + stored_size(e.payload.len());
 			let payload_len = u64::try_from(e.payload.len()).unwrap();
 			let header = Header { id: e.id, payload_len };
-			self.0.extend(header.as_bytes());
-			self.0.extend(e.payload);
-			self.0.resize(new_size, 0);
+			self.bytes.extend(header.as_bytes());
+			self.bytes.extend(e.payload);
+			self.bytes.resize(new_size, 0);
+			self.vv.incr(header.id.addr);
 		}
 
 		pub fn as_bytes(&self) -> &[u8] {
-			self.0.as_slice()
+			self.bytes.as_slice()
 		}
 
 		// this stupid method make me re-think the whole abstraction
 		pub fn clear(&mut self) {
-			self.0.clear();
+			self.bytes.clear();
+			self.vv.clear();
 		}
 
 		pub fn iter(&self) -> Iter<'_> {
-			Iter::new(&self.0)
+			Iter::new(&self.bytes)
 		}
 	}
 
