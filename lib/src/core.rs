@@ -24,16 +24,6 @@ impl VersionVector {
 			*self.0.entry(addr).or_insert(0) += n;
 		}
 	}
-
-	fn merge(&mut self, vv: &Self) {
-		for (addr, seq_n) in &vv.0 {
-			*self.0.entry(*addr).or_insert(0) += seq_n
-		}
-	}
-
-	fn clear(&mut self) {
-		self.0.clear();
-	}
 }
 
 /// This is two u64s instead of one u128 for alignment in Event Header
@@ -279,23 +269,25 @@ pub mod event {
 		type Item = Event<'a>;
 
 		fn next(&mut self) -> Option<Self::Item> {
-			(self.bytes.len() > self.offset).then(|| {
-				let header_end = self.offset + Header::SIZE;
-				let header = &self.bytes[self.offset..header_end];
-				self.header_buf.copy_from_slice(header);
-				let header = Header::from_bytes(&self.header_buf);
+			if self.offset >= self.bytes.len() {
+				return None;
+			}
 
-				let payload_end =
-					header_end + usize::try_from(header.payload_len).unwrap();
+			let header_end = self.offset + Header::SIZE;
+			let header = &self.bytes[self.offset..header_end];
+			self.header_buf.copy_from_slice(header);
+			let header = Header::from_bytes(&self.header_buf);
 
-				let e = Event {
-					id: header.id,
-					payload: &self.bytes[header_end..payload_end],
-				};
-				self.event_index += 1;
-				self.offset += stored_size(e.payload.len());
-				e
-			})
+			let payload_end =
+				header_end + usize::try_from(header.payload_len).unwrap();
+
+			let e = Event {
+				id: header.id,
+				payload: &self.bytes[header_end..payload_end],
+			};
+			self.event_index += 1;
+			self.offset += stored_size(e.payload.len());
+			Some(e)
 		}
 	}
 
@@ -454,27 +446,6 @@ mod tests {
 			Ok(())
 		});
 	}
-
-	/*
-		TODO: finish this, use version vector, enforce monotonic seq_n in event buf
-		#[test]
-		fn receive_remote_events() {
-			arbtest(|u| {
-				let mut remote_events = event::Buf::new        0,
-		],
-	();
-
-				let bss: JaggedVec<u8> = u.arbitrary()?;
-
-				for bs in bss.iter() {
-					let id = ID { addr: u.arbitrary(), seq_n };
-					bss.iter().for_each(|bs| remote_events.push(bs));
-				}
-
-				Ok(())
-			});
-		}
-		*/
 
 	#[test]
 	fn enqueue_commit_and_read_data() {
