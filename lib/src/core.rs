@@ -6,7 +6,7 @@ use foldhash::HashMapExt;
 /// But it says what the seen last seq_n from each address is
 /// I suspect it may have a different name..
 /// u64 for value, not usize, because it will be sent across network
-#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct VersionVector(foldhash::HashMap<Address, u64>);
 
 impl VersionVector {
@@ -18,8 +18,11 @@ impl VersionVector {
 		self.0.get(addr).copied().unwrap_or(0)
 	}
 
-	fn incr(&mut self, addr: Address) {
-		*self.0.entry(addr).or_insert(0) += 1;
+	fn incr(&mut self, addr: Address, n: u64) {
+		// avoid storing a 0 val, since a missing addr already returns 0 w/ get
+		if n > 0 {
+			*self.0.entry(addr).or_insert(0) += n;
+		}
 	}
 
 	fn merge(&mut self, vv: &Self) {
@@ -34,12 +37,17 @@ impl VersionVector {
 }
 
 /// This is two u64s instead of one u128 for alignment in Event Header
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Hash)]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
+impl core::fmt::Debug for Address {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		write!(f, "Address({:016X}{:016X})", self.0, self.1)
+	}
+}
 /// Storage derived state kept in memory
-#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Committed {
 	vv: VersionVector,
 	offsets: Vec<usize>,
@@ -54,13 +62,13 @@ impl Committed {
 		let mut offset = 0;
 		let events = event::Iter::new(storage.as_slice());
 
-		for e in events {
+		for Event { id, payload } in events {
 			offsets.push(offset);
 			// TODO: work out if this assert should be before or after
 			// does it match seq_n, or how many events seen?
-			assert_eq!(vv.get(&e.id.addr), e.id.seq_n);
-			vv.incr(e.id.addr);
-			let payload_len: usize = e.payload.len().try_into().unwrap();
+			assert_eq!(vv.get(&id.addr), id.seq_n);
+			vv.incr(id.addr, 1);
+			let payload_len: usize = payload.len().try_into().unwrap();
 			offset += event::stored_size(payload_len);
 		}
 
@@ -82,13 +90,13 @@ impl Committed {
 /// Operational state that will not be persisted
 struct Enqueued {
 	offsets: Vec<usize>,
-	events: event::Buf,
+	events: Vec<u8>,
 }
 
 impl Enqueued {
 	fn new() -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		Self { offsets: vec![0], events: event::Buf::new() }
+		Self { offsets: vec![0], events: vec![] }
 	}
 }
 
@@ -122,8 +130,15 @@ impl<S: ports::Storage> Log<S> {
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd.offsets.push(next_offset);
 
-		self.enqd.events.push(e);
-		self.enqd.events.as_bytes().len()
+		let new_size =
+			self.enqd.events.len() + event::stored_size(payload.len());
+		let payload_len = u64::try_from(payload.len()).unwrap();
+		let header = event::Header { id: e.id, payload_len };
+		self.enqd.events.extend(header.as_bytes());
+		self.enqd.events.extend(e.payload);
+		self.enqd.events.resize(new_size, 0);
+
+		self.enqd.events.len()
 	}
 
 	pub fn rollback(&mut self) {
@@ -137,17 +152,16 @@ impl<S: ports::Storage> Log<S> {
 	pub fn commit(&mut self) -> usize {
 		self.cmtd.assert_consistent();
 
-		self.cmtd.vv.merge(&self.enqd.events.vv);
-
 		let offsets_to_commit = &self.enqd.offsets[1..];
 		self.cmtd.offsets.extend(offsets_to_commit);
 
 		let n_events_cmtd = offsets_to_commit.len();
+		self.cmtd.vv.incr(self.addr, n_events_cmtd.try_into().unwrap());
 
 		let last_offset = self.enqd.offsets.last().unwrap();
 		let first_offset = self.enqd.offsets.first().unwrap();
 		let size = last_offset - first_offset;
-		self.storage.append(&self.enqd.events.as_bytes()[..size]);
+		self.storage.append(&self.enqd.events[..size]);
 
 		self.rollback();
 
@@ -163,7 +177,7 @@ impl<S: ports::Storage> Log<S> {
 		let mut last_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
-			self.cmtd.vv.incr(e.id.addr);
+			self.cmtd.vv.incr(e.id.addr, 1);
 			let next_offset = last_offset + event::stored_size(e.payload.len());
 			self.cmtd.offsets.push(next_offset);
 			last_offset = last_offset;
@@ -200,7 +214,7 @@ pub struct Stats {
 }
 
 pub mod event {
-	use super::{Address, Vec, VersionVector};
+	use super::Address;
 	use core::mem;
 
 	/// Given a payload, how much storage space an event containing it will need
@@ -214,42 +228,6 @@ pub mod event {
 	pub struct Event<'a> {
 		pub id: ID,
 		pub payload: &'a [u8],
-	}
-
-	// A valid, mutable, contiguous block of events
-	pub struct Buf {
-		pub bytes: Vec<u8>,
-		pub vv: VersionVector, // including it to ensure validity
-	}
-
-	impl Buf {
-		pub fn new() -> Self {
-			Self { bytes: vec![], vv: VersionVector::new() }
-		}
-
-		pub fn push(&mut self, e: Event<'_>) {
-			let new_size = self.bytes.len() + stored_size(e.payload.len());
-			let payload_len = u64::try_from(e.payload.len()).unwrap();
-			let header = Header { id: e.id, payload_len };
-			self.bytes.extend(header.as_bytes());
-			self.bytes.extend(e.payload);
-			self.bytes.resize(new_size, 0);
-			self.vv.incr(e.id.addr);
-		}
-
-		pub fn as_bytes(&self) -> &[u8] {
-			self.bytes.as_slice()
-		}
-
-		// this stupid method make me re-think the whole abstraction
-		pub fn clear(&mut self) {
-			self.bytes.clear();
-			self.vv.clear();
-		}
-
-		pub fn iter(&self) -> Iter<'_> {
-			Iter::new(&self.bytes)
-		}
 	}
 
 	/// Immutable
@@ -310,9 +288,6 @@ pub mod event {
 				let payload_end =
 					header_end + usize::try_from(header.payload_len).unwrap();
 
-				#[cfg(test)]
-				dbg!(&self);
-
 				let e = Event {
 					id: header.id,
 					payload: &self.bytes[header_end..payload_end],
@@ -354,7 +329,7 @@ pub mod event {
 		// - has a fixed C representation
 		// - a const time checked size of 32
 		// - is memcpyable - has a flat memory structrure with no pointers
-		fn as_bytes(&self) -> &[u8; Self::SIZE] {
+		pub fn as_bytes(&self) -> &[u8; Self::SIZE] {
 			unsafe { mem::transmute(self) }
 		}
 
@@ -402,28 +377,6 @@ mod tests {
 		) -> arbitrary::Result<Self> {
 			Ok(Address(u.arbitrary()?, u.arbitrary()?))
 		}
-	}
-
-	#[test]
-	fn push_items_to_event_buf_and_get_them_back() {
-		let mut buf = event::Buf::new();
-
-		buf.push(Event {
-			id: event::ID { addr: Address(0, 0), seq_n: 0 },
-			payload: b"hello",
-		});
-
-		buf.push(Event {
-			id: event::ID { addr: Address(0, 0), seq_n: 0 },
-			payload: b"world",
-		});
-
-		let payloads: Vec<String> = buf
-			.iter()
-			.map(|e| String::from_utf8_lossy(e.payload).to_string())
-			.collect();
-
-		assert_eq!(payloads, vec!["hello", "world"]);
 	}
 
 	#[test]
