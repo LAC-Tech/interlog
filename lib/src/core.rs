@@ -58,7 +58,7 @@ impl Committed {
 			// does it match seq_n, or how many events seen?
 			assert_eq!(vv.get(&id.addr), id.seq_n);
 			vv.incr(id.addr, 1);
-			offset += event::stored_size(payload.len());
+			offset += event::stored_size(payload);
 		}
 
 		// Offsets vectors always have the 'next' offset as last element
@@ -114,13 +114,12 @@ impl<S: ports::Storage> Log<S> {
 		let e = Event { id, payload };
 
 		let curr_offset = *self.enqd.offsets.last().unwrap();
-		let next_offset = curr_offset + event::stored_size(payload.len());
+		let next_offset = curr_offset + event::stored_size(payload);
 		core::assert!(next_offset > curr_offset, "offsets must be monotonic");
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd.offsets.push(next_offset);
 
-		let new_size =
-			self.enqd.events.len() + event::stored_size(payload.len());
+		let new_size = self.enqd.events.len() + event::stored_size(payload);
 		let payload_len = u64::try_from(payload.len()).unwrap();
 		let header = event::Header { id: e.id, payload_len };
 		self.enqd.events.extend(header.as_bytes());
@@ -161,15 +160,17 @@ impl<S: ports::Storage> Log<S> {
 
 	/// Append events coming from a remote log
 	/// Intented to be used as part of a sync protocol
+	// TODO: test
 	pub fn append_remote(&mut self, events: event::Slice<'_>) {
 		self.cmtd.assert_consistent();
 		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
 			self.cmtd.vv.incr(e.id.addr, 1);
-			next_offset += event::stored_size(e.payload.len());
+			next_offset += event::stored_size(e.payload);
 			self.cmtd.offsets.push(next_offset);
 		}
+
 		self.cmtd.assert_consistent();
 		self.storage.append(events.as_bytes());
 	}
@@ -206,7 +207,8 @@ pub mod event {
 	use core::mem;
 
 	/// Given a payload, how much storage space an event containing it will need
-	pub fn stored_size(payload_len: usize) -> usize {
+	pub fn stored_size(payload: &[u8]) -> usize {
+		let payload_len = payload.len();
 		// Ensures 8 byte alignment
 		let padded_payload_len = (payload_len + 7) & !7;
 		Header::SIZE + padded_payload_len
@@ -284,7 +286,7 @@ pub mod event {
 				payload: &self.bytes[header_end..payload_end],
 			};
 			self.event_index += 1;
-			self.offset += stored_size(e.payload.len());
+			self.offset += stored_size(e.payload);
 			Some(e)
 		}
 	}
