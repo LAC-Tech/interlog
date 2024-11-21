@@ -58,8 +58,7 @@ impl Committed {
 			// does it match seq_n, or how many events seen?
 			assert_eq!(vv.get(&id.addr), id.seq_n);
 			vv.incr(id.addr, 1);
-			let payload_len: usize = payload.len().try_into().unwrap();
-			offset += event::stored_size(payload_len);
+			offset += event::stored_size(payload.len());
 		}
 
 		// Offsets vectors always have the 'next' offset as last element
@@ -162,15 +161,14 @@ impl<S: ports::Storage> Log<S> {
 
 	/// Append events coming from a remote log
 	/// Intented to be used as part of a sync protocol
-	pub fn append_remote<'a>(&mut self, events: event::Slice<'a>) {
+	pub fn append_remote(&mut self, events: event::Slice<'_>) {
 		self.cmtd.assert_consistent();
-		let mut last_offset = self.cmtd.offsets.last().copied().unwrap();
+		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
 			self.cmtd.vv.incr(e.id.addr, 1);
-			let next_offset = last_offset + event::stored_size(e.payload.len());
+			next_offset += event::stored_size(e.payload.len());
 			self.cmtd.offsets.push(next_offset);
-			last_offset = last_offset;
 		}
 		self.cmtd.assert_consistent();
 		self.storage.append(events.as_bytes());
