@@ -98,8 +98,8 @@ pub struct Log<S: ports::Storage> {
 	storage: S,
 }
 
-impl<S: ports::Storage> Log<S> {
-	pub fn new(addr: Address, storage: S) -> Self {
+impl<Storage: ports::Storage> Log<Storage> {
+	pub fn new(addr: Address, storage: Storage) -> Self {
 		let enqd = Enqueued::new();
 		let cmtd = Committed::new(&storage);
 		Self { addr, enqd, cmtd, storage }
@@ -137,7 +137,7 @@ impl<S: ports::Storage> Log<S> {
 	}
 
 	/// Returns number of events committed
-	pub fn commit(&mut self) -> usize {
+	pub fn commit(&mut self) -> Result<usize, Storage::Err> {
 		self.cmtd.assert_consistent();
 
 		let offsets_to_commit = &self.enqd.offsets[1..];
@@ -149,15 +149,16 @@ impl<S: ports::Storage> Log<S> {
 		let last_offset = self.enqd.offsets.last().unwrap();
 		let first_offset = self.enqd.offsets.first().unwrap();
 		let size = last_offset - first_offset;
-		self.storage.append(&self.enqd.events[..size]);
+		self.storage.append(&self.enqd.events[..size])?;
 
 		self.rollback();
 
 		self.cmtd.assert_consistent();
 
-		n_events_cmtd
+		Ok(n_events_cmtd)
 	}
 
+	/*
 	/// Append events coming from a remote log
 	/// Intented to be used as part of a sync protocol
 	// TODO: test
@@ -174,8 +175,8 @@ impl<S: ports::Storage> Log<S> {
 		self.cmtd.assert_consistent();
 		self.storage.append(events.as_bytes());
 	}
+	*/
 
-	// TODO: return empty iterator if n is invalid
 	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
 		let cmtd_bytes = self.storage.as_slice();
@@ -375,7 +376,7 @@ mod tests {
 	fn empty_commit() {
 		let storage = FaultlessStorage::new();
 		let mut log = Log::new(Address(0, 0), storage);
-		assert_eq!(log.commit(), 0);
+		assert_eq!(log.commit(), Ok(0));
 	}
 
 	#[test]
@@ -387,7 +388,7 @@ mod tests {
 			bss.iter().for_each(|bs| {
 				log.enqueue(bs);
 			});
-			log.commit();
+			log.commit().unwrap();
 
 			assert!(log.latest(0).next().is_none());
 			Ok(())
@@ -432,7 +433,7 @@ mod tests {
 				});
 
 				if u.arbitrary()? {
-					log.commit();
+					log.commit().unwrap();
 				} else {
 					log.rollback();
 				}
@@ -462,7 +463,7 @@ mod tests {
 
 		{
 			assert_eq!(log.enqueue(lyrics[0]), 64);
-			assert_eq!(log.commit(), 1);
+			assert_eq!(log.commit(), Ok(1));
 			let actual: Vec<Event> = log.latest(1).collect();
 
 			let expected = vec![Event {
@@ -476,7 +477,7 @@ mod tests {
 		// Read multiple things from the buffer
 		{
 			assert_eq!(log.enqueue(lyrics[1]), 72);
-			assert_eq!(log.commit(), 1);
+			assert_eq!(log.commit(), Ok(1));
 			let actual: Vec<Event> = log.latest(2).collect();
 			let expected = vec![
 				Event { id: event::ID { addr, seq_n: 0 }, payload: lyrics[0] },
@@ -489,7 +490,7 @@ mod tests {
 		{
 			assert_eq!(log.enqueue(lyrics[2]), 64);
 			assert_eq!(log.enqueue(lyrics[3]), 136);
-			assert_eq!(log.commit(), 2);
+			assert_eq!(log.commit(), Ok(2));
 
 			let actual: Vec<Event> = log.latest(2).collect();
 			let expected = vec![

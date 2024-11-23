@@ -1,52 +1,69 @@
-//! Some error checking around linux sys calls to disk.
-use fs::OFlags;
-use rustix::fd::AsFd;
-use rustix::{fd, fs, io};
+use rustix::{fd, fs, io, mm, path};
 
-type O = OFlags;
-
-#[derive(Debug, PartialEq)]
-pub enum AppendErr {
-	OS(rustix::io::Errno),
-	NonAtomic { bytes_expected: usize, bytes_written: usize },
+pub struct MmapStorage {
+	mmap_ptr: *const u8,
+	mmap_size: usize,
+	fd: fd::OwnedFd,
+	n_bytes_appended: usize,
 }
 
-#[derive(Debug)]
-struct AppendOnlyFile(fd::OwnedFd);
+impl MmapStorage {
+	pub fn new<P: path::Arg>(path: P, mmap_size: usize) -> io::Result<Self> {
+		let fd = fs::open(
+			path,
+			fs::OFlags::CREATE | fs::OFlags::APPEND,
+			fs::Mode::RUSR | fs::Mode::WUSR,
+		)?;
 
-impl AppendOnlyFile {
-	pub fn open(path: &str) -> io::Result<Self> {
-		let flags = O::DIRECT | O::CREATE | O::APPEND | O::RDWR | O::DSYNC;
-		let mode = fs::Mode::RUSR | fs::Mode::WUSR;
-		let fd = fs::open(path, flags, mode)?;
+		// Flush any uncommitted writes
+		fs::fsync(&fd)?;
 
-		Ok(Self(fd))
+		let mmap_ptr = unsafe {
+			mm::mmap(
+				core::ptr::null_mut(),
+				mmap_size,
+				mm::ProtFlags::READ,
+				mm::MapFlags::SHARED,
+				&fd,
+				0,
+			)
+		}?;
+
+		let mmap_ptr = mmap_ptr as *const u8;
+
+		Ok(Self { mmap_ptr, mmap_size, fd, n_bytes_appended: 0 })
 	}
+}
 
-	pub fn append<B>(&self, bytes: B) -> Result<usize, AppendErr>
-	where
-		B: AsRef<[u8]>,
-	{
-		let bytes = bytes.as_ref();
-		let fd = self.0.as_fd();
-		// always sets file offset to EOF.
-		let bytes_written = io::write(fd, bytes).map_err(AppendErr::OS)?;
-		// Linux 'man open': appending to file opened w/ O_APPEND is atomic
-		// TODO: will this happen? if so how to recover?
-		let bytes_expected = bytes.len();
-		if bytes_written != bytes_expected {
-			return Err(AppendErr::NonAtomic { bytes_expected, bytes_written });
+impl ports::Storage for MmapStorage {
+	type Err = io::Errno;
+	fn append(&mut self, data: &[u8]) -> io::Result<()> {
+		if self.n_bytes_appended + data.len() > self.mmap_size {
+			panic!("Not enough space in mmap for append");
 		}
-		Ok(bytes_written)
+
+		io::write(&self.fd, data)?;
+		fs::fsync(&self.fd)?;
+		self.n_bytes_appended += data.len();
+		Ok(())
 	}
 
-	/// Returns number of bytes read
-	pub fn read(&self, buf: &mut [u8], byte_offset: usize) -> io::Result<()> {
-		let fd = self.0.as_fd();
-		let bytes_read = io::pread(fd, buf, byte_offset as u64)?;
-		// According to my understanding of the man page this should never
-		// happen (famous last words)
-		assert_eq!(buf.len(), bytes_read);
-		Ok(())
+	fn as_slice(&self) -> &[u8] {
+		unsafe {
+			core::slice::from_raw_parts(self.mmap_ptr, self.n_bytes_appended)
+		}
+	}
+
+	fn size(&self) -> usize {
+		self.n_bytes_appended
+	}
+}
+
+impl Drop for MmapStorage {
+	fn drop(&mut self) {
+		unsafe {
+			mm::munmap(self.mmap_ptr as *mut _, self.mmap_size)
+				.expect("Failed to munmap");
+		}
 	}
 }

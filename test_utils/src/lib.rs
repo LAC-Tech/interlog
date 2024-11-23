@@ -10,9 +10,12 @@ impl FaultlessStorage {
 }
 
 impl ports::Storage for FaultlessStorage {
-	fn append(&mut self, data: &[u8]) {
+	type Err = ();
+
+	fn append(&mut self, data: &[u8]) -> Result<(), Self::Err> {
 		assert_eq!(data.len() % 8, 0);
-		self.0.extend(data)
+		self.0.extend(data);
+		Ok(())
 	}
 
 	fn as_slice(&self) -> &[u8] {
