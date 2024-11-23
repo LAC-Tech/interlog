@@ -11,6 +11,6 @@ pub trait Storage {
 	type Err;
 
 	fn append(&mut self, data: &[u8]) -> Result<(), Self::Err>;
-	fn as_slice(&self) -> &[u8];
+	fn read(&self) -> &[u8];
 	fn size(&self) -> usize;
 }

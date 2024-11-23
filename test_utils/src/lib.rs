@@ -18,7 +18,7 @@ impl ports::Storage for FaultlessStorage {
 		Ok(())
 	}
 
-	fn as_slice(&self) -> &[u8] {
+	fn read(&self) -> &[u8] {
 		&self.0
 	}
 

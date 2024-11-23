@@ -50,7 +50,7 @@ impl ports::Storage for MmapStorage {
 		Ok(())
 	}
 
-	fn as_slice(&self) -> &[u8] {
+	fn read(&self) -> &[u8] {
 		unsafe {
 			core::slice::from_raw_parts(self.mmap_ptr, self.n_bytes_appended)
 		}

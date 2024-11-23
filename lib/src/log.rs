@@ -50,7 +50,7 @@ impl Committed {
 		let mut offsets = vec![];
 
 		let mut offset = 0;
-		let events = event::Iter::new(storage.as_slice());
+		let events = event::Iter::new(storage.read());
 
 		for Event { id, payload } in events {
 			offsets.push(offset);
@@ -179,7 +179,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 
 	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
-		let cmtd_bytes = self.storage.as_slice();
+		let cmtd_bytes = self.storage.read();
 
 		let events = offsets
 			.get(offsets.len() - n - 1) // Offsets always include one extra
