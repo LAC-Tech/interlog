@@ -2,8 +2,7 @@
 
 **WORK IN PROGRESS**
 
-TL;DR - "cargo run --bin sim" to run the deterministic simulation test that may
-or may not work.
+TL;DR - cargo test runs some tests.
 
 Interlog is a database optimized for writing and syncing data. It is both
 embedded (designed to be written and read from in-process) and distributed
