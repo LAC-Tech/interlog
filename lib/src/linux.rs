@@ -62,8 +62,7 @@ impl ports::Storage for MmapStorage {
 impl Drop for MmapStorage {
 	fn drop(&mut self) {
 		unsafe {
-			mm::munmap(self.mmap_ptr as *mut _, self.mmap_size)
-				.expect("Failed to munmap");
+			mm::munmap(self.mmap_ptr as *mut _, self.mmap_size).unwrap();
 		}
 	}
 }
