@@ -38,15 +38,24 @@ impl MmapStorage {
 	}
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq, Debug))]
+pub enum Syscall {
+	Write,
+	Fsync,
+}
+
 impl ports::Storage for MmapStorage {
-	type Err = io::Errno;
-	fn append(&mut self, data: &[u8]) -> io::Result<()> {
+	type Err = (Syscall, io::Errno);
+	fn append(&mut self, data: &[u8]) -> Result<(), Self::Err> {
 		if self.n_bytes_appended + data.len() > self.mmap_size {
 			panic!("Not enough space in mmap for append");
 		}
 
-		io::write(&self.fd, data)?;
-		fs::fsync(&self.fd)?;
+		#[cfg(test)]
+		dbg!(&self.fd);
+
+		io::write(&self.fd, data).map_err(|err_no| (Syscall::Write, err_no))?;
+		fs::fsync(&self.fd).map_err(|err_no| (Syscall::Fsync, err_no))?;
 		self.n_bytes_appended += data.len();
 		Ok(())
 	}

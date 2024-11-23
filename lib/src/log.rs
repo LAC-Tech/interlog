@@ -360,9 +360,12 @@ pub mod event {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::linux;
 	use arbtest::arbtest;
 	use pretty_assertions::assert_eq;
 	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
+
+	use tempfile::NamedTempFile;
 
 	impl<'a> arbitrary::Arbitrary<'a> for Address {
 		fn arbitrary(
@@ -374,7 +377,8 @@ mod tests {
 
 	#[test]
 	fn empty_commit() {
-		let storage = FaultlessStorage::new();
+		let file = NamedTempFile::new().unwrap();
+		let storage = linux::MmapStorage::new(file.path(), 9000).unwrap();
 		let mut log = Log::new(Address(0, 0), storage);
 		assert_eq!(log.commit(), Ok(0));
 	}
