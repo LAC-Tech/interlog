@@ -27,5 +27,5 @@ compile_error!("code assumes usize is u64");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
-pub mod core;
 mod linux;
+pub mod log;
