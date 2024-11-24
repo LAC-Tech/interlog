@@ -44,6 +44,9 @@ impl ports::Storage for MmapStorage {
 			panic!("Not enough space in mmap for append");
 		}
 
+		#[cfg(test)]
+		dbg!(fs::fstat(&self.fd));
+
 		io::write(&self.fd, data)?;
 		fs::fsync(&self.fd)?;
 		self.n_bytes_appended += data.len();

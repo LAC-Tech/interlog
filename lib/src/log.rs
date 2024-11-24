@@ -179,11 +179,10 @@ impl<Storage: ports::Storage> Log<Storage> {
 
 	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
-		let cmtd_bytes = self.storage.read();
 
 		let events = offsets
-			.get(offsets.len() - n - 1) // Offsets always include one extra
-			.map(|&offset| &cmtd_bytes[offset..])
+			.get(&offsets.len() - n - 1) // Offsets always include one extra
+			.map(|&offset| &self.storage.read()[offset..])
 			.unwrap_or(&[]);
 
 		event::Iter::new(events)
@@ -358,19 +357,20 @@ pub mod event {
 }
 
 #[cfg(test)]
+impl<'a> arbitrary::Arbitrary<'a> for Address {
+	fn arbitrary(
+		u: &mut arbitrary::Unstructured<'a>,
+	) -> arbitrary::Result<Self> {
+		Ok(Address(u.arbitrary()?, u.arbitrary()?))
+	}
+}
+
+#[cfg(test)]
 mod tests {
 	use super::*;
 	use arbtest::arbtest;
 	use pretty_assertions::assert_eq;
 	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
-
-	impl<'a> arbitrary::Arbitrary<'a> for Address {
-		fn arbitrary(
-			u: &mut arbitrary::Unstructured<'a>,
-		) -> arbitrary::Result<Self> {
-			Ok(Address(u.arbitrary()?, u.arbitrary()?))
-		}
-	}
 
 	#[test]
 	fn empty_commit() {
