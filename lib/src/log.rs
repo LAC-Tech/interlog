@@ -31,11 +31,21 @@ impl VersionVector {
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
 
+#[cfg(test)]
+impl<'a> arbitrary::Arbitrary<'a> for Address {
+	fn arbitrary(
+		u: &mut arbitrary::Unstructured<'a>,
+	) -> arbitrary::Result<Self> {
+		Ok(Address(u.arbitrary()?, u.arbitrary()?))
+	}
+}
+
 impl core::fmt::Debug for Address {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		write!(f, "Address({:016X}{:016X})", self.0, self.1)
 	}
 }
+
 /// Storage derived state kept in memory
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Committed {
@@ -357,22 +367,12 @@ pub mod event {
 }
 
 #[cfg(test)]
-impl<'a> arbitrary::Arbitrary<'a> for Address {
-	fn arbitrary(
-		u: &mut arbitrary::Unstructured<'a>,
-	) -> arbitrary::Result<Self> {
-		Ok(Address(u.arbitrary()?, u.arbitrary()?))
-	}
-}
-
-#[cfg(test)]
 mod tests {
 	use super::*;
 	use crate::linux;
 	use arbtest::arbtest;
-	use ports::Storage;
 	use pretty_assertions::assert_eq;
-	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
+	use test_utils::jagged_vec::JaggedVec;
 
 	fn temp_mmap_storage() -> linux::MmapStorage {
 		let temp_dir = tempfile::TempDir::new().unwrap();
@@ -391,11 +391,11 @@ mod tests {
 	fn empty_read() {
 		arbtest(|u| {
 			let storage = temp_mmap_storage();
-			let mut log = Log::new(Address(0, 0), storage);
+			let mut log = Log::new(u.arbitrary()?, storage);
 			let bss: JaggedVec<u8> = u.arbitrary()?;
-			bss.iter().for_each(|bs| {
+			for bs in bss.iter() {
 				log.enqueue(bs);
-			});
+			}
 			log.commit().unwrap();
 
 			assert!(log.latest(0).next().is_none());
@@ -407,7 +407,7 @@ mod tests {
 	fn rollbacks_are_atomic() {
 		arbtest(|u| {
 			let storage = temp_mmap_storage();
-			let mut log = Log::new(Address(0, 0), storage);
+			let mut log = Log::new(u.arbitrary()?, storage);
 
 			let pre_stats = log.stats();
 
@@ -431,7 +431,8 @@ mod tests {
 	fn rebuild_cmtd_in_mem_state_from_storage() {
 		arbtest(|u| {
 			let storage = temp_mmap_storage();
-			let mut log = Log::new(Address(0, 0), storage);
+			let addr = u.arbitrary()?;
+			let mut log = Log::new(addr, storage);
 
 			for _ in 0..u.arbitrary_len::<usize>()? {
 				let bss: JaggedVec<u8> = u.arbitrary()?;
@@ -448,7 +449,7 @@ mod tests {
 			}
 
 			let original = log.cmtd;
-			let derived = Log::new(Address(0, 0), log.storage).cmtd;
+			let derived = Log::new(addr, log.storage).cmtd;
 
 			assert_eq!(original, derived);
 
