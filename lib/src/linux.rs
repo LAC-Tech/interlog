@@ -11,7 +11,7 @@ impl MmapStorage {
 	pub fn new<P: path::Arg>(path: P, mmap_size: usize) -> io::Result<Self> {
 		let fd = fs::open(
 			path,
-			fs::OFlags::CREATE | fs::OFlags::APPEND,
+			fs::OFlags::CREATE | fs::OFlags::APPEND | fs::OFlags::RDWR,
 			fs::Mode::RUSR | fs::Mode::WUSR,
 		)?;
 
@@ -31,24 +31,28 @@ impl MmapStorage {
 
 		let mmap_ptr = mmap_ptr as *const u8;
 
-		// TODO: need a separate checkpoint file that tells us this.
-		let n_bytes_appended = 0;
+		let stat = fs::fstat(&fd)?;
+		let n_bytes_appended: usize = stat.st_size.try_into().unwrap();
+
 		Ok(Self { mmap_ptr, mmap_size, fd, n_bytes_appended })
 	}
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq, Debug))]
+pub enum Syscall {
+	Write,
+	Fsync,
+}
+
 impl ports::Storage for MmapStorage {
-	type Err = io::Errno;
-	fn append(&mut self, data: &[u8]) -> io::Result<()> {
+	type Err = (Syscall, io::Errno);
+	fn append(&mut self, data: &[u8]) -> Result<(), Self::Err> {
 		if self.n_bytes_appended + data.len() > self.mmap_size {
 			panic!("Not enough space in mmap for append");
 		}
 
-		#[cfg(test)]
-		dbg!(fs::fstat(&self.fd));
-
-		io::write(&self.fd, data)?;
-		fs::fsync(&self.fd)?;
+		io::write(&self.fd, data).map_err(|err_no| (Syscall::Write, err_no))?;
+		fs::fsync(&self.fd).map_err(|err_no| (Syscall::Fsync, err_no))?;
 		self.n_bytes_appended += data.len();
 		Ok(())
 	}

@@ -368,13 +368,17 @@ impl<'a> arbitrary::Arbitrary<'a> for Address {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::linux;
 	use arbtest::arbtest;
 	use pretty_assertions::assert_eq;
 	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
 
 	#[test]
 	fn empty_commit() {
-		let storage = FaultlessStorage::new();
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_path = temp_dir.path().join("log.bin");
+		dbg!(&file_path);
+		let storage = linux::MmapStorage::new(file_path, 9000).unwrap();
 		let mut log = Log::new(Address(0, 0), storage);
 		assert_eq!(log.commit(), Ok(0));
 	}
