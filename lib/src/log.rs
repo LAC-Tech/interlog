@@ -370,15 +370,19 @@ mod tests {
 	use super::*;
 	use crate::linux;
 	use arbtest::arbtest;
+	use ports::Storage;
 	use pretty_assertions::assert_eq;
 	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
 
-	#[test]
-	fn empty_commit() {
+	fn temp_mmap_storage() -> linux::MmapStorage {
 		let temp_dir = tempfile::TempDir::new().unwrap();
 		let file_path = temp_dir.path().join("log.bin");
-		dbg!(&file_path);
-		let storage = linux::MmapStorage::new(file_path, 9000).unwrap();
+		linux::MmapStorage::new(file_path, 0xFFFFFF).unwrap()
+	}
+
+	#[test]
+	fn empty_commit() {
+		let storage = temp_mmap_storage();
 		let mut log = Log::new(Address(0, 0), storage);
 		assert_eq!(log.commit(), Ok(0));
 	}
@@ -386,7 +390,7 @@ mod tests {
 	#[test]
 	fn empty_read() {
 		arbtest(|u| {
-			let storage = FaultlessStorage::new();
+			let storage = temp_mmap_storage();
 			let mut log = Log::new(Address(0, 0), storage);
 			let bss: JaggedVec<u8> = u.arbitrary()?;
 			bss.iter().for_each(|bs| {
@@ -402,7 +406,7 @@ mod tests {
 	#[test]
 	fn rollbacks_are_atomic() {
 		arbtest(|u| {
-			let storage = FaultlessStorage::new();
+			let storage = temp_mmap_storage();
 			let mut log = Log::new(Address(0, 0), storage);
 
 			let pre_stats = log.stats();
@@ -426,7 +430,7 @@ mod tests {
 	#[test]
 	fn rebuild_cmtd_in_mem_state_from_storage() {
 		arbtest(|u| {
-			let storage = FaultlessStorage::new();
+			let storage = temp_mmap_storage();
 			let mut log = Log::new(Address(0, 0), storage);
 
 			for _ in 0..u.arbitrary_len::<usize>()? {
@@ -455,7 +459,7 @@ mod tests {
 	#[test]
 	fn enqueue_commit_and_read_data() {
 		let addr = Address(0, 0);
-		let storage = FaultlessStorage::new();
+		let storage = temp_mmap_storage();
 		let mut log = Log::new(addr, storage);
 
 		let lyrics: [&[u8]; 4] = [
