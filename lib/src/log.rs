@@ -365,8 +365,6 @@ mod tests {
 	use pretty_assertions::assert_eq;
 	use test_utils::{jagged_vec::JaggedVec, FaultlessStorage};
 
-	use tempfile::NamedTempFile;
-
 	impl<'a> arbitrary::Arbitrary<'a> for Address {
 		fn arbitrary(
 			u: &mut arbitrary::Unstructured<'a>,
@@ -377,8 +375,10 @@ mod tests {
 
 	#[test]
 	fn empty_commit() {
-		let file = NamedTempFile::new().unwrap();
-		let storage = linux::MmapStorage::new(file.path(), 9000).unwrap();
+		let temp_dir = tempfile::TempDir::new().unwrap();
+		let file_path = temp_dir.path().join("log.bin");
+		dbg!(&file_path);
+		let storage = linux::MmapStorage::new(file_path, 9000).unwrap();
 		let mut log = Log::new(Address(0, 0), storage);
 		assert_eq!(log.commit(), Ok(0));
 	}
