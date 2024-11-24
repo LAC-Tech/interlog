@@ -7,9 +7,9 @@ use foldhash::HashMapExt;
 /// I suspect it may have a different name..
 /// u64 for value, not usize, because it will be sent across network
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-struct VersionVector(foldhash::HashMap<Address, u64>);
+struct LogicalClock(foldhash::HashMap<Address, u64>);
 
-impl VersionVector {
+impl LogicalClock {
 	fn new() -> Self {
 		Self(foldhash::HashMap::new())
 	}
@@ -41,14 +41,14 @@ impl core::fmt::Debug for Address {
 /// Storage derived state kept in memory
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Committed {
-	vv: VersionVector,
+	lc: LogicalClock,
 	offsets: Vec<usize>,
 }
 
 impl Committed {
 	/// Everything in Committed is derived from storage
 	fn new<S: ports::Storage>(storage: &S) -> Self {
-		let mut vv = VersionVector::new();
+		let mut lc = LogicalClock::new();
 		let mut offsets = vec![];
 
 		let mut offset = 0;
@@ -58,23 +58,23 @@ impl Committed {
 			offsets.push(offset);
 			// TODO: work out if this assert should be before or after
 			// does it match seq_n, or how many events seen?
-			assert_eq!(vv.get(&id.addr), id.seq_n);
-			vv.incr(id.addr, 1);
+			assert_eq!(lc.get(&id.addr), id.seq_n);
+			lc.incr(id.addr, 1);
 			offset += event::stored_size(payload);
 		}
 
 		// Offsets vectors always have the 'next' offset as last element
 		offsets.push(offset);
 
-		Self { offsets, vv }
+		Self { offsets, lc }
 	}
 
 	// TODO: this will break if I ever start filtering appends
 	fn assert_consistent(&self) {
-		let vv_sum = self.vv.0.values().sum();
+		let lc_sum = self.lc.0.values().sum();
 		// assumes every remote event is appended
 		let n_events: u64 = (self.offsets.len() - 1).try_into().unwrap();
-		assert_eq!(n_events, vv_sum);
+		assert_eq!(n_events, lc_sum);
 	}
 }
 
@@ -146,7 +146,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 		self.cmtd.offsets.extend(offsets_to_commit);
 
 		let n_events_cmtd = offsets_to_commit.len();
-		self.cmtd.vv.incr(self.addr, n_events_cmtd.try_into().unwrap());
+		self.cmtd.lc.incr(self.addr, n_events_cmtd.try_into().unwrap());
 
 		let last_offset = self.enqd.offsets.last().unwrap();
 		let first_offset = self.enqd.offsets.first().unwrap();
