@@ -28,17 +28,9 @@ impl VersionVector {
 
 /// This is two u64s instead of one u128 for alignment in Event Header
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Hash)]
+#[cfg_attr(test, derive(arbitrary::Arbitrary))]
 #[repr(C)]
 pub struct Address(pub u64, pub u64);
-
-#[cfg(test)]
-impl<'a> arbitrary::Arbitrary<'a> for Address {
-	fn arbitrary(
-		u: &mut arbitrary::Unstructured<'a>,
-	) -> arbitrary::Result<Self> {
-		Ok(Address(u.arbitrary()?, u.arbitrary()?))
-	}
-}
 
 impl core::fmt::Debug for Address {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
