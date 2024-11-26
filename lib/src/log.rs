@@ -2,20 +2,20 @@ use alloc::vec::Vec;
 use event::Event;
 use foldhash::HashMapExt;
 
+pub trait LogicalClock {
+	fn get(&self, addr: &Address) -> u64;
+}
+
 /// I am calling this a version vector, out of habit
 /// But it says what the seen last seq_n from each address is
 /// I suspect it may have a different name..
 /// u64 for value, not usize, because it will be sent across network
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-struct LogicalClock(foldhash::HashMap<Address, u64>);
+struct VersionVector(foldhash::HashMap<Address, u64>);
 
-impl LogicalClock {
+impl VersionVector {
 	fn new() -> Self {
 		Self(foldhash::HashMap::new())
-	}
-
-	fn get(&self, addr: &Address) -> u64 {
-		self.0.get(addr).copied().unwrap_or(0)
 	}
 
 	fn incr(&mut self, addr: Address, n: u64) {
@@ -23,6 +23,12 @@ impl LogicalClock {
 		if n > 0 {
 			*self.0.entry(addr).or_insert(0) += n;
 		}
+	}
+}
+
+impl LogicalClock for VersionVector {
+	fn get(&self, addr: &Address) -> u64 {
+		self.0.get(addr).copied().unwrap_or(0)
 	}
 }
 
@@ -41,14 +47,14 @@ impl core::fmt::Debug for Address {
 /// Storage derived state kept in memory
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Committed {
-	lc: LogicalClock,
+	vv: VersionVector,
 	offsets: Vec<usize>,
 }
 
 impl Committed {
 	/// Everything in Committed is derived from storage
 	fn new<S: ports::Storage>(storage: &S) -> Self {
-		let mut lc = LogicalClock::new();
+		let mut vv = VersionVector::new();
 		let mut offsets = vec![];
 
 		let mut offset = 0;
@@ -58,20 +64,20 @@ impl Committed {
 			offsets.push(offset);
 			// TODO: work out if this assert should be before or after
 			// does it match seq_n, or how many events seen?
-			assert_eq!(lc.get(&id.addr), id.seq_n);
-			lc.incr(id.addr, 1);
+			assert_eq!(vv.get(&id.addr), id.seq_n);
+			vv.incr(id.addr, 1);
 			offset += event::stored_size(payload);
 		}
 
 		// Offsets vectors always have the 'next' offset as last element
 		offsets.push(offset);
 
-		Self { offsets, lc }
+		Self { offsets, vv }
 	}
 
 	// TODO: this will break if I ever start filtering appends
 	fn assert_consistent(&self) {
-		let lc_sum = self.lc.0.values().sum();
+		let lc_sum = self.vv.0.values().sum();
 		// assumes every remote event is appended
 		let n_events: u64 = (self.offsets.len() - 1).try_into().unwrap();
 		assert_eq!(n_events, lc_sum);
@@ -139,14 +145,14 @@ impl<Storage: ports::Storage> Log<Storage> {
 	}
 
 	/// Returns number of events committed
-	pub fn commit(&mut self) -> Result<usize, Storage::Err> {
+	pub fn commit(&mut self) -> Result<u64, Storage::Err> {
 		self.cmtd.assert_consistent();
 
 		let offsets_to_commit = &self.enqd.offsets[1..];
 		self.cmtd.offsets.extend(offsets_to_commit);
 
-		let n_events_cmtd = offsets_to_commit.len();
-		self.cmtd.lc.incr(self.addr, n_events_cmtd.try_into().unwrap());
+		let n_events_cmtd: u64 = offsets_to_commit.len().try_into().unwrap();
+		self.cmtd.vv.incr(self.addr, n_events_cmtd);
 
 		let last_offset = self.enqd.offsets.last().unwrap();
 		let first_offset = self.enqd.offsets.first().unwrap();
@@ -189,6 +195,39 @@ impl<Storage: ports::Storage> Log<Storage> {
 
 		event::Iter::new(events)
 	}
+
+	// SYNC PROTOCOL /////////////////////////////////////////////////////////
+
+	pub fn logical_clock(&self) -> &impl LogicalClock {
+		&self.cmtd.vv
+	}
+
+	/*
+	pub fn events_since(
+		&self,
+		lc: &impl LogicalClock,
+	) -> impl Iterator<Item = Event<'_>> {
+		panic!("TODO: Implement me");
+	}
+
+	/// Append events coming from a remote log
+	// TODO: test
+	pub fn append_remote(&mut self, events: event::Slice<'_>) {
+		self.cmtd.assert_consistent();
+		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
+
+		for e in events.iter() {
+			self.cmtd.vv.incr(e.id.addr, 1);
+			next_offset += event::stored_size(e.payload);
+			self.cmtd.offsets.push(next_offset);
+		}
+
+		self.cmtd.assert_consistent();
+		self.storage.append(events.as_bytes());
+	}
+	*/
+
+	///////////////////////////////////////////////////////////////////////////
 
 	pub fn stats(&self) -> Stats {
 		Stats {
