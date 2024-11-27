@@ -87,13 +87,13 @@ impl Committed {
 /// Operational state that will not be persisted
 struct Enqueued {
 	offsets: Vec<usize>,
-	events: Vec<u8>,
+	events: event::Buf,
 }
 
 impl Enqueued {
 	fn new() -> Self {
 		// Offsets vectors always have the 'next' offset as last element
-		Self { offsets: vec![0], events: vec![] }
+		Self { offsets: vec![0], events: event::Buf::new() }
 	}
 }
 
@@ -127,14 +127,9 @@ impl<Storage: ports::Storage> Log<Storage> {
 		core::assert!(next_offset % 8 == 0, "offsets must be 8 byte aligned");
 		self.enqd.offsets.push(next_offset);
 
-		let new_size = self.enqd.events.len() + event::stored_size(payload);
-		let payload_len = u64::try_from(payload.len()).unwrap();
-		let header = event::Header { id: e.id, payload_len };
-		self.enqd.events.extend(header.as_bytes());
-		self.enqd.events.extend(e.payload);
-		self.enqd.events.resize(new_size, 0);
+		self.enqd.events.append(e);
 
-		self.enqd.events.len()
+		self.enqd.events.as_bytes().len()
 	}
 
 	pub fn rollback(&mut self) {
@@ -154,10 +149,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 		let n_events_cmtd: u64 = offsets_to_commit.len().try_into().unwrap();
 		self.cmtd.vv.incr(self.addr, n_events_cmtd);
 
-		let last_offset = self.enqd.offsets.last().unwrap();
-		let first_offset = self.enqd.offsets.first().unwrap();
-		let size = last_offset - first_offset;
-		self.storage.append(&self.enqd.events[..size])?;
+		self.storage.append(&self.enqd.events.as_bytes())?;
 
 		self.rollback();
 
@@ -245,6 +237,7 @@ pub struct Stats {
 
 pub mod event {
 	use super::Address;
+	use alloc::vec::Vec;
 	use core::mem;
 
 	/// Given a payload, how much storage space an event containing it will need
@@ -261,6 +254,43 @@ pub mod event {
 		pub payload: &'a [u8],
 	}
 
+	pub struct Buf(Vec<u8>);
+
+	impl Buf {
+		pub fn new() -> Self {
+			Buf(vec![])
+		}
+
+		pub fn append(&mut self, Event { id, payload }: Event) {
+			let new_size = self.0.len() + stored_size(payload);
+			let payload_len = u64::try_from(payload.len()).unwrap();
+			let header = Header { id, payload_len };
+			self.0.extend(header.as_bytes());
+			self.0.extend(payload);
+			self.0.resize(new_size, 0);
+		}
+
+		pub fn as_bytes(&self) -> &[u8] {
+			&self.0
+		}
+
+		pub fn clear(&mut self) {
+			self.0.clear()
+		}
+	}
+
+	impl<'a> FromIterator<Event<'a>> for Buf {
+		fn from_iter<T: IntoIterator<Item = Event<'a>>>(iter: T) -> Self {
+			let mut buf = Buf::new();
+
+			for event in iter {
+				buf.append(event)
+			}
+
+			buf
+		}
+	}
+
 	/// Immutable
 	pub struct Slice<'a>(&'a [u8]);
 
@@ -268,6 +298,7 @@ pub mod event {
 		pub fn new(bytes: &'a [u8]) -> Self {
 			Self(bytes)
 		}
+
 		pub fn iter(&self) -> Iter<'_> {
 			Iter::new(self.0)
 		}
