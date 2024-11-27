@@ -281,13 +281,10 @@ pub mod event {
 
 	impl<'a> FromIterator<Event<'a>> for Buf {
 		fn from_iter<T: IntoIterator<Item = Event<'a>>>(iter: T) -> Self {
-			let mut buf = Buf::new();
-
-			for event in iter {
-				buf.append(event)
-			}
-
-			buf
+			iter.into_iter().fold(Buf::new(), |mut buf, e| {
+				buf.append(e);
+				buf
+			})
 		}
 	}
 
