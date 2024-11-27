@@ -148,7 +148,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 			self.cmtd.vv.set(self.addr, highest_offset.try_into().unwrap());
 		}
 
-		self.storage.append(&self.enqd.events.as_bytes())?;
+		self.storage.append(self.enqd.events.as_bytes())?;
 
 		self.rollback();
 
@@ -178,7 +178,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 		let offsets = &self.cmtd.offsets;
 
 		let events = offsets
-			.get(&offsets.len() - n - 1) // Offsets always include one extra
+			.get(offsets.len() - n - 1) // Offsets always include one extra
 			.map(|&offset| &self.storage.read()[offset..])
 			.unwrap_or(&[]);
 
