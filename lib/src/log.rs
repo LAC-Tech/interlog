@@ -191,12 +191,23 @@ impl<Storage: ports::Storage> Log<Storage> {
 		&self.cmtd.vv
 	}
 
-	/*
 	pub fn events_since(
 		&self,
 		lc: &impl LogicalClock,
 	) -> impl Iterator<Item = Event<'_>> {
-		panic!("TODO: Implement me");
+        let last_seen_by_remote = lc.get(&self.addr).unwrap_or(0);
+        let last_seen_by_remote: usize = last_seen_by_remote.try_into().unwrap();
+        let slice = &self.storage.read()[last_seen_by_remote..];
+        let events = event::Iter::new(slice);
+
+        events.filter(|event| {
+            let last_seen_by_remote = lc.get(&event.id.addr);
+
+            match last_seen_by_remote {
+                Some(offset) => event.id.disk_offset > offset,
+                None => true
+            }
+        })
 	}
 
 	/// Append events coming from a remote log
