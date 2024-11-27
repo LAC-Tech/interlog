@@ -2,9 +2,6 @@
 members = ["lib", "ports", "test_utils"]
 resolver = "2"
 
-[alias]
-profile-sim = "flamegraph -- target/debug/sim 14301625462589455796"
-
 [workspace.dependencies]
 pretty_assertions = "1.4.0"
 arbtest = "0.3.1"

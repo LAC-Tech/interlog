@@ -155,24 +155,16 @@ impl<Storage: ports::Storage> Log<Storage> {
 		Ok(n_events_cmtd)
 	}
 
-	/*
-	/// Append events coming from a remote log
-	/// Intented to be used as part of a sync protocol
-	// TODO: test
-	pub fn append_remote(&mut self, events: event::Slice<'_>) {
-		self.cmtd.assert_consistent();
-		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
-
-		for e in events.iter() {
-			self.cmtd.vv.incr(e.id.addr, 1);
-			next_offset += event::stored_size(e.payload);
-			self.cmtd.offsets.push(next_offset);
+	pub fn append_local<I>(&mut self, payloads: I) -> Result<u64, Storage::Err>
+	where
+		I: IntoIterator,
+		I::Item: AsRef<[u8]>,
+	{
+		for payload in payloads {
+			self.enqueue(payload.as_ref());
 		}
-
-		self.cmtd.assert_consistent();
-		self.storage.append(events.as_bytes());
+		self.commit()
 	}
-	*/
 
 	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
@@ -210,7 +202,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 	/// Append events coming from a remote log
 	pub fn append_remote(
 		&mut self,
-		events: event::Slice<'_>,
+		events: &event::Buf,
 	) -> Result<(), Storage::Err> {
 		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
 
@@ -278,6 +270,10 @@ pub mod event {
 			&self.0
 		}
 
+		pub fn iter(&self) -> Iter<'_> {
+			Iter::new(&self.0)
+		}
+
 		pub fn clear(&mut self) {
 			self.0.clear()
 		}
@@ -292,6 +288,7 @@ pub mod event {
 		}
 	}
 
+	/*
 	/// Immutable
 	pub struct Slice<'a>(&'a [u8]);
 
@@ -317,6 +314,7 @@ pub mod event {
 			Iter::new(self.0)
 		}
 	}
+	*/
 
 	/// can be produced from anything that produces bytes
 	#[derive(Debug)]
@@ -588,5 +586,31 @@ mod tests {
 		let rebuilt_cmtd = Log::new(Address(0, 0), log.storage).cmtd;
 
 		assert_eq!(original_cmtd, rebuilt_cmtd);
+	}
+
+	// Figure 2 from "Why Logical Clocks are Easy" (Baquero, Preguiça, 2016)
+	#[test]
+	fn sync_example() {
+		let (addr_a, addr_b, addr_c) =
+			(Address(0, 0), Address(1, 1), Address(2, 2));
+
+		let (storage_a, storage_b, storage_c) =
+			(temp_mmap_storage(), temp_mmap_storage(), temp_mmap_storage());
+
+		let (mut log_a, mut log_b, mut log_c) = (
+			Log::new(addr_a, storage_a),
+			Log::new(addr_b, storage_b),
+			Log::new(addr_c, storage_c),
+		);
+
+		// Concurrent 1
+		log_a.append_local([b"a1", b"a2"]).unwrap();
+		log_b.append_local([b"b1"]).unwrap();
+		log_c.append_local([b"c1", b"c2"]).unwrap();
+
+		// Concurrent 2
+		let lc = log_b.logical_clock();
+		let es: event::Buf = log_a.events_since(lc).collect();
+		log_b.append_remote(&es).unwrap();
 	}
 }
