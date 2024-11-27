@@ -18,11 +18,19 @@ impl VersionVector {
 		Self(foldhash::HashMap::new())
 	}
 
-	fn incr(&mut self, addr: Address, n: u64) {
-		// avoid storing a 0 val, since a missing addr already returns 0 w/ get
-		if n > 0 {
-			*self.0.entry(addr).or_insert(0) += n;
-		}
+	fn set(&mut self, addr: Address, disk_offset: u64) {
+		self.0
+			.entry(addr)
+			.and_modify(|current| {
+				if disk_offset <= *current {
+					panic!(
+							"Version Vectors must monotonically increase: cannot replace ({}) with ({})",
+							disk_offset, *current
+						);
+				}
+				*current = disk_offset;
+			})
+			.or_insert(disk_offset);
 	}
 }
 
@@ -62,10 +70,7 @@ impl Committed {
 
 		for Event { id, payload } in events {
 			offsets.push(offset);
-			// TODO: work out if this assert should be before or after
-			// does it match seq_n, or how many events seen?
-			assert_eq!(vv.get(&id.addr), id.seq_n);
-			vv.incr(id.addr, 1);
+			vv.set(id.addr, id.disk_offset);
 			offset += event::stored_size(payload);
 		}
 
@@ -73,14 +78,6 @@ impl Committed {
 		offsets.push(offset);
 
 		Self { offsets, vv }
-	}
-
-	// TODO: this will break if I ever start filtering appends
-	fn assert_consistent(&self) {
-		let lc_sum = self.vv.0.values().sum();
-		// assumes every remote event is appended
-		let n_events: u64 = (self.offsets.len() - 1).try_into().unwrap();
-		assert_eq!(n_events, lc_sum);
 	}
 }
 
@@ -115,10 +112,10 @@ impl<Storage: ports::Storage> Log<Storage> {
 
 	/// Returns bytes enqueued
 	pub fn enqueue(&mut self, payload: &[u8]) -> usize {
-		// TODO: this calculation assumes everything cmtd comes from addr
-		let seq_n = self.enqd.offsets.len() + self.cmtd.offsets.len() - 2;
-		let seq_n = u64::try_from(seq_n).unwrap();
-		let id = event::ID { addr: self.addr, seq_n };
+		let disk_offset = self.enqd.offsets.last().copied().unwrap();
+
+		let disk_offset = u64::try_from(disk_offset).unwrap();
+		let id = event::ID { addr: self.addr, disk_offset };
 		let e = Event { id, payload };
 
 		let curr_offset = *self.enqd.offsets.last().unwrap();
@@ -141,19 +138,19 @@ impl<Storage: ports::Storage> Log<Storage> {
 
 	/// Returns number of events committed
 	pub fn commit(&mut self) -> Result<u64, Storage::Err> {
-		self.cmtd.assert_consistent();
-
 		let offsets_to_commit = &self.enqd.offsets[1..];
 		self.cmtd.offsets.extend(offsets_to_commit);
 
 		let n_events_cmtd: u64 = offsets_to_commit.len().try_into().unwrap();
-		self.cmtd.vv.incr(self.addr, n_events_cmtd);
+		if let Some(&highest_offset) =
+			&self.enqd.offsets.get(self.enqd.offsets.len().wrapping_sub(2))
+		{
+			self.cmtd.vv.set(self.addr, highest_offset.try_into().unwrap());
+		}
 
 		self.storage.append(&self.enqd.events.as_bytes())?;
 
 		self.rollback();
-
-		self.cmtd.assert_consistent();
 
 		Ok(n_events_cmtd)
 	}
@@ -367,7 +364,7 @@ pub mod event {
 		/// Address of the log this message originated from
 		pub addr: Address,
 		/// This is the nth event originating from addr
-		pub seq_n: u64,
+		pub disk_offset: u64,
 	}
 
 	const _: () = assert!(mem::size_of::<ID>() == 24);
@@ -412,9 +409,9 @@ pub mod event {
 		fn header_serde() {
 			arbtest(|u| {
 				let addr = Address(u.arbitrary()?, u.arbitrary()?);
-				let seq_n = u.arbitrary()?;
+				let disk_offset = u.arbitrary()?;
 				let payload_len = u.arbitrary()?;
-				let id = ID { addr, seq_n };
+				let id = ID { addr, disk_offset };
 				let expected = Header { id, payload_len };
 				let actual = Header::from_bytes(expected.as_bytes());
 				assert_eq!(*actual, expected);
@@ -535,7 +532,7 @@ mod tests {
 			let actual: Vec<Event> = log.latest(1).collect();
 
 			let expected = vec![Event {
-				id: event::ID { addr, seq_n: 0 },
+				id: event::ID { addr, disk_offset: 0 },
 				payload: lyrics[0],
 			}];
 
@@ -548,8 +545,14 @@ mod tests {
 			assert_eq!(log.commit(), Ok(1));
 			let actual: Vec<Event> = log.latest(2).collect();
 			let expected = vec![
-				Event { id: event::ID { addr, seq_n: 0 }, payload: lyrics[0] },
-				Event { id: event::ID { addr, seq_n: 1 }, payload: lyrics[1] },
+				Event {
+					id: event::ID { addr, disk_offset: 0 },
+					payload: lyrics[0],
+				},
+				Event {
+					id: event::ID { addr, disk_offset: 64 },
+					payload: lyrics[1],
+				},
 			];
 			assert_eq!(actual, expected);
 		}
@@ -562,8 +565,14 @@ mod tests {
 
 			let actual: Vec<Event> = log.latest(2).collect();
 			let expected = vec![
-				Event { id: event::ID { addr, seq_n: 2 }, payload: lyrics[2] },
-				Event { id: event::ID { addr, seq_n: 3 }, payload: lyrics[3] },
+				Event {
+					id: event::ID { addr, disk_offset: 136 },
+					payload: lyrics[2],
+				},
+				Event {
+					id: event::ID { addr, disk_offset: 200 },
+					payload: lyrics[3],
+				},
 			];
 			assert_eq!(actual, expected);
 		}
