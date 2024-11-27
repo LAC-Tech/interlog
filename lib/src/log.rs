@@ -191,41 +191,37 @@ impl<Storage: ports::Storage> Log<Storage> {
 		&self.cmtd.vv
 	}
 
-	pub fn events_since(
-		&self,
-		lc: &impl LogicalClock,
-	) -> impl Iterator<Item = Event<'_>> {
-        let last_seen_by_remote = lc.get(&self.addr).unwrap_or(0);
-        let last_seen_by_remote: usize = last_seen_by_remote.try_into().unwrap();
-        let slice = &self.storage.read()[last_seen_by_remote..];
-        let events = event::Iter::new(slice);
+	pub fn events_since<'a>(
+		&'a self,
+		lc: &'a impl LogicalClock,
+	) -> impl Iterator<Item = Event<'a>> {
+		let last_seen_by_remote = lc.get(&self.addr).unwrap_or(0);
+		let last_seen_by_remote: usize =
+			last_seen_by_remote.try_into().unwrap();
+		let slice = &self.storage.read()[last_seen_by_remote..];
+		let events = event::Iter::new(slice);
 
-        events.filter(|event| {
-            let last_seen_by_remote = lc.get(&event.id.addr);
-
-            match last_seen_by_remote {
-                Some(offset) => event.id.disk_offset > offset,
-                None => true
-            }
-        })
+		events.filter(|event| {
+			let addr = &event.id.addr;
+			lc.get(addr).is_some_and(|offset| event.id.disk_offset > offset)
+		})
 	}
 
 	/// Append events coming from a remote log
-	// TODO: test
-	pub fn append_remote(&mut self, events: event::Slice<'_>) {
-		self.cmtd.assert_consistent();
+	pub fn append_remote(
+		&mut self,
+		events: event::Slice<'_>,
+	) -> Result<(), Storage::Err> {
 		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
-			self.cmtd.vv.incr(e.id.addr, 1);
+			self.cmtd.vv.set(e.id.addr, e.id.disk_offset);
 			next_offset += event::stored_size(e.payload);
 			self.cmtd.offsets.push(next_offset);
 		}
 
-		self.cmtd.assert_consistent();
-		self.storage.append(events.as_bytes());
+		self.storage.append(events.as_bytes())
 	}
-	*/
 
 	///////////////////////////////////////////////////////////////////////////
 
