@@ -3,7 +3,7 @@ use event::Event;
 use foldhash::HashMapExt;
 
 pub trait LogicalClock {
-	fn get(&self, addr: &Address) -> u64;
+	fn get(&self, addr: &Address) -> Option<u64>;
 }
 
 /// I am calling this a version vector, out of habit
@@ -35,8 +35,8 @@ impl VersionVector {
 }
 
 impl LogicalClock for VersionVector {
-	fn get(&self, addr: &Address) -> u64 {
-		self.0.get(addr).copied().unwrap_or(0)
+	fn get(&self, addr: &Address) -> Option<u64> {
+		self.0.get(addr).copied()
 	}
 }
 
