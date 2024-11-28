@@ -194,7 +194,8 @@ impl<Storage: ports::Storage> Log<Storage> {
 	pub fn read_first(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let n = core::cmp::min(n, self.cmtd.offsets.len());
 		let offsets = &self.cmtd.offsets[0..n];
-		let bytes = &self.storage.read()[0..offsets.last().copied().unwrap()];
+		let range_end = offsets.last().copied().unwrap_or(0);
+		let bytes = &self.storage.read()[0..range_end];
 		event::Iter::new(bytes)
 	}
 
