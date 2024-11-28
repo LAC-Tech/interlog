@@ -583,7 +583,7 @@ mod tests {
 		}
 
 		let original_cmtd = log.cmtd;
-		let rebuilt_cmtd = Log::new(Address(0, 0), log.storage).cmtd;
+		let rebuilt_cmtd = Log::new(addr, log.storage).cmtd;
 
 		assert_eq!(original_cmtd, rebuilt_cmtd);
 	}
