@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use event::Event;
 use foldhash::HashMapExt;
 
-pub trait LogicalClock {
+pub trait LogicalClock: core::fmt::Debug {
 	fn get(&self, addr: &Address) -> Option<u64>;
 }
 
@@ -10,7 +10,7 @@ pub trait LogicalClock {
 /// But it says what the seen last seq_n from each address is
 /// I suspect it may have a different name..
 /// u64 for value, not usize, because it will be sent across network
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 struct VersionVector(foldhash::HashMap<Address, u64>);
 
 impl VersionVector {
@@ -40,6 +40,11 @@ impl LogicalClock for VersionVector {
 	}
 }
 
+impl core::fmt::Debug for VersionVector {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		write!(f, "{:?}", self.0)
+	}
+}
 /// This is two u64s instead of one u128 for alignment in Event Header
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Hash)]
 #[cfg_attr(test, derive(arbitrary::Arbitrary))]
@@ -610,6 +615,7 @@ mod tests {
 
 		// Concurrent 2
 		let lc = log_b.logical_clock();
+		dbg!(lc);
 		let es: event::Buf = log_a.events_since(lc).collect();
 		log_b.append_remote(&es).unwrap();
 	}
