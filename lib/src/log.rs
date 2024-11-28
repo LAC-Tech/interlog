@@ -41,8 +41,15 @@ impl LogicalClock for VersionVector {
 }
 
 impl core::fmt::Debug for VersionVector {
+	// Parker '82 formatting
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		write!(f, "{:?}", self.0)
+		let formatted = self
+			.0
+			.iter()
+			.map(|(Address(a, b), v)| format!("{:016X}{:016X}:{}", a, b, v))
+			.collect::<Vec<_>>()
+			.join(", ");
+		write!(f, "<{}>", formatted)
 	}
 }
 /// This is two u64s instead of one u128 for alignment in Event Header
@@ -539,6 +546,11 @@ mod tests {
 		{
 			assert_eq!(log.enqueue(lyrics[0]), 64);
 			assert_eq!(log.commit(), Ok(1));
+			assert_eq!(
+				format!("{:?}", log.logical_clock()),
+				"<00000000000000000000000000000000:0>"
+			);
+
 			let actual: Vec<Event> = log.latest(1).collect();
 
 			let expected = vec![Event {
@@ -553,6 +565,11 @@ mod tests {
 		{
 			assert_eq!(log.enqueue(lyrics[1]), 72);
 			assert_eq!(log.commit(), Ok(1));
+			assert_eq!(
+				format!("{:?}", log.logical_clock()),
+				"<00000000000000000000000000000000:64>"
+			);
+
 			let actual: Vec<Event> = log.latest(2).collect();
 			let expected = vec![
 				Event {
@@ -572,6 +589,10 @@ mod tests {
 			assert_eq!(log.enqueue(lyrics[2]), 64);
 			assert_eq!(log.enqueue(lyrics[3]), 136);
 			assert_eq!(log.commit(), Ok(2));
+			assert_eq!(
+				format!("{:?}", log.logical_clock()),
+				"<00000000000000000000000000000000:200>"
+			);
 
 			let actual: Vec<Event> = log.latest(2).collect();
 			let expected = vec![
@@ -615,7 +636,6 @@ mod tests {
 
 		// Concurrent 2
 		let lc = log_b.logical_clock();
-		dbg!(lc);
 		let es: event::Buf = log_a.events_since(lc).collect();
 		log_b.append_remote(&es).unwrap();
 	}
