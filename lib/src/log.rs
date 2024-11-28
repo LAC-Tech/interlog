@@ -178,7 +178,8 @@ impl<Storage: ports::Storage> Log<Storage> {
 		self.commit()
 	}
 
-	pub fn latest(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
+	/// Returns iterator of last n events, in transaction order
+	pub fn read_last(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
 
 		let events = offsets
@@ -187,6 +188,14 @@ impl<Storage: ports::Storage> Log<Storage> {
 			.unwrap_or(&[]);
 
 		event::Iter::new(events)
+	}
+
+	/// Returns iterator of first n events, in transaction order
+	pub fn read_first(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
+		let n = core::cmp::min(n, self.cmtd.offsets.len());
+		let offsets = &self.cmtd.offsets[0..n];
+		let bytes = &self.storage.read()[0..offsets.last().copied().unwrap()];
+		event::Iter::new(bytes)
 	}
 
 	// SYNC PROTOCOL /////////////////////////////////////////////////////////
@@ -471,7 +480,8 @@ mod tests {
 			}
 			log.commit().unwrap();
 
-			assert!(log.latest(0).next().is_none());
+			assert!(log.read_last(0).next().is_none());
+			assert!(log.read_first(0).next().is_none());
 			Ok(())
 		});
 	}
@@ -551,7 +561,7 @@ mod tests {
 				"<00000000000000000000000000000000:0>"
 			);
 
-			let actual: Vec<Event> = log.latest(1).collect();
+			let actual: Vec<Event> = log.read_last(1).collect();
 
 			let expected = vec![Event {
 				id: event::ID { addr, disk_offset: 0 },
@@ -570,7 +580,7 @@ mod tests {
 				"<00000000000000000000000000000000:64>"
 			);
 
-			let actual: Vec<Event> = log.latest(2).collect();
+			let actual: Vec<Event> = log.read_last(2).collect();
 			let expected = vec![
 				Event {
 					id: event::ID { addr, disk_offset: 0 },
@@ -594,7 +604,7 @@ mod tests {
 				"<00000000000000000000000000000000:200>"
 			);
 
-			let actual: Vec<Event> = log.latest(2).collect();
+			let actual: Vec<Event> = log.read_last(2).collect();
 			let expected = vec![
 				Event {
 					id: event::ID { addr, disk_offset: 136 },
@@ -636,6 +646,10 @@ mod tests {
 
 		// Concurrent 2
 		let lc = log_b.logical_clock();
+		assert_eq!(
+			format!("{:?}", log_b.logical_clock()),
+			"<00000000000000010000000000000001:0>"
+		);
 		let es: event::Buf = log_a.events_since(lc).collect();
 		log_b.append_remote(&es).unwrap();
 	}
