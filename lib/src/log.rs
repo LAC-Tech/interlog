@@ -178,18 +178,6 @@ impl<Storage: ports::Storage> Log<Storage> {
 		self.commit()
 	}
 
-	/// Returns iterator of last n events, in transaction order
-	pub fn tail(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
-		let offsets = &self.cmtd.offsets;
-
-		let events = offsets
-			.get(offsets.len() - n - 1) // Offsets always include one extra
-			.map(|&offset| &self.storage.read()[offset..])
-			.unwrap_or(&[]);
-
-		event::Iter::new(events)
-	}
-
 	/// Returns iterator of first n events, in transaction order
 	pub fn head(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let n = core::cmp::min(n + 1, self.cmtd.offsets.len());
@@ -197,6 +185,20 @@ impl<Storage: ports::Storage> Log<Storage> {
 		let range_end = offsets.last().copied().unwrap_or(0);
 		let bytes = &self.storage.read()[0..range_end];
 		event::Iter::new(bytes)
+	}
+
+	/// Returns iterator of last n events, in transaction order
+	pub fn tail(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
+		let offsets = &self.cmtd.offsets;
+
+		let events = offsets
+			.len()
+			.checked_sub(n + 1) // Offset len always at least 1
+			.and_then(|start| offsets.get(start))
+			.map(|&first_offset| &self.storage.read()[first_offset..])
+			.unwrap_or(&[]);
+
+		event::Iter::new(events)
 	}
 
 	// SYNC PROTOCOL /////////////////////////////////////////////////////////
@@ -478,7 +480,7 @@ mod tests {
 	}
 
 	#[test]
-	fn empty_read() {
+	fn read_zero_events_from_populated_long() {
 		arbtest(|u| {
 			let storage = temp_mmap_storage();
 			let mut log = Log::new(u.arbitrary()?, storage);
@@ -490,6 +492,18 @@ mod tests {
 
 			assert!(log.tail(0).next().is_none());
 			assert!(log.head(0).next().is_none());
+			Ok(())
+		});
+	}
+
+	#[test]
+	fn read_arb_events_from_empty_log() {
+		arbtest(|u| {
+			let storage = temp_mmap_storage();
+			let log = Log::new(u.arbitrary()?, storage);
+
+			assert!(log.tail(u.arbitrary()?).next().is_none());
+			assert!(log.head(u.arbitrary()?).next().is_none());
 			Ok(())
 		});
 	}
