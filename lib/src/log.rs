@@ -226,6 +226,9 @@ impl<Storage: ports::Storage> Log<Storage> {
 		&mut self,
 		events: &event::Buf,
 	) -> Result<(), Storage::Err> {
+		#[cfg(test)]
+		dbg!(events.as_bytes().len());
+
 		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
@@ -589,12 +592,12 @@ mod tests {
 			let actual_tail: Vec<Event> = log.tail(2).collect();
 			let expected = vec![
 				Event {
-					id: event::ID { addr, disk_offset: 136 },
-					payload: lyrics[2],
+					id: event::ID { addr, disk_offset: 0 },
+					payload: lyrics[0],
 				},
 				Event {
-					id: event::ID { addr, disk_offset: 200 },
-					payload: lyrics[3],
+					id: event::ID { addr, disk_offset: 64 },
+					payload: lyrics[1],
 				},
 			];
 			assert_eq!(actual_head, expected);
@@ -681,9 +684,9 @@ mod tests {
 				.map(|e| str::from_utf8(e.payload).unwrap())
 				.collect::<Vec<_>>();
 
-			let expected = vec!["a1", "a2", "b1", "b2"];
+			let expected = vec!["b1", "a1", "a2"];
 
-			//assert_eq!(actual, expected);
+			assert_eq!(actual, expected);
 		}
 	}
 }
