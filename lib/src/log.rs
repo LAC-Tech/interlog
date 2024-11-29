@@ -480,7 +480,7 @@ mod tests {
 	}
 
 	#[test]
-	fn read_zero_events_from_populated_long() {
+	fn read_zero_events_from_populated_log() {
 		arbtest(|u| {
 			let storage = temp_mmap_storage();
 			let mut log = Log::new(u.arbitrary()?, storage);
