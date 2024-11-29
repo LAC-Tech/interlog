@@ -179,7 +179,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 	}
 
 	/// Returns iterator of last n events, in transaction order
-	pub fn read_last(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
+	pub fn tail(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let offsets = &self.cmtd.offsets;
 
 		let events = offsets
@@ -191,7 +191,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 	}
 
 	/// Returns iterator of first n events, in transaction order
-	pub fn read_first(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
+	pub fn head(&self, n: usize) -> impl Iterator<Item = Event<'_>> {
 		let n = core::cmp::min(n, self.cmtd.offsets.len());
 		let offsets = &self.cmtd.offsets[0..n];
 		let range_end = offsets.last().copied().unwrap_or(0);
@@ -481,8 +481,8 @@ mod tests {
 			}
 			log.commit().unwrap();
 
-			assert!(log.read_last(0).next().is_none());
-			assert!(log.read_first(0).next().is_none());
+			assert!(log.tail(0).next().is_none());
+			assert!(log.head(0).next().is_none());
 			Ok(())
 		});
 	}
@@ -562,7 +562,7 @@ mod tests {
 				"<00000000000000000000000000000000:0>"
 			);
 
-			let actual: Vec<Event> = log.read_last(1).collect();
+			let actual: Vec<Event> = log.tail(1).collect();
 
 			let expected = vec![Event {
 				id: event::ID { addr, disk_offset: 0 },
@@ -581,7 +581,7 @@ mod tests {
 				"<00000000000000000000000000000000:64>"
 			);
 
-			let actual: Vec<Event> = log.read_last(2).collect();
+			let actual: Vec<Event> = log.tail(2).collect();
 			let expected = vec![
 				Event {
 					id: event::ID { addr, disk_offset: 0 },
@@ -605,7 +605,7 @@ mod tests {
 				"<00000000000000000000000000000000:200>"
 			);
 
-			let actual: Vec<Event> = log.read_last(2).collect();
+			let actual: Vec<Event> = log.tail(2).collect();
 			let expected = vec![
 				Event {
 					id: event::ID { addr, disk_offset: 136 },
