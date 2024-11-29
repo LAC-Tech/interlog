@@ -217,7 +217,9 @@ impl<Storage: ports::Storage> Log<Storage> {
 
 		events.filter(|event| {
 			let addr = &event.id.addr;
-			lc.get(addr).is_some_and(|offset| event.id.disk_offset > offset)
+			lc.get(addr)
+				.map(|offset| event.id.disk_offset > offset)
+				.unwrap_or(true)
 		})
 	}
 
@@ -673,7 +675,7 @@ mod tests {
 		{
 			let lc = log_b.logical_clock();
 			assert_eq!(
-				format!("{:?}", log_b.logical_clock()),
+				format!("{:?}", lc),
 				"<00000000000000010000000000000001:0>"
 			);
 			let es: event::Buf = log_a.events_since(lc).collect();
@@ -685,6 +687,29 @@ mod tests {
 				.collect::<Vec<_>>();
 
 			let expected = vec!["b1", "a1", "a2"];
+
+			assert_eq!(actual, expected);
+		}
+
+		// Concurrent 3
+		{
+			log_b.append_local([b"b2", b"b3"]).unwrap();
+			log_c.append_local([b"c3"]).unwrap();
+
+			let lc = log_c.logical_clock();
+			assert_eq!(
+				format!("{:?}", lc),
+				"<00000000000000020000000000000002:80>"
+			);
+
+			let es: event::Buf = log_b.events_since(lc).collect();
+			log_c.append_remote(&es).unwrap();
+
+			let actual = log_c
+				.head(8)
+				.map(|e| str::from_utf8(e.payload).unwrap())
+				.collect::<Vec<_>>();
+			let expected = vec!["c1", "c2", "c3", "b1", "a1", "a2", "b2", "b3"];
 
 			assert_eq!(actual, expected);
 		}
