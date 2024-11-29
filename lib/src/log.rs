@@ -451,10 +451,13 @@ pub mod event {
 
 #[cfg(test)]
 mod tests {
+	use core::str;
+
 	use super::*;
 	use crate::linux;
 	use arbtest::arbtest;
 	use pretty_assertions::assert_eq;
+	use rustix::path::Arg;
 	use test_utils::jagged_vec::JaggedVec;
 
 	fn temp_mmap_storage() -> linux::MmapStorage {
@@ -641,17 +644,30 @@ mod tests {
 		);
 
 		// Concurrent 1
-		log_a.append_local([b"a1", b"a2"]).unwrap();
-		log_b.append_local([b"b1"]).unwrap();
-		log_c.append_local([b"c1", b"c2"]).unwrap();
+		{
+			log_a.append_local([b"a1", b"a2"]).unwrap();
+			log_b.append_local([b"b1"]).unwrap();
+			log_c.append_local([b"c1", b"c2"]).unwrap();
+		}
 
 		// Concurrent 2
-		let lc = log_b.logical_clock();
-		assert_eq!(
-			format!("{:?}", log_b.logical_clock()),
-			"<00000000000000010000000000000001:0>"
-		);
-		let es: event::Buf = log_a.events_since(lc).collect();
-		log_b.append_remote(&es).unwrap();
+		{
+			let lc = log_b.logical_clock();
+			assert_eq!(
+				format!("{:?}", log_b.logical_clock()),
+				"<00000000000000010000000000000001:0>"
+			);
+			let es: event::Buf = log_a.events_since(lc).collect();
+			log_b.append_remote(&es).unwrap();
+
+			let actual = log_b
+				.head(4)
+				.map(|e| str::from_utf8(e.payload).unwrap())
+				.collect::<Vec<_>>();
+
+			let expected = vec!["a1", "a2", "b1", "b2"];
+
+			assert_eq!(actual, expected);
+		}
 	}
 }
