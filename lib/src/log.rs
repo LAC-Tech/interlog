@@ -211,15 +211,13 @@ impl<Storage: ports::Storage> Log<Storage> {
 		&'a self,
 		lc: &'a impl LogicalClock,
 	) -> impl Iterator<Item = Event<'a>> {
-		let last_seen_by_remote = lc.get(&self.addr).unwrap_or(0);
 		let last_seen_by_remote: usize =
-			last_seen_by_remote.try_into().unwrap();
+			lc.get(&self.addr).unwrap_or(0).try_into().unwrap();
 		let slice = &self.storage.read()[last_seen_by_remote..];
 		let events = event::Iter::new(slice);
 
 		events.filter(|event| {
-			let addr = &event.id.addr;
-			lc.get(addr)
+			lc.get(&event.id.addr)
 				.map(|offset| event.id.disk_offset > offset)
 				.unwrap_or(true)
 		})
@@ -230,9 +228,6 @@ impl<Storage: ports::Storage> Log<Storage> {
 		&mut self,
 		events: &event::Buf,
 	) -> Result<(), Storage::Err> {
-		#[cfg(test)]
-		dbg!(events.as_bytes().len());
-
 		let mut next_offset = self.cmtd.offsets.last().copied().unwrap();
 
 		for e in events.iter() {
@@ -666,16 +661,10 @@ mod tests {
 	// Figure 2 from "Why Logical Clocks are Easy" (Baquero, Preguiça, 2016)
 	#[test]
 	fn sync_example() {
-		let (addr_a, addr_b, addr_c) =
-			(Address(0, 0), Address(1, 1), Address(2, 2));
-
-		let (storage_a, storage_b, storage_c) =
-			(temp_mmap_storage(), temp_mmap_storage(), temp_mmap_storage());
-
 		let (mut log_a, mut log_b, mut log_c) = (
-			Log::new(addr_a, storage_a),
-			Log::new(addr_b, storage_b),
-			Log::new(addr_c, storage_c),
+			Log::new(Address(0, 0), temp_mmap_storage()),
+			Log::new(Address(1, 1), temp_mmap_storage()),
+			Log::new(Address(2, 2), temp_mmap_storage()),
 		);
 
 		// Concurrent 1
