@@ -299,7 +299,7 @@ pub mod event {
 		}
 
 		pub fn clear(&mut self) {
-			self.0.clear()
+			self.0.clear();
 		}
 	}
 
