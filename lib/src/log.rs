@@ -201,7 +201,7 @@ impl<Storage: ports::Storage> Log<Storage> {
 		event::Iter::new(events)
 	}
 
-	// SYNC PROTOCOL /////////////////////////////////////////////////////////
+	// SYNC PROTOCOL //////////////////////////////////////////////////////////
 
 	pub fn logical_clock(&self) -> &impl LogicalClock {
 		&self.cmtd.vv
