@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 rand = { version = "0.8.5", features = ["small_rng"]}
-rustix = { version = "0.38.41", features = ["fs", "mm"] }
+rustix = { version = "0.38.41", features = ["fs", "mm", "io_uring"] }
 ports = { path = "../ports" }
 foldhash = "0.1.3"
 

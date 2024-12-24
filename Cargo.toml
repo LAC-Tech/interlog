@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib", "ports", "test_utils"]
+members = ["lib", "ports", "test_utils", "web"]
 resolver = "2"
 
 [workspace.dependencies]

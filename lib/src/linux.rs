@@ -30,10 +30,8 @@ impl MmapStorage {
 		}?;
 
 		let mmap_ptr = mmap_ptr as *const u8;
-
 		let stat = fs::fstat(&fd)?;
 		let n_bytes_appended: usize = stat.st_size.try_into().unwrap();
-
 		Ok(Self { mmap_ptr, mmap_size, fd, n_bytes_appended })
 	}
 }

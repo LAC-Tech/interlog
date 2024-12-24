@@ -11,7 +11,7 @@ pub trait LogicalClock: core::fmt::Debug {
 /// I suspect it may have a different name..
 /// u64 for value, not usize, because it will be sent across network
 #[cfg_attr(test, derive(PartialEq, Eq))]
-struct VersionVector(foldhash::HashMap<Address, u64>);
+		struct VersionVector(foldhash::HashMap<Address, u64>);
 
 impl VersionVector {
 	fn new() -> Self {
@@ -311,34 +311,6 @@ pub mod event {
 			})
 		}
 	}
-
-	/*
-	/// Immutable
-	pub struct Slice<'a>(&'a [u8]);
-
-	impl<'a> Slice<'a> {
-		pub fn new(bytes: &'a [u8]) -> Self {
-			Self(bytes)
-		}
-
-		pub fn iter(&self) -> Iter<'_> {
-			Iter::new(self.0)
-		}
-
-		pub fn as_bytes(&self) -> &'a [u8] {
-			self.0
-		}
-	}
-
-	impl<'a> IntoIterator for Slice<'a> {
-		type Item = Event<'a>;
-		type IntoIter = Iter<'a>;
-
-		fn into_iter(self) -> Self::IntoIter {
-			Iter::new(self.0)
-		}
-	}
-	*/
 
 	/// can be produced from anything that produces bytes
 	#[derive(Debug)]
