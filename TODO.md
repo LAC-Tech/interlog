@@ -1,3 +1,3 @@
-- abandon "user events"; one high level method can produce multiple sqes
+- Node has high level methods and wraps "Core"
 - rename log to AOF; ensure events only come from one origin per AOF
 - integet AOF into node
