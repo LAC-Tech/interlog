@@ -9,11 +9,19 @@ const _: () = assert!(mem::size_of::<*mut core::ffi::c_void>() == 8);
 
 // Messages sent to an async file system with a req/res interface
 mod fs {
-    use super::{topic, ID};
+    use super::{mem, topic, ID};
 
-    pub struct Create {
-        pub topic_id: topic::ID,
-        pub node_id: ID,
+    #[repr(C)]
+    struct CreateCtx {
+        topic_id: topic::ID,
+        node_id: ID,
+        _padding: u32,
+    }
+
+    const _: () = assert!(mem::size_of::<CreateCtx>() == 8);
+
+    pub fn create_udata(topic_id: topic::ID, node_id: ID) -> u64 {
+        unsafe { mem::transmute(CreateCtx { topic_id, node_id, _padding: 0 }) }
     }
 
     pub enum Res<FD> {
@@ -24,6 +32,7 @@ mod fs {
     }
 }
 
+#[derive(Clone, Copy)]
 struct ID(u8);
 
 pub trait Path: rustix::path::Arg + Copy + Default + Eq + Hash {}
@@ -142,25 +151,40 @@ impl<P: Path, FD> Core<P, FD> {
 
 // Non-deterministic part.
 // Wraps io_uring, kqueue, testing etc
-pub trait AsyncIO {
+pub trait AsyncFSIO {
     type P: Path;
     type FD;
 
-    fn create(path: Self::P);
-    fn read(fd: Self::FD);
-    fn append(fd: Self::FD);
-    fn delete(fd: Self::FD);
+    fn new(root_dir: Self::P) -> Self;
+
+    fn create(&mut self, path: Self::P, udata: u64);
+    fn read(&mut self, fd: Self::FD, udata: u64);
+    fn append(&mut self, fd: Self::FD, udata: u64);
+    fn delete(&mut self, fd: Self::FD, udata: u64);
 }
 
-pub struct Node<AFIO: AsyncIO> {
+pub struct Node<AFIO: AsyncFSIO> {
+    id: ID,
     afio: AFIO,
     core: Core<AFIO::P, AFIO::FD>,
 }
 
-impl<AIO: AsyncIO> Node<AIO> {
-    fn new(seed: u64, afio: AIO) -> Self {
-        Self { afio, core: Core::new(seed) }
+impl<AFIO: AsyncFSIO> Node<AFIO> {
+    fn new(seed: u64, id: ID, root_dir: AFIO::P) -> Self {
+        let afio = AFIO::new(root_dir);
+        let core = Core::new(seed);
+        Self { id, afio, core }
     }
 
-    fn topic_create(&mut self, name: AIO::P) {}
+    pub fn topic_create(
+        &mut self,
+        name: AFIO::P,
+    ) -> Result<(), topic::CreateErr> {
+        let topic_id = self.core.create_topic(name)?;
+        let udata = fs::create_udata(topic_id, self.id);
+        self.afio.create(name, udata);
+        Ok(())
+    }
+
+    pub fn local_events_append(&mut self) {}
 }
