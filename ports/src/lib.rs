@@ -8,9 +8,9 @@
 /// - In-memory
 /// - In-browser (WASM that calls to indexedDB?)
 pub trait Storage {
-	type Err;
+    type Err;
 
-	fn append(&mut self, data: &[u8]) -> Result<(), Self::Err>;
-	fn read(&self) -> &[u8];
-	fn size(&self) -> usize;
+    fn append(&mut self, data: &[u8]) -> Result<(), Self::Err>;
+    fn read(&self) -> &[u8];
+    fn size(&self) -> usize;
 }

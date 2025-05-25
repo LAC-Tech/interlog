@@ -1,24 +1,21 @@
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 
 /*
-	GET /log				List of names of all logs in this cluster
-	GET /log/:name/stats
-	GET /log/:name/acqs		Acquaintances (ie, log addresses)
-	GET /log/:name/head/:n	First n events
-	GET /log/:name/tail/:n	Last n events
+    GET /log				List of names of all logs in this cluster
+    GET /log/:name/stats
+    GET /log/:name/acqs		Acquaintances (ie, log addresses)
+    GET /log/:name/head/:n	First n events
+    GET /log/:name/tail/:n	Last n events
 
- 	PUT /log/:name			Creates a log
-	POST /log/:name			Adds events to the log
+     PUT /log/:name			Creates a log
+    POST /log/:name			Adds events to the log
 
-	Sync protocol (binary):
+    Sync protocol (binary):
 
-	GET /log/:name/lc		Logical clock
-	POST /log/:name/since	Responds with events (logical clock in body)
-	POST /log/:name/remote
-	
+    GET /log/:name/lc		Logical clock
+    POST /log/:name/since	Responds with events (logical clock in body)
+    POST /log/:name/remote
+
 */
 
 #[tokio::main]
