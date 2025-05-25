@@ -1,5 +1,3 @@
-#![no_std]
-
 extern crate alloc;
 use core::mem;
 
@@ -11,7 +9,7 @@ const _: () = assert!(mem::size_of::<*mut core::ffi::c_void>() == 8);
 
 // Messages sent to an async file system with a req/res interface
 mod fs {
-	use crate::topic;
+	use super::topic;
 
 	pub enum Req<FD> {
 		Create { topic_id: topic::ID },
