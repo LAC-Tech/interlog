@@ -12,8 +12,8 @@ mod fs {
     use super::{mem, topic, ID};
 
     #[repr(C)]
-    struct CreateCtx {
-        topic_id: topic::ID,
+    pub struct CreateCtx {
+        pub topic_id: topic::ID,
         node_id: ID,
         _padding: u32,
     }
@@ -25,7 +25,7 @@ mod fs {
     }
 
     pub enum Res<FD> {
-        Create { fd: FD, udata: Create },
+        Create { fd: FD, udata: CreateCtx },
         //Read,
         //Append,
         //Delete,
