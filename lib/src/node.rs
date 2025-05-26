@@ -23,8 +23,14 @@ struct ID(u8);
 /// 2 - return a meaningful response for user code
 /// It's completey decoupled from any async runtime
 struct Core<P: fs::Path, FD> {
+    seed: u64,
     reqd_topic_names: topic::RequestedNames<P>,
-    topic_fds: HashMap<P, FD, FixedState>, // Deterministic Hashmap
+    topic_aofs: HashMap<P, AppendOnlyFiles<FD>, FixedState>,
+}
+
+struct AppendOnlyFiles<FD> {
+    local_fd: FD,
+    replicas: HashMap<ID, FD, FixedState>,
 }
 
 /// Top Level Response, for the user of the library
@@ -56,14 +62,13 @@ impl<AFIO: fs::AsyncIO> Node<AFIO> {
 
 impl<P: fs::Path, FD> Core<P, FD> {
     fn new(seed: u64) -> Self {
-        Self {
-            reqd_topic_names: topic::RequestedNames::new(),
-            topic_fds: HashMap::with_hasher(FixedState::with_seed(seed)),
-        }
+        let reqd_topic_names = topic::RequestedNames::new();
+        let topic_aofs = HashMap::with_hasher(FixedState::with_seed(seed));
+        Self { seed, reqd_topic_names, topic_aofs }
     }
 
     fn create_topic(&mut self, name: P) -> Result<topic::ID, topic::CreateErr> {
-        if self.topic_fds.contains_key(&name) {
+        if self.topic_aofs.contains_key(&name) {
             return Err(topic::CreateErr::DuplicateName);
         }
 
@@ -82,9 +87,10 @@ impl<P: fs::Path, FD> Core<P, FD> {
         match fs_res {
             fs::Res::Create { fd, udata } => {
                 let name = self.reqd_topic_names.remove(udata.topic_id);
-                match self.topic_fds.entry(name) {
+                match self.topic_aofs.entry(name) {
                     hash_map::Entry::Vacant(entry) => {
-                        entry.insert(fd);
+                        let aofs = AppendOnlyFiles::new(fd, self.seed);
+                        entry.insert(aofs);
                     }
                     hash_map::Entry::Occupied(_) => {
                         panic!("failed to reserve topic name")
@@ -92,6 +98,15 @@ impl<P: fs::Path, FD> Core<P, FD> {
                 }
                 UsrRes::TopicCreated { name }
             }
+        }
+    }
+}
+
+impl<FD> AppendOnlyFiles<FD> {
+    fn new(local_fd: FD, seed: u64) -> Self {
+        Self {
+            local_fd,
+            replicas: HashMap::with_hasher(FixedState::with_seed(seed)),
         }
     }
 }
