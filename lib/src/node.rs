@@ -1,113 +1,60 @@
 extern crate alloc;
-use core::{hash::Hash, mem};
+use core::mem;
 
 use foldhash::fast::FixedState;
 use hashbrown::{hash_map, HashMap};
 
 // Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
-const _: () = assert!(mem::size_of::<*mut core::ffi::c_void>() == 8);
+const _: () = assert!(8 == mem::size_of::<*mut core::ffi::c_void>());
 
-// Messages sent to an async file system with a req/res interface
-mod fs {
-    use super::{mem, topic, ID};
+/* DATA **********************************************************************/
 
-    #[repr(C)]
-    pub struct CreateCtx {
-        pub topic_id: topic::ID,
-        node_id: ID,
-        _padding: u32,
-    }
-
-    const _: () = assert!(mem::size_of::<CreateCtx>() == 8);
-
-    pub fn create_udata(topic_id: topic::ID, node_id: ID) -> u64 {
-        unsafe { mem::transmute(CreateCtx { topic_id, node_id, _padding: 0 }) }
-    }
-
-    pub enum Res<FD> {
-        Create { fd: FD, udata: CreateCtx },
-        //Read,
-        //Append,
-        //Delete,
-    }
+pub struct Node<AFIO: fs::AsyncIO> {
+    id: ID,
+    afio: AFIO,
+    core: Core<AFIO::P, AFIO::FD>,
 }
 
 #[derive(Clone, Copy)]
 struct ID(u8);
 
-pub trait Path: rustix::path::Arg + Copy + Default + Eq + Hash {}
-
-/// Top Level Response, for the user of the library
-pub enum UsrRes<P: Path> {
-    TopicCreated { name: P },
-}
-
-mod topic {
-    use super::Path;
-    use alloc::boxed::Box;
-
-    pub struct ID(u8);
-    const MAX: u8 = 64;
-
-    #[derive(Debug)]
-    pub enum CreateErr {
-        DuplicateName,
-        ReservationLimitExceeded,
-    }
-
-    /// Topics that are waiting to be created
-    pub struct RequestedNames<Path> {
-        /// Using an array so we can give each name a small "address"
-        /// Ensure size is less than 256 bytes so we can use a u8 as the index
-        names: Box<[Path; MAX as usize]>,
-        /// Bitmask where 1 = occupied, 0 = available
-        /// Allows us to remove names from the middle of the names array w/o
-        /// re-ordering. If this array is empty, we've exceeded the capacity of
-        /// names
-        used_slots: u64,
-    }
-
-    impl<P: Path> RequestedNames<P> {
-        pub fn new() -> Self {
-            Self { names: Box::new([P::default(); 64]), used_slots: 0 }
-        }
-
-        pub fn add(&mut self, name: P) -> Result<ID, CreateErr> {
-            if self.names.contains(&name) {
-                return Err(CreateErr::DuplicateName);
-            }
-
-            // Find first free slot
-            let idx = (!self.used_slots).trailing_zeros() as u8;
-            if idx >= MAX {
-                return Err(CreateErr::ReservationLimitExceeded);
-            }
-
-            // Mark slot as used
-            self.used_slots |= 1u64 << idx;
-            self.names[idx as usize] = name;
-
-            Ok(ID(idx))
-        }
-
-        pub fn remove(&mut self, topic_id: ID) -> P {
-            assert!(topic_id.0 < MAX, "Index out of bounds");
-            self.used_slots &= !(1u64 << topic_id.0);
-            core::mem::take(&mut self.names[topic_id.0 as usize])
-        }
-    }
-}
-
 /// This structs job is to receive "completed" async fs events, and:
 /// 1 - update reflect changs to the node in memory and
 /// 2 - return a meaningful response for user code
 /// It's completey decoupled from any async runtime
-struct Core<P: Path, FD> {
+struct Core<P: fs::Path, FD> {
     reqd_topic_names: topic::RequestedNames<P>,
     topic_fds: HashMap<P, FD, FixedState>, // Deterministic Hashmap
 }
 
-impl<P: Path, FD> Core<P, FD> {
+/// Top Level Response, for the user of the library
+pub enum UsrRes<P: fs::Path> {
+    TopicCreated { name: P },
+}
+
+/* IMPL **********************************************************************/
+
+impl<AFIO: fs::AsyncIO> Node<AFIO> {
+    fn new(seed: u64, id: ID, root_dir: AFIO::P) -> Self {
+        let afio = AFIO::new(root_dir);
+        let core = Core::new(seed);
+        Self { id, afio, core }
+    }
+
+    pub fn topic_create(
+        &mut self,
+        name: AFIO::P,
+    ) -> Result<(), topic::CreateErr> {
+        let topic_id = self.core.create_topic(name)?;
+        let udata = fs::create_udata(topic_id, self.id);
+        self.afio.create(name, udata);
+        Ok(())
+    }
+
+    pub fn local_events_append(&mut self) {}
+}
+
+impl<P: fs::Path, FD> Core<P, FD> {
     fn new(seed: u64) -> Self {
         Self {
             reqd_topic_names: topic::RequestedNames::new(),
@@ -149,42 +96,100 @@ impl<P: Path, FD> Core<P, FD> {
     }
 }
 
-// Non-deterministic part.
-// Wraps io_uring, kqueue, testing etc
-pub trait AsyncFSIO {
-    type P: Path;
-    type FD;
+// Messages sent to an async file system with a req/res interface
+mod fs {
+    use super::{mem, topic, ID};
+    use core::hash::Hash;
 
-    fn new(root_dir: Self::P) -> Self;
+    const _: () = assert!(8 == mem::size_of::<CreateCtx>());
 
-    fn create(&mut self, path: Self::P, udata: u64);
-    fn read(&mut self, fd: Self::FD, udata: u64);
-    fn append(&mut self, fd: Self::FD, udata: u64);
-    fn delete(&mut self, fd: Self::FD, udata: u64);
-}
-
-pub struct Node<AFIO: AsyncFSIO> {
-    id: ID,
-    afio: AFIO,
-    core: Core<AFIO::P, AFIO::FD>,
-}
-
-impl<AFIO: AsyncFSIO> Node<AFIO> {
-    fn new(seed: u64, id: ID, root_dir: AFIO::P) -> Self {
-        let afio = AFIO::new(root_dir);
-        let core = Core::new(seed);
-        Self { id, afio, core }
+    pub enum Res<FD> {
+        Create { fd: FD, udata: CreateCtx },
+        //Read,
+        //Append,
+        //Delete,
     }
 
-    pub fn topic_create(
-        &mut self,
-        name: AFIO::P,
-    ) -> Result<(), topic::CreateErr> {
-        let topic_id = self.core.create_topic(name)?;
-        let udata = fs::create_udata(topic_id, self.id);
-        self.afio.create(name, udata);
-        Ok(())
+    #[repr(C)]
+    pub struct CreateCtx {
+        pub topic_id: topic::ID,
+        node_id: ID,
+        _padding: u32,
     }
 
-    pub fn local_events_append(&mut self) {}
+    pub fn create_udata(topic_id: topic::ID, node_id: ID) -> u64 {
+        unsafe { mem::transmute(CreateCtx { topic_id, node_id, _padding: 0 }) }
+    }
+
+    pub trait Path: rustix::path::Arg + Copy + Default + Eq + Hash {}
+
+    // Non-deterministic part.
+    // Wraps io_uring, kqueue, testing etc
+    pub trait AsyncIO {
+        type P: Path;
+        type FD;
+
+        fn new(root_dir: Self::P) -> Self;
+
+        fn create(&mut self, path: Self::P, udata: u64);
+        fn read(&mut self, fd: Self::FD, udata: u64);
+        fn append(&mut self, fd: Self::FD, udata: u64);
+        fn delete(&mut self, fd: Self::FD, udata: u64);
+    }
+}
+
+mod topic {
+    use super::fs;
+    use alloc::boxed::Box;
+
+    pub struct ID(u8);
+    const MAX: u8 = 64;
+
+    #[derive(Debug)]
+    pub enum CreateErr {
+        DuplicateName,
+        ReservationLimitExceeded,
+    }
+
+    /// Topics that are waiting to be created
+    pub struct RequestedNames<Path> {
+        /// Using an array so we can give each name a small "address"
+        /// Ensure size is less than 256 bytes so we can use a u8 as the index
+        names: Box<[Path; MAX as usize]>,
+        /// Bitmask where 1 = occupied, 0 = available
+        /// Allows us to remove names from the middle of the names array w/o
+        /// re-ordering. If this array is empty, we've exceeded the capacity of
+        /// names
+        used_slots: u64,
+    }
+
+    impl<P: fs::Path> RequestedNames<P> {
+        pub fn new() -> Self {
+            Self { names: Box::new([P::default(); 64]), used_slots: 0 }
+        }
+
+        pub fn add(&mut self, name: P) -> Result<ID, CreateErr> {
+            if self.names.contains(&name) {
+                return Err(CreateErr::DuplicateName);
+            }
+
+            // Find first free slot
+            let idx = (!self.used_slots).trailing_zeros() as u8;
+            if idx >= MAX {
+                return Err(CreateErr::ReservationLimitExceeded);
+            }
+
+            // Mark slot as used
+            self.used_slots |= 1u64 << idx;
+            self.names[idx as usize] = name;
+
+            Ok(ID(idx))
+        }
+
+        pub fn remove(&mut self, topic_id: ID) -> P {
+            assert!(topic_id.0 < MAX, "Index out of bounds");
+            self.used_slots &= !(1u64 << topic_id.0);
+            core::mem::take(&mut self.names[topic_id.0 as usize])
+        }
+    }
 }
