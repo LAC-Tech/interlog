@@ -1,18 +1,17 @@
 extern crate alloc;
 use core::mem;
 
-use foldhash::fast::FixedState;
-use hashbrown::{hash_map, HashMap};
+use crate::deterministic_hash_map::{Entry, Ext, HashMap};
 
 // Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
 const _: () = assert!(8 == mem::size_of::<*mut core::ffi::c_void>());
 
 /* DATA **********************************************************************/
 
-pub struct Node<AFIO: fs::AsyncIO> {
+pub struct Node<AFS: fs::AsyncIO> {
     id: ID,
-    afio: AFIO,
-    core: Core<AFIO::P, AFIO::FD>,
+    afs: AFS,
+    core: Core<AFS::P, AFS::FD>,
 }
 
 #[derive(Clone, Copy)]
@@ -23,14 +22,19 @@ struct ID(u8);
 /// 2 - return a meaningful response for user code
 /// It's completey decoupled from any async runtime
 struct Core<P: fs::Path, FD> {
+    /// Used for making various hashmaps deterministic
     seed: u64,
     reqd_topic_names: topic::RequestedNames<P>,
-    topic_aofs: HashMap<P, AppendOnlyFiles<FD>, FixedState>,
+    topics: HashMap<P, Topic<FD>>,
 }
 
-struct AppendOnlyFiles<FD> {
-    local_fd: FD,
-    replicas: HashMap<ID, FD, FixedState>,
+struct Topic<FD> {
+    local: AppendOnlyFile<FD>,
+    replicas: HashMap<ID, AppendOnlyFile<FD>>,
+}
+
+struct AppendOnlyFile<FD> {
+    fd: FD,
 }
 
 /// Top Level Response, for the user of the library
@@ -40,35 +44,45 @@ pub enum UsrRes<P: fs::Path> {
 
 /* IMPL **********************************************************************/
 
-impl<AFIO: fs::AsyncIO> Node<AFIO> {
-    fn new(seed: u64, id: ID, root_dir: AFIO::P) -> Self {
-        let afio = AFIO::new(root_dir);
+impl<AFS: fs::AsyncIO> Node<AFS> {
+    fn new(seed: u64, id: ID, root_dir: AFS::P) -> Self {
+        let afs = AFS::new(root_dir);
         let core = Core::new(seed);
-        Self { id, afio, core }
+        Self { id, afs, core }
     }
 
     pub fn topic_create(
         &mut self,
-        name: AFIO::P,
+        name: AFS::P,
     ) -> Result<(), topic::CreateErr> {
         let topic_id = self.core.create_topic(name)?;
         let udata = fs::create_udata(topic_id, self.id);
-        self.afio.create(name, udata);
+        self.afs.create(name, udata);
         Ok(())
     }
 
-    pub fn local_events_append(&mut self) {}
+    pub fn local_events_append(&mut self) {
+        panic!("TODO")
+    }
+
+    pub fn run_event_loop(&mut self, handler: impl Fn(UsrRes<AFS::P>)) {
+        loop {
+            let fs_res = self.afs.wait_for_res();
+            let usr_res = self.core.fs_res_to_usr_res(fs_res);
+            handler(usr_res)
+        }
+    }
 }
 
 impl<P: fs::Path, FD> Core<P, FD> {
     fn new(seed: u64) -> Self {
         let reqd_topic_names = topic::RequestedNames::new();
-        let topic_aofs = HashMap::with_hasher(FixedState::with_seed(seed));
-        Self { seed, reqd_topic_names, topic_aofs }
+        let topic_aofs = HashMap::new(seed);
+        Self { seed, reqd_topic_names, topics: topic_aofs }
     }
 
     fn create_topic(&mut self, name: P) -> Result<topic::ID, topic::CreateErr> {
-        if self.topic_aofs.contains_key(&name) {
+        if self.topics.contains_key(&name) {
             return Err(topic::CreateErr::DuplicateName);
         }
 
@@ -87,12 +101,12 @@ impl<P: fs::Path, FD> Core<P, FD> {
         match fs_res {
             fs::Res::Create { fd, udata } => {
                 let name = self.reqd_topic_names.remove(udata.topic_id);
-                match self.topic_aofs.entry(name) {
-                    hash_map::Entry::Vacant(entry) => {
-                        let aofs = AppendOnlyFiles::new(fd, self.seed);
+                match self.topics.entry(name) {
+                    Entry::Vacant(entry) => {
+                        let aofs = Topic::new(fd, self.seed);
                         entry.insert(aofs);
                     }
-                    hash_map::Entry::Occupied(_) => {
+                    Entry::Occupied(_) => {
                         panic!("failed to reserve topic name")
                     }
                 }
@@ -102,12 +116,18 @@ impl<P: fs::Path, FD> Core<P, FD> {
     }
 }
 
-impl<FD> AppendOnlyFiles<FD> {
+impl<FD> Topic<FD> {
     fn new(local_fd: FD, seed: u64) -> Self {
         Self {
-            local_fd,
-            replicas: HashMap::with_hasher(FixedState::with_seed(seed)),
+            local: AppendOnlyFile::new(local_fd),
+            replicas: HashMap::new(seed),
         }
+    }
+}
+
+impl<FD> AppendOnlyFile<FD> {
+    fn new(fd: FD) -> Self {
+        Self { fd }
     }
 }
 
@@ -136,6 +156,12 @@ mod fs {
         unsafe { mem::transmute(CreateCtx { topic_id, node_id, _padding: 0 }) }
     }
 
+    impl CreateCtx {
+        pub fn from_u64(udata: u64) -> Self {
+            unsafe { mem::transmute(udata) }
+        }
+    }
+
     pub trait Path: rustix::path::Arg + Copy + Default + Eq + Hash {}
 
     // Non-deterministic part.
@@ -150,11 +176,13 @@ mod fs {
         fn read(&mut self, fd: Self::FD, udata: u64);
         fn append(&mut self, fd: Self::FD, udata: u64);
         fn delete(&mut self, fd: Self::FD, udata: u64);
+
+        fn wait_for_res(&self) -> Res<Self::FD>;
     }
 }
 
 mod topic {
-    use super::fs;
+    use super::{fs, mem};
     use alloc::boxed::Box;
 
     pub struct ID(u8);
@@ -167,6 +195,9 @@ mod topic {
     }
 
     /// Topics that are waiting to be created
+    /// This is to prevent two requests trying to reserve the same name
+    // TODO: this seems like it'd barely ever happen.
+    // Wouldn't the FS fail because the name was the same?
     pub struct RequestedNames<Path> {
         /// Using an array so we can give each name a small "address"
         /// Ensure size is less than 256 bytes so we can use a u8 as the index
@@ -204,7 +235,8 @@ mod topic {
         pub fn remove(&mut self, topic_id: ID) -> P {
             assert!(topic_id.0 < MAX, "Index out of bounds");
             self.used_slots &= !(1u64 << topic_id.0);
-            core::mem::take(&mut self.names[topic_id.0 as usize])
+            let name = &mut self.names[topic_id.0 as usize];
+            mem::take(name)
         }
     }
 }

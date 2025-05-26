@@ -1,3 +1,3 @@
-- Node has high level methods and wraps "Core"
+- make an example that starts the event loop in a new thread then tries to call "create_topic"; see what Core needs to be threadsafe
 - rename log to AOF; ensure events only come from one origin per AOF
 - integet AOF into node

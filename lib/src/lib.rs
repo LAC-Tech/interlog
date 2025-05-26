@@ -27,6 +27,7 @@ compile_error!("code assumes usize is u64");
 #[cfg(not(target_endian = "little"))]
 compile_error!("code assumes little-endian");
 
+mod deterministic_hash_map;
 mod linux;
-pub mod log;
-mod node;
+mod log;
+pub mod node;
