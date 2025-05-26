@@ -31,3 +31,4 @@ mod deterministic_hash_map;
 mod linux;
 mod log;
 pub mod node;
+mod slotmap;

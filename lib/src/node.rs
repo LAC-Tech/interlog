@@ -2,6 +2,7 @@ extern crate alloc;
 use core::mem;
 
 use crate::deterministic_hash_map::{Entry, Ext, HashMap};
+use crate::slotmap::{self, SlotMap};
 
 // Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
 const _: () = assert!(8 == mem::size_of::<*mut core::ffi::c_void>());
@@ -24,7 +25,11 @@ struct ID(u8);
 struct Core<P: fs::Path, FD> {
     /// Used for making various hashmaps deterministic
     seed: u64,
-    reqd_topic_names: topic::RequestedNames<P>,
+    /// Topics that are waiting to be created
+    /// This is to prevent two requests trying to reserve the same name
+    // TODO: this seems like it'd barely ever happen.
+    // Wouldn't the FS fail because the name was the same?
+    reqd_topic_names: SlotMap<P>,
     topics: HashMap<P, Topic<FD>>,
 }
 
@@ -32,6 +37,8 @@ struct Topic<FD> {
     local: AppendOnlyFile<FD>,
     replicas: HashMap<ID, AppendOnlyFile<FD>>,
 }
+
+pub struct TopicID(u8);
 
 struct AppendOnlyFile<FD> {
     fd: FD,
@@ -51,10 +58,7 @@ impl<AFS: fs::AsyncIO> Node<AFS> {
         Self { id, afs, core }
     }
 
-    pub fn topic_create(
-        &mut self,
-        name: AFS::P,
-    ) -> Result<(), topic::CreateErr> {
+    pub fn topic_create(&mut self, name: AFS::P) -> Result<(), slotmap::Err> {
         let topic_id = self.core.create_topic(name)?;
         let udata = fs::create_udata(topic_id, self.id);
         self.afs.create(name, udata);
@@ -76,19 +80,14 @@ impl<AFS: fs::AsyncIO> Node<AFS> {
 
 impl<P: fs::Path, FD> Core<P, FD> {
     fn new(seed: u64) -> Self {
-        let reqd_topic_names = topic::RequestedNames::new();
+        let reqd_topic_names = SlotMap::new();
         let topic_aofs = HashMap::new(seed);
         Self { seed, reqd_topic_names, topics: topic_aofs }
     }
 
-    fn create_topic(&mut self, name: P) -> Result<topic::ID, topic::CreateErr> {
-        if self.topics.contains_key(&name) {
-            return Err(topic::CreateErr::DuplicateName);
-        }
-
-        let topic_id = self.reqd_topic_names.add(name)?;
-
-        Ok(topic_id)
+    fn create_topic(&mut self, name: P) -> Result<TopicID, slotmap::Err> {
+        let slot = self.reqd_topic_names.add(name)?;
+        Ok(TopicID(slot))
     }
 
     /// This turns internal DB and async io stuff into something relevant
@@ -100,7 +99,7 @@ impl<P: fs::Path, FD> Core<P, FD> {
     fn fs_res_to_usr_res(&mut self, fs_res: fs::Res<FD>) -> UsrRes<P> {
         match fs_res {
             fs::Res::Create { fd, udata } => {
-                let name = self.reqd_topic_names.remove(udata.topic_id);
+                let name = self.reqd_topic_names.remove(udata.topic_id.0);
                 match self.topics.entry(name) {
                     Entry::Vacant(entry) => {
                         let aofs = Topic::new(fd, self.seed);
@@ -133,7 +132,7 @@ impl<FD> AppendOnlyFile<FD> {
 
 // Messages sent to an async file system with a req/res interface
 mod fs {
-    use super::{mem, topic, ID};
+    use super::{mem, TopicID, ID};
     use core::hash::Hash;
 
     const _: () = assert!(8 == mem::size_of::<CreateCtx>());
@@ -147,12 +146,12 @@ mod fs {
 
     #[repr(C)]
     pub struct CreateCtx {
-        pub topic_id: topic::ID,
+        pub topic_id: TopicID,
         node_id: ID,
         _padding: u32,
     }
 
-    pub fn create_udata(topic_id: topic::ID, node_id: ID) -> u64 {
+    pub fn create_udata(topic_id: TopicID, node_id: ID) -> u64 {
         unsafe { mem::transmute(CreateCtx { topic_id, node_id, _padding: 0 }) }
     }
 
@@ -178,65 +177,5 @@ mod fs {
         fn delete(&mut self, fd: Self::FD, udata: u64);
 
         fn wait_for_res(&self) -> Res<Self::FD>;
-    }
-}
-
-mod topic {
-    use super::{fs, mem};
-    use alloc::boxed::Box;
-
-    pub struct ID(u8);
-    const MAX: u8 = 64;
-
-    #[derive(Debug)]
-    pub enum CreateErr {
-        DuplicateName,
-        ReservationLimitExceeded,
-    }
-
-    /// Topics that are waiting to be created
-    /// This is to prevent two requests trying to reserve the same name
-    // TODO: this seems like it'd barely ever happen.
-    // Wouldn't the FS fail because the name was the same?
-    pub struct RequestedNames<Path> {
-        /// Using an array so we can give each name a small "address"
-        /// Ensure size is less than 256 bytes so we can use a u8 as the index
-        names: Box<[Path; MAX as usize]>,
-        /// Bitmask where 1 = occupied, 0 = available
-        /// Allows us to remove names from the middle of the names array w/o
-        /// re-ordering. If this array is empty, we've exceeded the capacity of
-        /// names
-        used_slots: u64,
-    }
-
-    impl<P: fs::Path> RequestedNames<P> {
-        pub fn new() -> Self {
-            Self { names: Box::new([P::default(); 64]), used_slots: 0 }
-        }
-
-        pub fn add(&mut self, name: P) -> Result<ID, CreateErr> {
-            if self.names.contains(&name) {
-                return Err(CreateErr::DuplicateName);
-            }
-
-            // Find first free slot
-            let idx = (!self.used_slots).trailing_zeros() as u8;
-            if idx >= MAX {
-                return Err(CreateErr::ReservationLimitExceeded);
-            }
-
-            // Mark slot as used
-            self.used_slots |= 1u64 << idx;
-            self.names[idx as usize] = name;
-
-            Ok(ID(idx))
-        }
-
-        pub fn remove(&mut self, topic_id: ID) -> P {
-            assert!(topic_id.0 < MAX, "Index out of bounds");
-            self.used_slots &= !(1u64 << topic_id.0);
-            let name = &mut self.names[topic_id.0 as usize];
-            mem::take(name)
-        }
     }
 }
