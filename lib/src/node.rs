@@ -1,6 +1,8 @@
 extern crate alloc;
 use core::mem;
 
+use portable_atomic::AtomicBool;
+
 use crate::deterministic_hash_map::{Entry, Ext, HashMap};
 
 // Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
@@ -12,6 +14,7 @@ pub struct Node<AFS: fs::AsyncIO> {
     id: ID,
     afs: AFS,
     core: Core<AFS::P, AFS::FD>,
+    running: AtomicBool,
 }
 
 #[derive(Clone, Copy)]
@@ -48,7 +51,8 @@ impl<AFS: fs::AsyncIO> Node<AFS> {
     fn new(seed: u64, id: ID, root_dir: AFS::P) -> Self {
         let afs = AFS::new(root_dir);
         let core = Core::new(seed);
-        Self { id, afs, core }
+        let running = AtomicBool::new(true);
+        Self { id, afs, core, running }
     }
 
     pub fn topic_create(
@@ -65,12 +69,16 @@ impl<AFS: fs::AsyncIO> Node<AFS> {
         panic!("TODO")
     }
 
-    pub fn run_event_loop(&mut self, handler: impl Fn(UsrRes<AFS::P>)) {
-        loop {
+    pub fn start_event_loop(&mut self, handler: impl Fn(UsrRes<AFS::P>)) {
+        while self.running.load(core::sync::atomic::Ordering::SeqCst) {
             let fs_res = self.afs.wait_for_res();
             let usr_res = self.core.fs_res_to_usr_res(fs_res);
             handler(usr_res)
         }
+    }
+
+    pub fn quit_event_loop(&mut self) {
+        self.running.swap(false, core::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -87,7 +95,6 @@ impl<P: fs::Path, FD> Core<P, FD> {
         }
 
         let topic_id = self.reqd_topic_names.add(name)?;
-
         Ok(topic_id)
     }
 
