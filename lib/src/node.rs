@@ -29,7 +29,14 @@ mod async_io {
     #[repr(align(8))]
     #[cfg_attr(
         test,
-        derive(arbtest::arbitrary::Arbitrary, Debug, PartialEq, Eq)
+        derive(
+            arbtest::arbitrary::Arbitrary,
+            Clone,
+            Copy,
+            Debug,
+            PartialEq,
+            Eq
+        )
     )]
     enum UsrData {
         ClientConnected,
@@ -38,7 +45,7 @@ mod async_io {
     }
 
     impl UsrData {
-        fn as_u64(&self) -> u64 {
+        fn as_u64(self) -> u64 {
             unsafe { mem::transmute(self) }
         }
 
