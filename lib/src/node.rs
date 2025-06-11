@@ -3,12 +3,92 @@ use core::mem;
 
 use portable_atomic::AtomicBool;
 
-use crate::deterministic_hash_map::{Entry, Ext, HashMap};
-use crate::slotmap::{self, SlotMap};
+//use crate::deterministic_hash_map::{Entry, Ext, HashMap};
+use crate::slotmap::SlotMap;
 
-// Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
-const _: () = assert!(8 == mem::size_of::<*mut core::ffi::c_void>());
+mod async_io {
+    use core::{ffi, mem};
 
+    struct Res<FD> {
+        rc: FD,
+        usr_data: u64,
+    }
+
+    mod req {
+        type Accept = u64;
+        struct Send<FD> {
+            usr_data: u64,
+            client_fd: FD,
+        }
+        struct Recv<FD> {
+            user_data: u64,
+            client_fd: FD,
+        }
+    }
+
+    #[repr(align(8))]
+    #[cfg_attr(
+        test,
+        derive(arbtest::arbitrary::Arbitrary, Debug, PartialEq, Eq)
+    )]
+    enum UsrData {
+        ClientConnected,
+        ClientReady { client_id: u8 },
+        ClientMsg { client_id: u8 },
+    }
+
+    impl UsrData {
+        fn as_u64(&self) -> u64 {
+            unsafe { mem::transmute(self) }
+        }
+
+        fn from_u64(u: u64) -> Self {
+            unsafe { mem::transmute(u) }
+        }
+    }
+
+    // Kqueue's udata and io_uring's user_data are void* and _u64 respectively
+    const _: () = assert!(8 == mem::size_of::<*mut ffi::c_void>());
+    const _: () = assert!(8 == mem::size_of::<UsrData>());
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use arbtest::arbtest;
+        use pretty_assertions::assert_eq;
+
+        // There we go now my transmuting is safe
+        #[test]
+        fn header_serde() {
+            arbtest(|u| {
+                let expected: UsrData = u.arbitrary()?;
+                let actual = UsrData::from_u64(expected.as_u64());
+                assert_eq!(actual, expected);
+
+                Ok(())
+            });
+        }
+    }
+}
+
+mod in_mem {
+    use crate::slotmap::SlotMap;
+
+    struct InMem<FD> {
+        client_fds: SlotMap<FD>,
+        recv_buf: &'static [u8],
+    }
+
+    //fn initial_aio_req() -> u64 {}
+
+    impl<FD: Copy + Default + Eq> InMem<FD> {
+        fn new(recv_buf: &'static [u8]) -> Self {
+            Self { client_fds: SlotMap::new(), recv_buf }
+        }
+    }
+}
+
+/*
 /* DATA **********************************************************************/
 
 pub struct Node<AFS: fs::AsyncIO> {
@@ -187,3 +267,4 @@ mod fs {
         fn wait_for_res(&self) -> Res<Self::FD>;
     }
 }
+*/
