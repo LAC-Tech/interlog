@@ -14,15 +14,15 @@ mod async_io {
         usr_data: u64,
     }
 
-    mod req {
+    pub mod req {
         type Accept = u64;
         struct Send<FD> {
             usr_data: u64,
             client_fd: FD,
         }
-        struct Recv<FD> {
-            user_data: u64,
-            client_fd: FD,
+        pub struct Recv<FD> {
+            pub usr_data: u64,
+            pub client_fd: FD,
         }
     }
 
@@ -38,14 +38,14 @@ mod async_io {
             Eq
         )
     )]
-    enum UsrData {
+    pub enum UsrData {
         ClientConnected,
         ClientReady { client_id: u8 },
         ClientMsg { client_id: u8 },
     }
 
     impl UsrData {
-        fn as_u64(self) -> u64 {
+        pub fn as_u64(self) -> u64 {
             unsafe { mem::transmute(self) }
         }
 
@@ -66,7 +66,7 @@ mod async_io {
 
         // There we go now my transmuting is safe
         #[test]
-        fn header_serde() {
+        fn usr_data_casting() {
             arbtest(|u| {
                 let expected: UsrData = u.arbitrary()?;
                 let actual = UsrData::from_u64(expected.as_u64());
@@ -81,18 +81,34 @@ mod async_io {
 mod in_mem {
     use crate::slotmap::SlotMap;
 
-    struct InMem<FD> {
-        client_fds: SlotMap<FD>,
-        recv_buf: &'static [u8],
+    use super::async_io::{req, UsrData};
+
+    struct InMem<'a, FD> {
+        client_fds: SlotMap<'a, FD, MAX_CLIENTS>,
+        recv_buf: &'a mut [u8],
     }
 
-    //fn initial_aio_req() -> u64 {}
+    fn initial_aio_req() -> u64 {
+        UsrData::ClientConnected.as_u64()
+    }
 
-    impl<FD: Copy + Default + Eq> InMem<FD> {
-        fn new(recv_buf: &'static [u8]) -> Self {
-            Self { client_fds: SlotMap::new(), recv_buf }
+    impl<'a, FD: Copy + Default + Eq> InMem<'a, FD> {
+        fn new(
+            recv_buf: &'a mut [u8],
+            client_fds_buf: &'a mut [FD; MAX_CLIENTS],
+        ) -> Self {
+            Self { client_fds: SlotMap::new(client_fds_buf), recv_buf }
+        }
+
+        fn prepare_client(&mut self, client_id: u8) -> req::Recv<FD> {
+            let client_fd = self.client_fds.get(client_id).unwrap();
+            let usr_data = UsrData::ClientMsg { client_id }.as_u64();
+
+            req::Recv { usr_data, client_fd }
         }
     }
+
+    const MAX_CLIENTS: usize = 2;
 }
 
 /*
