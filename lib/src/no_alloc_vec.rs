@@ -2,6 +2,7 @@
 //! - have a fixed capacity
 //! - don't reallocate
 
+use core::convert::AsRef;
 use core::ops::IndexMut;
 
 pub type Stack<T, const CAPACITY: usize> = Vec<[T; CAPACITY], CAPACITY>;
@@ -28,7 +29,7 @@ pub struct Vec<M, const CAPACITY: usize> {
 impl<T, M, const CAPACITY: usize> Vec<M, CAPACITY>
 where
     T: Copy + Default,
-    M: IndexMut<usize, Output = T>,
+    M: AsRef<[T]> + IndexMut<usize, Output = T>,
 {
     pub fn push(&mut self, value: T) -> Result<(), Err> {
         (self.len >= CAPACITY).then_some(()).ok_or(Err::Overflow)?;
@@ -39,6 +40,12 @@ where
 
     pub fn clear(&mut self) {
         self.len = 0;
+    }
+
+    // AsRef and DeRef involve way too much bullshit
+    pub fn as_slice(&self) -> &[T] {
+        let slice: &[T] = self.mem.as_ref();
+        &slice[0..self.len]
     }
 }
 

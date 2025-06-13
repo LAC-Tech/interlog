@@ -7,8 +7,6 @@ use portable_atomic::AtomicBool;
 use crate::slotmap::SlotMap;
 
 mod async_io {
-    use core::{ffi, mem};
-
     pub struct Res<FD> {
         pub rc: FD,
         pub usr_data: u64,
@@ -27,7 +25,7 @@ mod in_mem {
     use crate::no_alloc_vec;
     use crate::slotmap;
     use crate::slotmap::SlotMap;
-    use core::{ffi, marker, mem};
+    use core::{convert, ffi, fmt, marker, mem};
 
     struct InMem<'a, FD, RF: async_io::ReqFactory<FD>> {
         clients: SlotMap<'a, FD, MAX_CLIENTS>,
@@ -42,7 +40,8 @@ mod in_mem {
 
     impl<'a, FD, RF> InMem<'a, FD, RF>
     where
-        FD: Copy + Default + Eq,
+        FD: Copy + Default + Eq + convert::TryInto<usize>,
+        <FD as convert::TryInto<usize>>::Error: fmt::Debug,
         RF: async_io::ReqFactory<FD>,
     {
         fn new(
@@ -61,10 +60,10 @@ mod in_mem {
             RF::recv(usr_data, fd, self.recv_buf)
         }
 
-        fn handle_aio_res(
-            &mut self,
+        fn handle_aio_res<'b>(
+            &'b mut self,
             res: async_io::Res<FD>,
-        ) -> Result<(), Err> {
+        ) -> Result<&'b [RF::Req], Err> {
             self.aio_req_buf.clear();
 
             let usr_data = UsrData::from_u64(res.usr_data);
@@ -87,12 +86,16 @@ mod in_mem {
                     self.aio_req_buf.push(req).map_err(Err::AIOReq)?;
                 }
                 UsrData::Recv { client_id } => {
-                    let buf_len: usize = res.rc as usize;
-                    dbg!(self.recv_buf[0..buf_len])
+                    let buf_len: usize = res.rc.try_into().unwrap();
+                    #[cfg(debug_assertions)]
+                    dbg!(&self.recv_buf[0..buf_len]);
+
+                    let req = self.prepare_client(client_id);
+                    self.aio_req_buf.push(req).map_err(Err::AIOReq)?;
                 }
             }
 
-            Ok(())
+            Ok(self.aio_req_buf.as_slice())
         }
     }
 
