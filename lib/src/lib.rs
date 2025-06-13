@@ -30,5 +30,6 @@ compile_error!("code assumes little-endian");
 mod deterministic_hash_map;
 mod linux;
 mod log;
+mod no_alloc_vec;
 pub mod node;
 mod slotmap;

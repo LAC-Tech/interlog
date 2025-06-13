@@ -9,22 +9,99 @@ use crate::slotmap::SlotMap;
 mod async_io {
     use core::{ffi, mem};
 
-    struct Res<FD> {
-        rc: FD,
-        usr_data: u64,
+    pub struct Res<FD> {
+        pub rc: FD,
+        pub usr_data: u64,
     }
 
-    pub mod req {
-        type Accept = u64;
-        struct Send<FD> {
-            usr_data: u64,
-            client_fd: FD,
+    pub trait ReqFactory<FD> {
+        type Req: Copy + Default;
+        fn accept_multishot(usr_data: u64, fd: FD) -> Self::Req;
+        fn recv(usr_data: u64, fd: FD, buf: &mut [u8]) -> Self::Req;
+        fn send(usr_data: u64, fd: FD, buf: &[u8]) -> Self::Req;
+    }
+}
+
+mod in_mem {
+    use super::async_io;
+    use crate::no_alloc_vec;
+    use crate::slotmap;
+    use crate::slotmap::SlotMap;
+    use core::{ffi, marker, mem};
+
+    struct InMem<'a, FD, RF: async_io::ReqFactory<FD>> {
+        clients: SlotMap<'a, FD, MAX_CLIENTS>,
+        recv_buf: &'a mut [u8],
+        aio_req_buf: no_alloc_vec::Stack<RF::Req, 2>,
+        _rf: marker::PhantomData<RF>,
+    }
+
+    fn initial_aio_req() -> u64 {
+        UsrData::Accept.as_u64()
+    }
+
+    impl<'a, FD, RF> InMem<'a, FD, RF>
+    where
+        FD: Copy + Default + Eq,
+        RF: async_io::ReqFactory<FD>,
+    {
+        fn new(
+            recv_buf: &'a mut [u8],
+            client_fds_buf: &'a mut [FD; MAX_CLIENTS],
+        ) -> Self {
+            let client_fds = SlotMap::new(client_fds_buf);
+            let aio_req_buf = no_alloc_vec::create_on_stack();
+            let _rf = marker::PhantomData;
+            Self { clients: client_fds, recv_buf, aio_req_buf, _rf }
         }
-        pub struct Recv<FD> {
-            pub usr_data: u64,
-            pub client_fd: FD,
+
+        fn prepare_client(&mut self, client_id: u8) -> RF::Req {
+            let fd = self.clients.get(client_id).unwrap();
+            let usr_data = UsrData::Recv { client_id }.as_u64();
+            RF::recv(usr_data, fd, self.recv_buf)
+        }
+
+        fn handle_aio_res(
+            &mut self,
+            res: async_io::Res<FD>,
+        ) -> Result<(), Err> {
+            self.aio_req_buf.clear();
+
+            let usr_data = UsrData::from_u64(res.usr_data);
+            match usr_data {
+                UsrData::Accept => {
+                    let fd_client = res.rc;
+                    let client_id =
+                        self.clients.add(fd_client).map_err(Err::Client)?;
+
+                    let req = RF::send(
+                        UsrData::Send { client_id }.as_u64(),
+                        fd_client,
+                        b"connection acknowledged\n",
+                    );
+
+                    self.aio_req_buf.push(req).map_err(Err::AIOReq)?;
+                }
+                UsrData::Send { client_id } => {
+                    let req = self.prepare_client(client_id);
+                    self.aio_req_buf.push(req).map_err(Err::AIOReq)?;
+                }
+                UsrData::Recv { client_id } => {
+                    let buf_len: usize = res.rc as usize;
+                    dbg!(self.recv_buf[0..buf_len])
+                }
+            }
+
+            Ok(())
         }
     }
+
+    pub enum Err {
+        Client(slotmap::Err),
+        AIOReq(no_alloc_vec::Err),
+    }
+
+    const MAX_CLIENTS: usize = 2;
 
     #[repr(align(8))]
     #[cfg_attr(
@@ -38,14 +115,14 @@ mod async_io {
             Eq
         )
     )]
-    pub enum UsrData {
-        ClientConnected,
-        ClientReady { client_id: u8 },
-        ClientMsg { client_id: u8 },
+    enum UsrData {
+        Accept,
+        Recv { client_id: u8 },
+        Send { client_id: u8 },
     }
 
     impl UsrData {
-        pub fn as_u64(self) -> u64 {
+        fn as_u64(self) -> u64 {
             unsafe { mem::transmute(self) }
         }
 
@@ -76,39 +153,6 @@ mod async_io {
             });
         }
     }
-}
-
-mod in_mem {
-    use crate::slotmap::SlotMap;
-
-    use super::async_io::{req, UsrData};
-
-    struct InMem<'a, FD> {
-        client_fds: SlotMap<'a, FD, MAX_CLIENTS>,
-        recv_buf: &'a mut [u8],
-    }
-
-    fn initial_aio_req() -> u64 {
-        UsrData::ClientConnected.as_u64()
-    }
-
-    impl<'a, FD: Copy + Default + Eq> InMem<'a, FD> {
-        fn new(
-            recv_buf: &'a mut [u8],
-            client_fds_buf: &'a mut [FD; MAX_CLIENTS],
-        ) -> Self {
-            Self { client_fds: SlotMap::new(client_fds_buf), recv_buf }
-        }
-
-        fn prepare_client(&mut self, client_id: u8) -> req::Recv<FD> {
-            let client_fd = self.client_fds.get(client_id).unwrap();
-            let usr_data = UsrData::ClientMsg { client_id }.as_u64();
-
-            req::Recv { usr_data, client_fd }
-        }
-    }
-
-    const MAX_CLIENTS: usize = 2;
 }
 
 /*
