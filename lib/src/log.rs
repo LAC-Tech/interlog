@@ -630,7 +630,7 @@ mod tests {
 		assert_eq!(original_cmtd, rebuilt_cmtd);
 	}
 
-	// Figure 2 from "Why Logical Clocks are Easy" (Baquero, Preguiça, 2016)
+	// Figure 2 from "Why Logical Clocks are Easy" (Baquero, Preguiça, 2016) https://dl.acm.org/doi/10.1145/2890782
 	#[test]
 	fn sync_example() {
 		let (mut log_a, mut log_b, mut log_c) = (
