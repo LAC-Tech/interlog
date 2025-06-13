@@ -42,7 +42,6 @@ where
         self.len = 0;
     }
 
-    // AsRef and DeRef involve way too much bullshit
     pub fn as_slice(&self) -> &[T] {
         let slice: &[T] = self.mem.as_ref();
         &slice[0..self.len]
