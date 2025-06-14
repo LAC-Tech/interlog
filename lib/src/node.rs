@@ -36,10 +36,11 @@ mod async_io {
 
 mod linux {
     use super::async_io;
+    use core::ffi;
     use rustix::fd;
     use rustix::io_uring::{
-        io_uring_sqe, io_uring_user_data, ioprio_union, op_flags_union,
-        IoringAcceptFlags, IoringOp, IoringSqeFlags,
+        addr_or_splice_off_in_union, io_uring_sqe, io_uring_user_data,
+        ioprio_union, len_union, IoringAcceptFlags, IoringOp, IoringSqeFlags,
     };
 
     struct ReqFactory;
@@ -62,9 +63,33 @@ mod linux {
             }
         }
 
-        fn recv(usr_data: u64, fd: Self::FD, buf: &mut [u8]) -> Self::Req {}
+        fn recv(usr_data: u64, fd: Self::FD, buf: &mut [u8]) -> Self::Req {
+            Self::Req {
+                opcode: IoringOp::Recv,
+                flags: IoringSqeFlags::empty(),
+                fd,
+                user_data: io_uring_user_data { u64_: usr_data },
+                addr_or_splice_off_in: addr_or_splice_off_in_union {
+                    addr: (buf.as_mut_ptr() as *mut ffi::c_void).into(),
+                },
+                len: len_union { len: buf.len() as u32 },
+                ..Default::default()
+            }
+        }
 
-        fn send(usr_data: u64, fd: Self::FD, buf: &[u8]) -> Self::Req {}
+        fn send(usr_data: u64, fd: Self::FD, buf: &[u8]) -> Self::Req {
+            Self::Req {
+                opcode: IoringOp::Send,
+                flags: IoringSqeFlags::empty(),
+                fd,
+                user_data: io_uring_user_data { u64_: usr_data },
+                addr_or_splice_off_in: addr_or_splice_off_in_union {
+                    addr: (buf.as_ptr() as *mut ffi::c_void).into(),
+                },
+                len: len_union { len: buf.len() as u32 },
+                ..Default::default()
+            }
+        }
     }
 }
 
