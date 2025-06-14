@@ -7,13 +7,18 @@ use portable_atomic::AtomicBool;
 use crate::slotmap::SlotMap;
 
 mod async_io {
+    use core::{convert, fmt};
     pub struct Res<FD> {
         pub rc: FD,
         pub usr_data: u64,
     }
 
     pub trait ReqFactory {
-        type FD;
+        type FD: Copy
+            + Default
+            + Eq
+            // So I can unwrap
+            + convert::TryInto<usize, Error: core::fmt::Debug>;
         type Req: Copy + Default;
         fn accept_multishot(usr_data: u64, fd: Self::FD) -> Self::Req;
         fn recv(usr_data: u64, fd: Self::FD, buf: &mut [u8]) -> Self::Req;
@@ -31,13 +36,35 @@ mod async_io {
 
 mod linux {
     use super::async_io;
-    use rustix::fd::AsFd;
-    use rustix::io_uring::io_uring_sqe;
+    use rustix::fd;
+    use rustix::io_uring::{
+        io_uring_sqe, io_uring_user_data, ioprio_union, op_flags_union,
+        IoringAcceptFlags, IoringOp, IoringSqeFlags,
+    };
 
     struct ReqFactory;
 
     impl async_io::ReqFactory for ReqFactory {
-        // TODO: I have no idea about how to reason about FD lifetimes
+        // Not reasoning about FD lifetimes at this level
+        type FD = fd::RawFd;
+        type Req = io_uring_sqe;
+
+        fn accept_multishot(usr_data: u64, fd: fd::RawFd) -> Self::Req {
+            Self::Req {
+                opcode: IoringOp::Accept,
+                flags: IoringSqeFlags::empty(),
+                ioprio: ioprio_union {
+                    accept_flags: IoringAcceptFlags::MULTISHOT,
+                },
+                fd,
+                user_data: io_uring_user_data { u64_: usr_data },
+                ..Default::default()
+            }
+        }
+
+        fn recv(usr_data: u64, fd: Self::FD, buf: &mut [u8]) -> Self::Req {}
+
+        fn send(usr_data: u64, fd: Self::FD, buf: &[u8]) -> Self::Req {}
     }
 }
 
@@ -46,10 +73,10 @@ mod in_mem {
     use crate::no_alloc_vec;
     use crate::slotmap;
     use crate::slotmap::SlotMap;
-    use core::{convert, ffi, fmt, marker, mem};
+    use core::{ffi, marker, mem};
 
-    struct InMem<'a, FD, RF: async_io::ReqFactory<FD>> {
-        clients: SlotMap<'a, FD, MAX_CLIENTS>,
+    struct InMem<'a, RF: async_io::ReqFactory> {
+        clients: SlotMap<'a, RF::FD, MAX_CLIENTS>,
         recv_buf: &'a mut [u8],
         aio_req_buf: no_alloc_vec::Stack<RF::Req, 2>,
         _rf: marker::PhantomData<RF>,
@@ -59,15 +86,10 @@ mod in_mem {
         UsrData::Accept.as_u64()
     }
 
-    impl<'a, FD, RF> InMem<'a, FD, RF>
-    where
-        FD: Copy + Default + Eq + convert::TryInto<usize>,
-        <FD as convert::TryInto<usize>>::Error: fmt::Debug,
-        RF: async_io::ReqFactory<FD>,
-    {
+    impl<'a, RF: async_io::ReqFactory> InMem<'a, RF> {
         fn new(
             recv_buf: &'a mut [u8],
-            client_fds_buf: &'a mut [FD; MAX_CLIENTS],
+            client_fds_buf: &'a mut [RF::FD; MAX_CLIENTS],
         ) -> Self {
             let client_fds = SlotMap::new(client_fds_buf);
             let aio_req_buf = no_alloc_vec::create_on_stack();
@@ -83,7 +105,7 @@ mod in_mem {
 
         fn handle_aio_res<'b>(
             &'b mut self,
-            res: async_io::Res<FD>,
+            res: async_io::Res<RF::FD>,
         ) -> Result<&'b [RF::Req], Err> {
             self.aio_req_buf.clear();
 
