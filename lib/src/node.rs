@@ -37,7 +37,12 @@ mod async_io {
 mod linux {
     use super::async_io;
     use core::sync::atomic::AtomicU32;
-    use core::{ffi, mem, ptr};
+    use core::{
+        ffi,
+        mem::{align_of, size_of},
+        ops::{Index, IndexMut},
+        ptr,
+    };
     use rustix::fd::AsFd;
     use rustix::io_uring::{
         addr_or_splice_off_in_union, io_uring_cqe, io_uring_params,
@@ -173,63 +178,102 @@ mod linux {
         mask: u32,
         flags: *const AtomicU32,
         dropped: *const AtomicU32,
-        sq_mmap: Mmap,
-        sqentries_mmap: Mmap,
+        sqes: Mmap<io_uring_sqe>,
+        ring_buf: Mmap<u8>,
     }
 
     impl SQEvents {
         fn new(fd: fd::BorrowedFd, p: io_uring_params) -> io::Result<Self> {
-            // TODO: wtf is this equation for
-            let size: usize = core::cmp::max(
-                p.sq_off.array as usize
-                    + p.sq_entries as usize * mem::size_of::<u32>(),
-                p.cq_off.cqes as usize
-                    + p.cq_entries as usize * mem::size_of::<io_uring_cqe>(),
-            );
+            let io_uring_params { sq_off, cq_off, .. } = p;
+            let size = core::cmp::max(
+                // This one is in the man page for io_uring_enter
+                sq_off.array + p.sq_entries * size_of::<u32>() as u32,
+                // WTF is this one?!
+                cq_off.cqes + p.cq_entries * size_of::<io_uring_cqe>() as u32,
+            ) as usize;
 
-            let sq_mmap = Mmap::new(size, fd, IORING_OFF_SQ_RING);
+            let ring_buf = Mmap::<u8>::new(size, fd, IORING_OFF_SQ_RING)?;
 
-            let sqentries_mmap = Mmap::new(
-                p.sq_entries.into() * mem::size_of::<io_uring_sqe>(),
+            let sqes = Mmap::<io_uring_sqe>::new(
+                p.sq_entries as usize * size_of::<io_uring_sqe>(),
                 fd,
                 IORING_OFF_SQES,
-            );
+            )?;
 
-            Ok(Self {})
+            let result = unsafe {
+                Self {
+                    head: *(ring_buf.ptr.add(sq_off.head as usize))
+                        as *const AtomicU32,
+                    tail: *(ring_buf.ptr.add(sq_off.tail as usize))
+                        as *const AtomicU32,
+                    mask: *(ring_buf.ptr.add(sq_off.ring_mask as usize)
+                        as *const u32),
+                    flags: *(ring_buf.ptr.add(sq_off.flags as usize))
+                        as *const AtomicU32,
+                    dropped: *(ring_buf.ptr.add(sq_off.dropped as usize))
+                        as *const AtomicU32,
+
+                    sqes,
+                    ring_buf,
+                }
+            };
+
+            Ok(result)
         }
     }
 
-    struct Mmap {
-        addr: ptr::NonNull<ffi::c_void>,
-        len: usize,
+    struct Mmap<T: Copy> {
+        ptr: *mut T,
+        n_elems: usize,
     }
 
-    impl Mmap {
-        pub fn new<FD>(len: usize, fd: FD, offset: u64) -> io::Result<Mmap>
+    impl<T: Copy> Mmap<T> {
+        pub fn new<FD>(size: usize, fd: FD, offset: u64) -> io::Result<Self>
         where
             FD: fd::AsFd,
         {
-            let addr = unsafe {
+            let elem_size = size_of::<T>();
+            assert_eq!(size % elem_size, 0);
+            assert_eq!(offset % elem_size as u64, 0);
+
+            let ptr = unsafe {
                 mmap(
                     ptr::null_mut(),
-                    len,
+                    size,
                     mm::ProtFlags::READ | mm::ProtFlags::WRITE,
                     mm::MapFlags::SHARED | mm::MapFlags::POPULATE,
                     fd,
                     offset,
                 )?
             };
+            assert!(!ptr.is_null());
+            assert_eq!(ptr as usize % align_of::<T>(), 0);
 
-            let addr = ptr::NonNull::new(addr).unwrap();
-            Ok(Self { addr, len })
+            let n_elems = size / elem_size;
+
+            Ok(Self { ptr: ptr as *mut T, n_elems })
         }
     }
 
-    impl Drop for Mmap {
+    impl<T: Copy> Drop for Mmap<T> {
         fn drop(&mut self) {
             unsafe {
-                mm::munmap(self.addr.as_ptr(), self.len).unwrap();
+                let size = self.n_elems * size_of::<T>();
+                mm::munmap(self.ptr as *mut ffi::c_void, size).unwrap();
             }
+        }
+    }
+
+    impl<T: Copy> Index<usize> for Mmap<T> {
+        type Output = T;
+        fn index(&self, index: usize) -> &Self::Output {
+            unsafe { &*self.ptr.add(index) }
+        }
+    }
+
+    impl<T: Copy> IndexMut<usize> for Mmap<T> {
+        fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+            unsafe { &mut *self.ptr.add(index) }
         }
     }
 
@@ -415,7 +459,6 @@ mod in_mem {
         }
     }
 }
-
 /*
 /* DATA **********************************************************************/
 
