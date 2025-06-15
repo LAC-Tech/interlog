@@ -5,11 +5,12 @@ edition = "2021"
 
 [dependencies]
 rand = { version = "0.8.5", features = ["small_rng"]}
-rustix = { version = "0.38.41", features = ["fs", "mm", "io_uring"] }
 ports = { path = "../ports" }
 foldhash = "0.1.3"
 hashbrown = { workspace = true }
 portable-atomic = "1.11.0"
+rustix-uring = "0.6.0"
+rustix = "1.0.7" # manually set to be the same as used by rustix
 
 [dev-dependencies]
 arbitrary = {workspace = true}

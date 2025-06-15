@@ -8,6 +8,9 @@ use crate::deterministic_hash_map::{Entry, Ext, HashMap};
 // Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
 const _: () = assert!(8 == mem::size_of::<*mut core::ffi::c_void>());
 
+mod core {}
+
+/*
 /* DATA **********************************************************************/
 
 pub struct Node<AFS: fs::AsyncIO> {
@@ -247,3 +250,4 @@ mod topic {
         }
     }
 }
+*/
