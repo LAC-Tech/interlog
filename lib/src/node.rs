@@ -36,12 +36,159 @@ mod async_io {
 
 mod linux {
     use super::async_io;
-    use core::ffi;
-    use rustix::fd;
+    use core::{ffi, ptr};
+    use rustix::fd::AsFd;
     use rustix::io_uring::{
-        addr_or_splice_off_in_union, io_uring_sqe, io_uring_user_data,
-        ioprio_union, len_union, IoringAcceptFlags, IoringOp, IoringSqeFlags,
+        addr_or_splice_off_in_union, io_uring_params, io_uring_setup,
+        io_uring_sqe, io_uring_user_data, ioprio_union, len_union,
+        IoringAcceptFlags, IoringFeatureFlags, IoringOp, IoringSqeFlags,
     };
+    use rustix::mm;
+    use rustix::net::{bind, listen, socket, sockopt, Ipv4Addr, SocketAddrV4};
+    use rustix::{fd, io, net};
+    use std::panic;
+
+    struct AsyncIO {
+        socket_fd: fd::OwnedFd,
+    }
+
+    impl AsyncIO {
+        fn new() -> io::Result<Self> {
+            let socket_fd = socket(
+                net::AddressFamily::INET,
+                net::SocketType::STREAM,
+                Some(net::ipproto::TCP),
+            )?;
+
+            sockopt::set_socket_reuseaddr(socket_fd.as_fd(), true)?;
+
+            let port = 12345;
+            let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port);
+            bind(socket_fd.as_fd(), &addr)?;
+            listen(socket_fd.as_fd(), 128)?;
+            Ok(Self { socket_fd })
+        }
+    }
+
+    struct Ring {
+        fd: fd::OwnedFd,
+        cqes: CQEvents,
+        sqes: SQEvents,
+    }
+
+    impl Ring {
+        fn with_params(
+            entries: u32,
+            p: &mut io_uring_params,
+        ) -> Result<Self, RingErr> {
+            use io::Errno;
+            use RingErr::*;
+
+            if entries == 0 {
+                return Err(EntriesZero);
+            }
+            if !entries.is_power_of_two() {
+                return Err(EntriesNotPowerOfTwo);
+            }
+
+            let res = unsafe { io_uring_setup(entries, p) };
+
+            let fd = res.map_err(|errno| match errno {
+                Errno::FAULT => ParamsOutsideAccessibleAddressSpace,
+                // The resv array contains non-zero data, p.flags contains an
+                // unsupported flag, entries out of bounds, IORING_SETUP_SQ_AFF
+                // was specified without IORING_SETUP_SQPOLL, or
+                // IORING_SETUP_CQSIZE was specified but
+                // linux.io_uring_params.cq_entries was invalid:
+                Errno::INVAL => ArgumentsInvalid,
+                Errno::MFILE => ProcessFdQuotaExceeded,
+                Errno::NFILE => SystemFdQuotaExceeded,
+                Errno::NOMEM => SystemResources,
+                // IORING_SETUP_SQPOLL was specified but effective user ID lacks
+                // sufficient privileges, or a container seccomp policy
+                // prohibits io_uring syscalls:
+                Errno::PERM => PermissionDenied,
+                Errno::NOSYS => SystemOutdated,
+                _ => Unexpected(errno),
+            })?;
+
+            // Kernel versions 5.4 and up use only one mmap() for the submission
+            // and completion queues. This is not an optional feature for us...
+            // if the kernel does it, we have to do it.
+            // The thinking on this by the kernel developers was that both the
+            // submission and the completion queue rings have sizes just over a
+            // power of two, but the submission queue ring is significantly
+            // smaller with u32 slots. By bundling both in a single mmap, the
+            // kernel gets the submission queue ring for free.
+            // See https://patchwork.kernel.org/patch/11115257 for the kernel
+            // patch.
+            // We do not support the double mmap() done before 5.4, because we
+            // want to keep the init/deinit mmap paths simple and because
+            // io_uring has had many bug fixes even since 5.4.
+            if !p.features.contains(IoringFeatureFlags::SINGLE_MMAP) {
+                return Err(SystemOutdated);
+            }
+
+            // Check that the kernel has actually set params and that
+            // "impossible is nothing".
+            assert_ne!(p.sq_entries, 0);
+            assert_ne!(p.cq_entries, 0);
+            assert!(p.cq_entries >= p.sq_entries);
+
+            panic!("todo")
+        }
+    }
+
+    enum RingErr {
+        EntriesZero,
+        EntriesNotPowerOfTwo,
+        ParamsOutsideAccessibleAddressSpace,
+        ArgumentsInvalid,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        SystemResources,
+        PermissionDenied,
+        SystemOutdated,
+        Unexpected(io::Errno),
+    }
+
+    struct CQEvents {}
+
+    struct SQEvents {}
+
+    struct Mmap {
+        addr: ptr::NonNull<ffi::c_void>,
+        len: usize,
+    }
+
+    impl Mmap {
+        pub fn new<FD>(len: usize, fd: FD, offset: u64) -> io::Result<Mmap>
+        where
+            FD: fd::AsFd,
+        {
+            let addr = unsafe {
+                rustix::mm::mmap(
+                    ptr::null_mut(),
+                    len,
+                    mm::ProtFlags::READ | mm::ProtFlags::WRITE,
+                    mm::MapFlags::SHARED | mm::MapFlags::POPULATE,
+                    fd,
+                    offset,
+                )?
+            };
+
+            let addr = ptr::NonNull::new(addr).unwrap();
+            Ok(Self { addr, len })
+        }
+    }
+
+    impl Drop for Mmap {
+        fn drop(&mut self) {
+            unsafe {
+                mm::munmap(self.addr.as_ptr(), self.len).unwrap();
+            }
+        }
+    }
 
     struct ReqFactory;
 
