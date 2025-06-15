@@ -16,8 +16,8 @@
 //! - Assumes linux, 64 bit, little endian - for now at least.
 //! - Will orovide hooks to sync in the future, but actual HTTP (or whatever) server is out of scope.
 
-// This lets me add dbg! statements using "#[cfg(test)]"
-#![cfg_attr(not(test), no_std)]
+// This lets me add dbg! statements using "#[cfg(debug_assertions)]"
+#![cfg_attr(not(debug_assertions), no_std)]
 
 #[macro_use]
 extern crate alloc;
@@ -30,4 +30,6 @@ compile_error!("code assumes little-endian");
 mod deterministic_hash_map;
 mod linux;
 mod log;
+mod no_alloc_vec;
 pub mod node;
+mod slotmap;
