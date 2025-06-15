@@ -36,17 +36,19 @@ mod async_io {
 
 mod linux {
     use super::async_io;
-    use core::{ffi, ptr};
+    use core::sync::atomic::AtomicU32;
+    use core::{ffi, mem, ptr};
     use rustix::fd::AsFd;
     use rustix::io_uring::{
-        addr_or_splice_off_in_union, io_uring_params, io_uring_setup,
-        io_uring_sqe, io_uring_user_data, ioprio_union, len_union,
-        IoringAcceptFlags, IoringFeatureFlags, IoringOp, IoringSqeFlags,
+        addr_or_splice_off_in_union, io_uring_cqe, io_uring_params,
+        io_uring_setup, io_uring_sqe, io_uring_user_data, ioprio_union,
+        len_union, IoringAcceptFlags, IoringFeatureFlags, IoringOp,
+        IoringSqeFlags, IORING_OFF_SQES, IORING_OFF_SQ_RING,
     };
     use rustix::mm;
+    use rustix::mm::mmap;
     use rustix::net::{bind, listen, socket, sockopt, Ipv4Addr, SocketAddrV4};
     use rustix::{fd, io, net};
-    use std::panic;
 
     struct AsyncIO {
         socket_fd: fd::OwnedFd,
@@ -135,6 +137,17 @@ mod linux {
             assert_ne!(p.cq_entries, 0);
             assert!(p.cq_entries >= p.sq_entries);
 
+            // From here on, we only need to read from params, so pass `p` by
+            // value as immutable.
+            // The completion queue shares the mmap with the submission queue,
+            // so pass `sq` there too.
+
+            /*
+            var sq = try SubmissionQueue.init(fd, p.*);
+            errdefer sq.deinit();
+            var cq = try CompletionQueue.init(fd, p.*, sq);
+            errdefer cq.deinit();
+            */
             panic!("todo")
         }
     }
@@ -154,7 +167,37 @@ mod linux {
 
     struct CQEvents {}
 
-    struct SQEvents {}
+    struct SQEvents {
+        head: *const AtomicU32,
+        tail: *const AtomicU32,
+        mask: u32,
+        flags: *const AtomicU32,
+        dropped: *const AtomicU32,
+        sq_mmap: Mmap,
+        sqentries_mmap: Mmap,
+    }
+
+    impl SQEvents {
+        fn new(fd: fd::BorrowedFd, p: io_uring_params) -> io::Result<Self> {
+            // TODO: wtf is this equation for
+            let size: usize = core::cmp::max(
+                p.sq_off.array as usize
+                    + p.sq_entries as usize * mem::size_of::<u32>(),
+                p.cq_off.cqes as usize
+                    + p.cq_entries as usize * mem::size_of::<io_uring_cqe>(),
+            );
+
+            let sq_mmap = Mmap::new(size, fd, IORING_OFF_SQ_RING);
+
+            let sqentries_mmap = Mmap::new(
+                p.sq_entries.into() * mem::size_of::<io_uring_sqe>(),
+                fd,
+                IORING_OFF_SQES,
+            );
+
+            Ok(Self {})
+        }
+    }
 
     struct Mmap {
         addr: ptr::NonNull<ffi::c_void>,
@@ -167,7 +210,7 @@ mod linux {
             FD: fd::AsFd,
         {
             let addr = unsafe {
-                rustix::mm::mmap(
+                mmap(
                     ptr::null_mut(),
                     len,
                     mm::ProtFlags::READ | mm::ProtFlags::WRITE,
