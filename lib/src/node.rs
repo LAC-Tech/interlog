@@ -170,8 +170,6 @@ mod linux {
         Unexpected(io::Errno),
     }
 
-    struct CQEvents {}
-
     struct SQEvents {
         head: *const AtomicU32,
         tail: *const AtomicU32,
@@ -185,20 +183,17 @@ mod linux {
     impl SQEvents {
         fn new(fd: fd::BorrowedFd, p: io_uring_params) -> io::Result<Self> {
             let io_uring_params { sq_off, cq_off, .. } = p;
+
             let size = core::cmp::max(
                 // This one is in the man page for io_uring_enter
                 sq_off.array + p.sq_entries * size_of::<u32>() as u32,
                 // WTF is this one?!
                 cq_off.cqes + p.cq_entries * size_of::<io_uring_cqe>() as u32,
             ) as usize;
-
             let ring_buf = Mmap::<u8>::new(size, fd, IORING_OFF_SQ_RING)?;
 
-            let sqes = Mmap::<io_uring_sqe>::new(
-                p.sq_entries as usize * size_of::<io_uring_sqe>(),
-                fd,
-                IORING_OFF_SQES,
-            )?;
+            let size = p.sq_entries as usize * size_of::<io_uring_sqe>();
+            let sqes = Mmap::<io_uring_sqe>::new(size, fd, IORING_OFF_SQES)?;
 
             let result = unsafe {
                 Self {
@@ -212,7 +207,6 @@ mod linux {
                         as *const AtomicU32,
                     dropped: *(ring_buf.ptr.add(sq_off.dropped as usize))
                         as *const AtomicU32,
-
                     sqes,
                     ring_buf,
                 }
@@ -222,12 +216,24 @@ mod linux {
         }
     }
 
-    struct Mmap<T: Copy> {
+    struct CQEvents {
+        head: *const AtomicU32,
+        tail: *const AtomicU32,
+        mask: u32,
+        overflow: *const AtomicU32,
+        cqes: Mmap<io_uring_cqe>,
+    }
+
+    impl CQEvents {
+        fn new(fd: fd::BorrowedFd, sq: SQEvents) {}
+    }
+
+    struct Mmap<T: Sized> {
         ptr: *mut T,
         n_elems: usize,
     }
 
-    impl<T: Copy> Mmap<T> {
+    impl<T: Sized> Mmap<T> {
         pub fn new<FD>(size: usize, fd: FD, offset: u64) -> io::Result<Self>
         where
             FD: fd::AsFd,
@@ -255,7 +261,7 @@ mod linux {
         }
     }
 
-    impl<T: Copy> Drop for Mmap<T> {
+    impl<T: Sized> Drop for Mmap<T> {
         fn drop(&mut self) {
             unsafe {
                 let size = self.n_elems * size_of::<T>();
@@ -264,14 +270,14 @@ mod linux {
         }
     }
 
-    impl<T: Copy> Index<usize> for Mmap<T> {
+    impl<T: Sized> Index<usize> for Mmap<T> {
         type Output = T;
         fn index(&self, index: usize) -> &Self::Output {
             unsafe { &*self.ptr.add(index) }
         }
     }
 
-    impl<T: Copy> IndexMut<usize> for Mmap<T> {
+    impl<T: Sized> IndexMut<usize> for Mmap<T> {
         fn index_mut(&mut self, index: usize) -> &mut Self::Output {
             unsafe { &mut *self.ptr.add(index) }
         }
