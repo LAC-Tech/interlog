@@ -36,6 +36,7 @@ mod async_io {
 
 mod linux {
     use super::async_io;
+    use core::ops::Deref;
     use core::sync::atomic::AtomicU32;
     use core::{
         ffi,
@@ -79,6 +80,7 @@ mod linux {
 
     struct Ring<'a> {
         fd: fd::OwnedFd,
+        ring_buf: Mmap<u8>,
         sqes: SQEvents,
         cqes: CQEvents<'a>,
     }
@@ -142,15 +144,28 @@ mod linux {
             assert_ne!(p.cq_entries, 0);
             assert!(p.cq_entries >= p.sq_entries);
 
+            let size = core::cmp::max(
+                // This one is in the man page for io_uring_enter
+                p.sq_off.array + p.sq_entries * size_of::<u32>() as u32,
+                // WTF is this one?!
+                p.cq_off.cqes + p.cq_entries * size_of::<io_uring_cqe>() as u32,
+            ) as usize;
+
+            let size = p.sq_entries as usize * size_of::<io_uring_sqe>();
+            let ring_buf = unsafe {
+                Mmap::<u8>::new(size, fd.as_fd(), IORING_OFF_SQ_RING)
+                    .map_err(Unexpected)
+            }?;
             // From here on, we only need to read from params, so pass `p` by
             // value as immutable.
             // The completion queue shares the mmap with the submission queue,
             // so pass `sq` there too.
 
-            let sqes = SQEvents::new(fd.as_fd(), p).map_err(Unexpected)?;
-            let cqes = CQEvents::new(p, &sqes).map_err(Unexpected)?;
+            let sqes =
+                SQEvents::new(fd.as_fd(), p, &ring_buf).map_err(Unexpected)?;
+            let cqes = CQEvents::new(p, &ring_buf).map_err(Unexpected)?;
 
-            Ok(Self { fd, sqes, cqes })
+            Ok(Self { fd, ring_buf, sqes, cqes })
         }
     }
 
@@ -174,41 +189,32 @@ mod linux {
         flags: *const AtomicU32,
         dropped: *const AtomicU32,
         sqes: Mmap<io_uring_sqe>,
-        ring_buf: Mmap<u8>,
     }
 
     impl SQEvents {
-        fn new(fd: fd::BorrowedFd, p: &io_uring_params) -> io::Result<Self> {
-            let io_uring_params { sq_off, cq_off, .. } = p;
-
-            let size = core::cmp::max(
-                // This one is in the man page for io_uring_enter
-                sq_off.array + p.sq_entries * size_of::<u32>() as u32,
-                // WTF is this one?!
-                cq_off.cqes + p.cq_entries * size_of::<io_uring_cqe>() as u32,
-            ) as usize;
-            let ring_buf =
-                unsafe { Mmap::<u8>::new(size, fd, IORING_OFF_SQ_RING) }?;
-
-            let size = p.sq_entries as usize * size_of::<io_uring_sqe>();
+        fn new(
+            fd: fd::BorrowedFd,
+            p: &io_uring_params,
+            ring_buf: &Mmap<u8>,
+        ) -> io::Result<Self> {
+            let size_sqes = p.sq_entries as usize * size_of::<io_uring_sqe>();
             let sqes = unsafe {
-                Mmap::<io_uring_sqe>::new(size, fd, IORING_OFF_SQES)
+                Mmap::<io_uring_sqe>::new(size_sqes, fd, IORING_OFF_SQES)
             }?;
 
             let result = unsafe {
                 Self {
-                    head: *(ring_buf.ptr.add(sq_off.head as usize))
+                    head: *(ring_buf.ptr.add(p.sq_off.head as usize))
                         as *const AtomicU32,
-                    tail: *(ring_buf.ptr.add(sq_off.tail as usize))
+                    tail: *(ring_buf.ptr.add(p.sq_off.tail as usize))
                         as *const AtomicU32,
-                    mask: *(ring_buf.ptr.add(sq_off.ring_mask as usize)
+                    mask: *(ring_buf.ptr.add(p.sq_off.ring_mask as usize)
                         as *const u32),
-                    flags: *(ring_buf.ptr.add(sq_off.flags as usize))
+                    flags: *(ring_buf.ptr.add(p.sq_off.flags as usize))
                         as *const AtomicU32,
-                    dropped: *(ring_buf.ptr.add(sq_off.dropped as usize))
+                    dropped: *(ring_buf.ptr.add(p.sq_off.dropped as usize))
                         as *const AtomicU32,
                     sqes,
-                    ring_buf,
                 }
             };
 
@@ -221,12 +227,11 @@ mod linux {
         tail: *const AtomicU32,
         mask: u32,
         overflow: *const AtomicU32,
-        ring_buf: &'a Mmap<u8>,
         cqes: &'a [io_uring_cqe],
     }
 
     impl<'a> CQEvents<'a> {
-        fn new(p: &io_uring_params, ring_buf: Mmap<u8>) -> io::Result<Self> {
+        fn new(p: &io_uring_params, ring_buf: &Mmap<u8>) -> io::Result<Self> {
             let ring_entries = unsafe {
                 *(ring_buf.ptr.add(p.cq_off.ring_entries as usize)
                     as *const u32)
@@ -239,23 +244,18 @@ mod linux {
                     as *const io_uring_cqe;
                 std::slice::from_raw_parts(ptr, p.cq_entries as usize)
             };
-            Ok(Self {
-                head: unsafe {
-                    ring_buf.ptr.add(p.cq_off.head as usize) as *const AtomicU32
-                },
-                tail: unsafe {
-                    ring_buf.ptr.add(p.cq_off.tail as usize) as *const AtomicU32
-                },
-                mask: unsafe {
-                    *(ring_buf.ptr.add(p.cq_off.ring_mask as usize)
-                        as *const u32)
-                },
-                overflow: unsafe {
-                    ring_buf.ptr.add(p.cq_off.overflow as usize)
-                        as *const AtomicU32
-                },
-                ring_buf,
-                cqes,
+            Ok(unsafe {
+                Self {
+                    head: ring_buf.ptr.add(p.cq_off.head as usize)
+                        as *const AtomicU32,
+                    tail: ring_buf.ptr.add(p.cq_off.tail as usize)
+                        as *const AtomicU32,
+                    mask: *(ring_buf.ptr.add(p.cq_off.ring_mask as usize)
+                        as *const u32),
+                    overflow: ring_buf.ptr.add(p.cq_off.overflow as usize)
+                        as *const AtomicU32,
+                    cqes,
+                }
             })
         }
     }
@@ -306,16 +306,20 @@ mod linux {
         }
     }
 
-    impl<T: Sized> Index<usize> for Mmap<T> {
-        type Output = T;
-        fn index(&self, index: usize) -> &Self::Output {
-            unsafe { &*self.ptr.add(index) }
+    impl<T: Sized> Deref for Mmap<T> {
+        type Target = [T];
+
+        fn deref(&self) -> &[T] {
+            unsafe { core::slice::from_raw_parts(self.ptr, self.n_elems) }
         }
     }
 
-    impl<T: Sized> IndexMut<usize> for Mmap<T> {
-        fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-            unsafe { &mut *self.ptr.add(index) }
+    impl<T: Sized> AsRef<T> for Mmap<T>
+    where
+        <Mmap<T> as Deref>::Target: AsRef<T>,
+    {
+        fn as_ref(&self) -> &T {
+            self.deref().as_ref()
         }
     }
 
