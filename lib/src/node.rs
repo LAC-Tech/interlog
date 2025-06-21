@@ -81,8 +81,8 @@ mod linux {
     struct Ring<'a> {
         fd: fd::OwnedFd,
         ring_buf: Mmap<u8>,
-        sqes: SQEvents,
-        cqes: CQEvents<'a>,
+        sq: SubmissionQueue,
+        cq: CompletionQueue<'a>,
     }
 
     impl<'a> Ring<'a> {
@@ -161,11 +161,11 @@ mod linux {
             // The completion queue shares the mmap with the submission queue,
             // so pass `sq` there too.
 
-            let sqes =
-                SQEvents::new(fd.as_fd(), p, &ring_buf).map_err(Unexpected)?;
-            let cqes = CQEvents::new(p, &ring_buf).map_err(Unexpected)?;
+            let sq = SubmissionQueue::new(fd.as_fd(), p, &ring_buf)
+                .map_err(Unexpected)?;
+            let cq = CompletionQueue::new(p, &ring_buf).map_err(Unexpected)?;
 
-            Ok(Self { fd, ring_buf, sqes, cqes })
+            Ok(Self { fd, ring_buf, sq, cq })
         }
     }
 
@@ -182,16 +182,25 @@ mod linux {
         Unexpected(io::Errno),
     }
 
-    struct SQEvents {
+    struct SubmissionQueue {
         head: *const AtomicU32,
         tail: *const AtomicU32,
         mask: u32,
         flags: *const AtomicU32,
         dropped: *const AtomicU32,
         sqes: Mmap<io_uring_sqe>,
+        // We use `sqe_head` and `sqe_tail` in the same way as liburing:
+        // We increment `sqe_tail` (but not `tail`) for each call to
+        // `get_sqe()`.
+        // We then set `tail` to `sqe_tail` once, only when these events are
+        // actually submitted.
+        // This allows us to amortize the cost of the @atomicStore to `tail`
+        // across multiple SQEs.
+        sqe_head: u32,
+        sqe_tail: u32,
     }
 
-    impl SQEvents {
+    impl SubmissionQueue {
         fn new(
             fd: fd::BorrowedFd,
             p: &io_uring_params,
@@ -215,6 +224,8 @@ mod linux {
                     dropped: *(ring_buf.ptr.add(p.sq_off.dropped as usize))
                         as *const AtomicU32,
                     sqes,
+                    sqe_head: 0,
+                    sqe_tail: 0,
                 }
             };
 
@@ -222,7 +233,7 @@ mod linux {
         }
     }
 
-    struct CQEvents<'a> {
+    struct CompletionQueue<'a> {
         head: *const AtomicU32,
         tail: *const AtomicU32,
         mask: u32,
@@ -230,7 +241,7 @@ mod linux {
         cqes: &'a [io_uring_cqe],
     }
 
-    impl<'a> CQEvents<'a> {
+    impl<'a> CompletionQueue<'a> {
         fn new(p: &io_uring_params, ring_buf: &Mmap<u8>) -> io::Result<Self> {
             let ring_entries = unsafe {
                 *(ring_buf.ptr.add(p.cq_off.ring_entries as usize)
