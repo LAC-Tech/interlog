@@ -69,34 +69,32 @@ impl<'a> Ring<'a> {
             Errno::FAULT => ParamsOutsideAccessibleAddressSpace,
             // The resv array contains non-zero data, p.flags contains an
             // unsupported flag, entries out of bounds, IORING_SETUP_SQ_AFF
-            // was specified without IORING_SETUP_SQPOLL, or
-            // IORING_SETUP_CQSIZE was specified but
-            // linux.io_uring_params.cq_entries was invalid:
+            // was specified without IORING_SETUP_SQPOLL, or IORING_SETUP_CQSIZE
+            // was specified but linux.io_uring_params.cq_entries was invalid:
             Errno::INVAL => ArgumentsInvalid,
             Errno::MFILE => ProcessFdQuotaExceeded,
             Errno::NFILE => SystemFdQuotaExceeded,
             Errno::NOMEM => SystemResources,
             // IORING_SETUP_SQPOLL was specified but effective user ID lacks
-            // sufficient privileges, or a container seccomp policy
-            // prohibits io_uring syscalls:
+            // sufficient privileges, or a container seccomp policy prohibits
+            // io_uring syscalls:
             Errno::PERM => PermissionDenied,
             Errno::NOSYS => SystemOutdated,
             _ => Unexpected(errno),
         })?;
 
         // Kernel versions 5.4 and up use only one mmap() for the submission
-        // and completion queues. This is not an optional feature for us...
-        // if the kernel does it, we have to do it.
+        // and completion queues. This is not an optional feature for us... if
+        // the kernel does it, we have to do it.
         // The thinking on this by the kernel developers was that both the
         // submission and the completion queue rings have sizes just over a
-        // power of two, but the submission queue ring is significantly
-        // smaller with u32 slots. By bundling both in a single mmap, the
-        // kernel gets the submission queue ring for free.
-        // See https://patchwork.kernel.org/patch/11115257 for the kernel
-        // patch.
-        // We do not support the double mmap() done before 5.4, because we
-        // want to keep the init/deinit mmap paths simple and because
-        // io_uring has had many bug fixes even since 5.4.
+        // power of two, but the submission queue ring is significantly smaller
+        // with u32 slots. By bundling both in a single mmap, the kernel gets
+        // the submission queue ring for free.
+        // See https://patchwork.kernel.org/patch/11115257 for the kernel patch.
+        // We do not support the double mmap() done before 5.4, because we want
+        // to keep the init/deinit mmap paths simple and because io_uring has
+        // had many bug fixes even since 5.4.
         if !p.features.contains(IoringFeatureFlags::SINGLE_MMAP) {
             return Err(SystemOutdated);
         }
@@ -118,10 +116,10 @@ impl<'a> Ring<'a> {
             Mmap::<u8>::new(size, fd.as_fd(), IORING_OFF_SQ_RING)
                 .map_err(Unexpected)
         }?;
-        // From here on, we only need to read from params, so pass `p` by
-        // value as immutable.
-        // The completion queue shares the mmap with the submission queue,
-        // so pass `sq` there too.
+        // From here on, we only need to read from params, so pass `p` by value
+        // as immutable.
+        // The completion queue shares the mmap with the submission queue, so
+        // pass `sq` there too.
 
         let sq = SubmissionQueue::new(fd.as_fd(), p, &ring_buf)
             .map_err(Unexpected)?;
@@ -152,12 +150,11 @@ struct SubmissionQueue {
     dropped: *const AtomicU32,
     sqes: Mmap<io_uring_sqe>,
     // We use `sqe_head` and `sqe_tail` in the same way as liburing:
-    // We increment `sqe_tail` (but not `tail`) for each call to
-    // `get_sqe()`.
+    // We increment `sqe_tail` (but not `tail`) for each call to `get_sqe()`.
     // We then set `tail` to `sqe_tail` once, only when these events are
     // actually submitted.
-    // This allows us to amortize the cost of the @atomicStore to `tail`
-    // across multiple SQEs.
+    // This allows us to amortize the cost of the @atomicStore to `tail` across
+    // multiple SQEs.
     sqe_head: u32,
     sqe_tail: u32,
 }
