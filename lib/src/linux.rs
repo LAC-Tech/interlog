@@ -1,5 +1,5 @@
 use core::ops::Deref;
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, Ordering};
 use core::{
     ffi,
     mem::{align_of, size_of},
@@ -116,16 +116,27 @@ impl<'a> Ring<'a> {
             Mmap::<u8>::new(size, fd.as_fd(), IORING_OFF_SQ_RING)
                 .map_err(Unexpected)
         }?;
-        // From here on, we only need to read from params, so pass `p` by value
-        // as immutable.
-        // The completion queue shares the mmap with the submission queue, so
-        // pass `sq` there too.
 
         let sq = SubmissionQueue::new(fd.as_fd(), p, &ring_buf)
             .map_err(Unexpected)?;
         let cq = CompletionQueue::new(p, &ring_buf).map_err(Unexpected)?;
 
         Ok(Self { fd, ring_buf, sq, cq })
+    }
+
+    /// Returns the number of flushed and unflushed SQEs pending in the
+    /// submission queue.
+    /// In other words, this is the number of SQEs in the submission queue,
+    /// i.e. its length.
+    /// These are SQEs that the kernel is yet to consume.
+    /// Matches the implementation of io_uring_sq_ready in liburing.
+    pub fn sq_ready(&self) -> u32 {
+        // Always use the shared ring state (i.e. head and not sqe_head) to
+        // avoid going out of sync, see
+        // https://github.com/axboe/liburing/issues/92.
+        self.sq
+            .sqe_tail
+            .wrapping_sub(unsafe { (*self.sq.head).load(Ordering::Acquire) })
     }
 }
 
