@@ -77,13 +77,13 @@ mod linux {
         }
     }
 
-    struct Ring {
+    struct Ring<'a> {
         fd: fd::OwnedFd,
-        cqes: CQEvents,
         sqes: SQEvents,
+        cqes: CQEvents<'a>,
     }
 
-    impl Ring {
+    impl<'a> Ring<'a> {
         fn with_params(
             entries: u32,
             p: &mut io_uring_params,
@@ -147,13 +147,10 @@ mod linux {
             // The completion queue shares the mmap with the submission queue,
             // so pass `sq` there too.
 
-            /*
-            var sq = try SubmissionQueue.init(fd, p.*);
-            errdefer sq.deinit();
-            var cq = try CompletionQueue.init(fd, p.*, sq);
-            errdefer cq.deinit();
-            */
-            panic!("todo")
+            let sqes = SQEvents::new(fd.as_fd(), p).map_err(Unexpected)?;
+            let cqes = CQEvents::new(p, &sqes).map_err(Unexpected)?;
+
+            Ok(Self { fd, sqes, cqes })
         }
     }
 
@@ -181,7 +178,7 @@ mod linux {
     }
 
     impl SQEvents {
-        fn new(fd: fd::BorrowedFd, p: io_uring_params) -> io::Result<Self> {
+        fn new(fd: fd::BorrowedFd, p: &io_uring_params) -> io::Result<Self> {
             let io_uring_params { sq_off, cq_off, .. } = p;
 
             let size = core::cmp::max(
@@ -190,10 +187,13 @@ mod linux {
                 // WTF is this one?!
                 cq_off.cqes + p.cq_entries * size_of::<io_uring_cqe>() as u32,
             ) as usize;
-            let ring_buf = Mmap::<u8>::new(size, fd, IORING_OFF_SQ_RING)?;
+            let ring_buf =
+                unsafe { Mmap::<u8>::new(size, fd, IORING_OFF_SQ_RING) }?;
 
             let size = p.sq_entries as usize * size_of::<io_uring_sqe>();
-            let sqes = Mmap::<io_uring_sqe>::new(size, fd, IORING_OFF_SQES)?;
+            let sqes = unsafe {
+                Mmap::<io_uring_sqe>::new(size, fd, IORING_OFF_SQES)
+            }?;
 
             let result = unsafe {
                 Self {
@@ -216,16 +216,48 @@ mod linux {
         }
     }
 
-    struct CQEvents {
+    struct CQEvents<'a> {
         head: *const AtomicU32,
         tail: *const AtomicU32,
         mask: u32,
         overflow: *const AtomicU32,
-        cqes: Mmap<io_uring_cqe>,
+        ring_buf: &'a Mmap<u8>,
+        cqes: &'a [io_uring_cqe],
     }
 
-    impl CQEvents {
-        fn new(fd: fd::BorrowedFd, sq: SQEvents) {}
+    impl<'a> CQEvents<'a> {
+        fn new(p: &io_uring_params, ring_buf: Mmap<u8>) -> io::Result<Self> {
+            let ring_entries = unsafe {
+                *(ring_buf.ptr.add(p.cq_off.ring_entries as usize)
+                    as *const u32)
+            };
+            if p.cq_entries != ring_entries {
+                return Err(io::Errno::INVAL);
+            }
+            let cqes = unsafe {
+                let ptr = ring_buf.ptr.add(p.cq_off.cqes as usize)
+                    as *const io_uring_cqe;
+                std::slice::from_raw_parts(ptr, p.cq_entries as usize)
+            };
+            Ok(Self {
+                head: unsafe {
+                    ring_buf.ptr.add(p.cq_off.head as usize) as *const AtomicU32
+                },
+                tail: unsafe {
+                    ring_buf.ptr.add(p.cq_off.tail as usize) as *const AtomicU32
+                },
+                mask: unsafe {
+                    *(ring_buf.ptr.add(p.cq_off.ring_mask as usize)
+                        as *const u32)
+                },
+                overflow: unsafe {
+                    ring_buf.ptr.add(p.cq_off.overflow as usize)
+                        as *const AtomicU32
+                },
+                ring_buf,
+                cqes,
+            })
+        }
     }
 
     struct Mmap<T: Sized> {
@@ -234,7 +266,11 @@ mod linux {
     }
 
     impl<T: Sized> Mmap<T> {
-        pub fn new<FD>(size: usize, fd: FD, offset: u64) -> io::Result<Self>
+        pub unsafe fn new<FD>(
+            size: usize,
+            fd: FD,
+            offset: u64,
+        ) -> io::Result<Self>
         where
             FD: fd::AsFd,
         {
