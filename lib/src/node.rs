@@ -151,7 +151,6 @@ mod linux {
                 p.cq_off.cqes + p.cq_entries * size_of::<io_uring_cqe>() as u32,
             ) as usize;
 
-            let size = p.sq_entries as usize * size_of::<io_uring_sqe>();
             let ring_buf = unsafe {
                 Mmap::<u8>::new(size, fd.as_fd(), IORING_OFF_SQ_RING)
                     .map_err(Unexpected)
