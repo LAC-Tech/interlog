@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::{
     ffi,
     mem::{align_of, size_of},
-    ptr,
+    ptr, slice,
 };
 use rustix::fd::AsFd;
 use rustix::io_uring::{
@@ -151,13 +151,20 @@ impl<'a> Ring<'a> {
             // Fill in SQEs that we have queued up, adding them to the kernel
             // ring.
             let to_submit = self.sq.sqe_tail.wrapping_sub(self.sq.sqe_head);
+            let mut tail = unsafe { (*self.sq.tail).as_ptr().read() };
 
-            unsafe {
-                let tail = (*self.sq.tail).get_mut();
-            };
+            for i in 0..to_submit {
+                self.sq.array[tail & self.sq.mask] =
+                    self.sq.sqe_head & self.sq.mask;
+                tail = tail.wrapping_add(1);
+                self.sq.sqe_head = self.sq.sqe_head.wrapping_add(1);
+            }
+            // Ensure that the kernel can actually see the SQE updates when it
+            // sees the tail update.
+            unsafe { *self.sq.tail }.store(tail, Ordering::Release);
         }
 
-        panic!("TODO");
+        self.sq_ready()
     }
 }
 
@@ -174,12 +181,13 @@ enum RingErr {
     Unexpected(io::Errno),
 }
 
-struct SubmissionQueue {
+struct SubmissionQueue<'a> {
     head: *const AtomicU32,
     tail: *const AtomicU32,
     mask: u32,
     flags: *const AtomicU32,
     dropped: *const AtomicU32,
+    array: &'a [u32],
     sqes: Mmap<io_uring_sqe>,
     // We use `sqe_head` and `sqe_tail` in the same way as liburing:
     // We increment `sqe_tail` (but not `tail`) for each call to `get_sqe()`.
@@ -191,16 +199,22 @@ struct SubmissionQueue {
     sqe_tail: u32,
 }
 
-impl SubmissionQueue {
+impl<'a> SubmissionQueue<'a> {
     fn new(
         fd: fd::BorrowedFd,
         p: &io_uring_params,
-        ring_buf: &Mmap<u8>,
+        ring_buf: &'a Mmap<u8>,
     ) -> io::Result<Self> {
         let size_sqes = p.sq_entries as usize * size_of::<io_uring_sqe>();
         let sqes = unsafe {
             Mmap::<io_uring_sqe>::new(size_sqes, fd, IORING_OFF_SQES)
         }?;
+
+        let array_offset = p.sq_off.array as usize;
+        let array_end = array_offset + p.sq_entries as usize;
+        let array: &[u32] = unsafe {
+            core::mem::transmute(&ring_buf.as_slice()[array_offset..array_end])
+        };
 
         let result = unsafe {
             Self {
@@ -214,6 +228,7 @@ impl SubmissionQueue {
                     as *const AtomicU32,
                 dropped: *(ring_buf.ptr.add(p.sq_off.dropped as usize))
                     as *const AtomicU32,
+                array,
                 sqes,
                 sqe_head: 0,
                 sqe_tail: 0,
@@ -243,7 +258,7 @@ impl<'a> CompletionQueue<'a> {
         let cqes = unsafe {
             let ptr =
                 ring_buf.ptr.add(p.cq_off.cqes as usize) as *const io_uring_cqe;
-            std::slice::from_raw_parts(ptr, p.cq_entries as usize)
+            slice::from_raw_parts(ptr, p.cq_entries as usize)
         };
         Ok(unsafe {
             Self {
@@ -292,6 +307,10 @@ impl<T: Sized> Mmap<T> {
 
         Ok(Self { ptr: ptr as *mut T, n_elems })
     }
+
+    fn as_slice(&self) -> &[T] {
+        unsafe { core::slice::from_raw_parts(self.ptr, self.n_elems) }
+    }
 }
 
 impl<T: Sized> Drop for Mmap<T> {
@@ -307,7 +326,7 @@ impl<T: Sized> Deref for Mmap<T> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
-        unsafe { core::slice::from_raw_parts(self.ptr, self.n_elems) }
+        self.as_slice()
     }
 }
 
