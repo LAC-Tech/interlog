@@ -138,6 +138,27 @@ impl<'a> Ring<'a> {
             .sqe_tail
             .wrapping_sub(unsafe { (*self.sq.head).load(Ordering::Acquire) })
     }
+
+    /// Sync internal state with kernel ring state on the SQ side.
+    /// Returns the number of all pending events in the SQ ring, for the shared
+    /// ring.
+    /// This return value includes previously flushed SQEs, as per liburing.
+    /// The rationale is to suggest that an io_uring_enter() call is needed
+    /// rather than not.
+    /// Matches the implementation of __io_uring_flush_sq() in liburing.
+    pub fn flush_sq(&mut self) -> u32 {
+        if self.sq.sqe_head != self.sq.sqe_tail {
+            // Fill in SQEs that we have queued up, adding them to the kernel
+            // ring.
+            let to_submit = self.sq.sqe_tail.wrapping_sub(self.sq.sqe_head);
+
+            unsafe {
+                let tail = (*self.sq.tail).get_mut();
+            };
+        }
+
+        panic!("TODO");
+    }
 }
 
 enum RingErr {
