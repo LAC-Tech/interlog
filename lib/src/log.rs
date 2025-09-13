@@ -11,7 +11,7 @@ pub trait LogicalClock: core::fmt::Debug {
 /// I suspect it may have a different name..
 /// u64 for value, not usize, because it will be sent across network
 #[cfg_attr(test, derive(PartialEq, Eq))]
-		struct VersionVector(foldhash::HashMap<Address, u64>);
+struct VersionVector(foldhash::HashMap<Address, u64>);
 
 impl VersionVector {
 	fn new() -> Self {

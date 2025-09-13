@@ -40,7 +40,7 @@ pub mod jagged_vec {
 			Self { elems: vec![], offsets: vec![] }
 		}
 
-		pub fn iter(&self) -> Iter<T> {
+		pub fn iter<'a>(&'a self) -> Iter<'a, T> {
 			Iter { elems: &self.elems, offsets: &self.offsets, index: 0 }
 		}
 

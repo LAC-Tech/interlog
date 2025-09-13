@@ -29,4 +29,3 @@ compile_error!("code assumes little-endian");
 
 mod linux;
 pub mod log;
-mod node;
